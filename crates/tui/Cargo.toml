@@ -1,0 +1,17 @@
+[package]
+name = "fresnica-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Native terminal UI reference client for Fresnica"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "fresnica-tui"
+path = "src/main.rs"
+
+[dependencies]
+fresnica-client.workspace = true
+ratatui = "=0.30.2"
+serde_json = "1"
+zeroize = "=1.9.0"
