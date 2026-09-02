@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: bash scripts/validate-boundary.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --all-targets --locked
+      - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+
+  python-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - id: fresnica
+        shell: bash
+        run: echo "rev=$(tr -d '[:space:]' < FRESNICA_REV)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: Fresnica/fresnica
+          ref: ${{ steps.fresnica.outputs.rev }}
+          path: upstream
+      - run: bash scripts/validate-boundary.sh
+      - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+      - run: uv python install 3.11
+        working-directory: upstream/reference/python
+      - run: uv sync --locked
+        working-directory: upstream/reference/python
+      - run: uv run pytest -q tests/test_rust_cli_compat.py
+        working-directory: upstream/reference/python
+        env:
+          FRESNICA_RUST_CLI_BIN: ${{ github.workspace }}/target/release/fresnica
