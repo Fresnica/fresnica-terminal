@@ -107,7 +107,7 @@ jobs:
           components: rustfmt,clippy
       - run: bash scripts/validate-boundary.sh
       - run: cargo fmt --all -- --check
-      - run: cargo clippy -p fresnica-cli --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       - run: cargo build --release --locked -p fresnica-cli --bin fresnica
       - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
