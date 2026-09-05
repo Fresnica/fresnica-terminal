@@ -27,8 +27,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Before removing the direct dependency, prove transaction_flow is the
-          # only current CLI source file that names stellar_xdr directly.
           stellar_refs="$(grep -R -n --include='*.rs' 'stellar_xdr' crates/cli/src || true)"
           printf '%s\n' "$stellar_refs"
           test "$(printf '%s\n' "$stellar_refs" | grep -c 'crates/cli/src/transaction_flow.rs' || true)" -eq 1
@@ -72,6 +70,12 @@ jobs:
               "crates/cli/Cargo.toml",
               'stellar-xdr = "=28.0.0"\n',
               '',
+          )
+          replace_exact(
+              "Cargo.lock",
+              ' "serde_json",\n "stellar-xdr",\n "time",',
+              ' "serde_json",\n "time",',
+              1,
           )
 
           ci = Path(".github/workflows/ci.yml")
@@ -132,6 +136,7 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add \
             .github/workflows/ci.yml \
+            Cargo.lock \
             crates/cli/Cargo.toml \
             crates/cli/src/transaction_flow.rs \
             crates/cli/src/send.rs \
