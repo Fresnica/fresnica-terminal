@@ -1,0 +1,290 @@
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/Cargo.lock fresnica-terminal-work/Cargo.lock
+--- fresnica-terminal-baseline/Cargo.lock	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/Cargo.lock	2026-09-05 11:11:06.186915898 +0000
+@@ -1025,7 +1025,7 @@
+ [[package]]
+ name = "fresnica-client"
+ version = "0.1.0"
+-source = "git+https://github.com/Fresnica/fresnica.git?rev=8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03#8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03"
++source = "git+https://github.com/Fresnica/fresnica.git?rev=b1d0427ec5c5398c3bb2e01b886e4e3084e46a73#b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+ dependencies = [
+  "base64 0.23.1",
+  "fresnica-core",
+@@ -1048,7 +1048,7 @@
+ [[package]]
+ name = "fresnica-core"
+ version = "0.2.0"
+-source = "git+https://github.com/Fresnica/fresnica.git?rev=8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03#8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03"
++source = "git+https://github.com/Fresnica/fresnica.git?rev=b1d0427ec5c5398c3bb2e01b886e4e3084e46a73#b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+ dependencies = [
+  "aes-gcm",
+  "base64 0.23.1",
+@@ -1069,7 +1069,7 @@
+ [[package]]
+ name = "fresnica-sdk"
+ version = "0.2.0"
+-source = "git+https://github.com/Fresnica/fresnica.git?rev=8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03#8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03"
++source = "git+https://github.com/Fresnica/fresnica.git?rev=b1d0427ec5c5398c3bb2e01b886e4e3084e46a73#b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+ dependencies = [
+  "base64 0.23.1",
+  "fresnica-core",
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/Cargo.toml fresnica-terminal-work/Cargo.toml
+--- fresnica-terminal-baseline/Cargo.toml	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/Cargo.toml	2026-09-05 11:11:06.186709027 +0000
+@@ -4,8 +4,8 @@
+ 
+ [workspace.dependencies.fresnica-client]
+ git = "https://github.com/Fresnica/fresnica.git"
+-rev = "8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03"
++rev = "b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+ 
+ [workspace.dependencies.fresnica-sdk]
+ git = "https://github.com/Fresnica/fresnica.git"
+-rev = "8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03"
++rev = "b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/FRESNICA_REV fresnica-terminal-work/FRESNICA_REV
+--- fresnica-terminal-baseline/FRESNICA_REV	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/FRESNICA_REV	2026-09-05 11:11:06.186588596 +0000
+@@ -1 +1 @@
+-8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03
++b1d0427ec5c5398c3bb2e01b886e4e3084e46a73
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/README.md fresnica-terminal-work/README.md
+--- fresnica-terminal-baseline/README.md	2026-09-05 11:11:05.289365348 +0000
++++ fresnica-terminal-work/README.md	2026-09-05 11:11:48.482342517 +0000
+@@ -19,7 +19,9 @@
+ 
+ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependencies are Git-pinned in the workspace root to the exact commit recorded in [`FRESNICA_REV`](FRESNICA_REV). Updating that revision is an explicit compatibility change and must pass this repository's full CI.
+ 
+-This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`.
++This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
++
++Terminal v0.1.0 pins `b1d0427ec5c5398c3bb2e01b886e4e3084e46a73`, the source commit that published Native SDK v0.3.0 (Native Binding API 3 / Universal SDK API 5 / Core Client API 5). Terminal consumes the Rust `fresnica-client` / `fresnica-sdk` boundary directly; it does not consume Native/UniFFI artifacts.
+ 
+ ## Layout
+ 
+@@ -30,6 +32,14 @@
+ FRESNICA_REV      pinned shared Fresnica source revision
+ ```
+ 
++## Releases
++
++Fresnica Terminal v0.1.0 is the first independent preview release line after extraction from the shared repository. A single release contains both terminal products: `fresnica` and `fresnica-tui`.
++
++Release publication is marker-gated by `releases/terminal-v0.1.0.json`. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
++
++The CLI supports safe `-v` / `-vv` diagnostics. Verbose output exposes execution stages and version/network metadata, never the raw argument vector or hidden secret input.
++
+ ## Build and test
+ 
+ ```bash
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/README.md fresnica-terminal-work/crates/cli/README.md
+--- fresnica-terminal-baseline/crates/cli/README.md	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/README.md	2026-09-05 11:11:06.188481595 +0000
+@@ -8,7 +8,7 @@
+ 
+ The native client currently covers local wallet lifecycle and contacts, testnet
+ Friendbot funding, read-only Horizon queries, reviewed payments, issued-asset
+-trustline lifecycle, and Classic SDEX read/write/history operations:
++trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anchor flows:
+ 
+ - `info [--wallet NAME]`
+ - `account [--wallet NAME] [--json]`
+@@ -30,6 +30,12 @@
+ - `dex trades BASE COUNTER [--limit N] [--json]`
+ - `dex fills [--wallet NAME] [--limit N] [--json]`
+ - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
++- `anchor discover CODE:GISSUER [--json]`
++- `anchor auth CODE:GISSUER [--wallet NAME]`
++- `anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
++- `anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
++- `anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]`
++- `anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]`
+ - `wallet list`
+ - `wallet use NAME`
+ - `wallet create NAME`
+@@ -52,7 +58,7 @@
+ 
+ Create/import/reveal cryptography and account identity parsing go through
+ `fresnica-sdk`; Core remains the cryptographic authority underneath the SDK.
+-Secret, mnemonic, BIP39-passphrase, and Fresnica-passcode prompts are read from
++Secret, mnemonic, BIP39-passphrase, and Fresnica-passphrase prompts are read from
+ the controlling terminal with input hidden; they are not accepted as command-line
+ arguments.
+ 
+@@ -60,7 +66,7 @@
+ changing wallet identity. The CLI passes the existing G address as the SDK
+ `expected_signer_public_key`; mismatched material is rejected before the wallet
+ record changes. `wallet detach-signer` removes only local protected signing
+-material after passcode verification and keeps the same account as watch-only.
++material after passphrase verification and keeps the same account as watch-only.
+ 
+ Contacts are client-local public metadata. Contact names are resolved before
+ payment construction, an explicit `--memo` takes precedence over a contact's
+@@ -77,11 +83,11 @@
+ Horizon server; none of that HTTP or product policy is moved into `fresnica-core`.
+ 
+ Reviewed write commands present operation-specific review and ask for
+-confirmation before requesting the Fresnica passcode. Payment preparation, its
++confirmation before requesting the Fresnica passphrase. Payment preparation, its
+ review DTO, submission, and pending-retry protection are shared through
+-`fresnica-client`; CLI parsing, rendering, confirmation, and hidden passcode input
++`fresnica-client`; CLI parsing, rendering, confirmation, and hidden passphrase input
+ remain terminal-owned. The exact prepared XDR is then passed to the SDK composite
+-passcode-signing operation, so routine CLI signing does not expose a raw
++passphrase-signing operation, so routine CLI signing does not expose a raw
+ `WalletUnlockKey` outside the Rust SDK/Core call.
+ If the HTTP submission result is uncertain,
+ the native client persists the locally computed transaction hash and blocks a
+@@ -90,7 +96,7 @@
+ 
+ Pending recovery state uses the same `pending-transactions.json` path and public
+ metadata schema as the Python reference. It stores only network, account,
+-transaction hash, kind, and submission time; signed XDR, secrets, passcodes,
++transaction hash, kind, and submission time; signed XDR, secrets, passphrases,
+ unlock keys, and signer material are never persisted there. Horizon lookup
+ failures leave the pending record intact, and failure to persist a newly uncertain
+ submission produces an explicit do-not-retry warning.
+@@ -122,6 +128,25 @@
+ activity, remain separate segments. The native client deliberately does not add a
+ second cache implementation in this slice.
+ 
++## Diagnostics
++
++`-v` / `--verbose` prints safe execution stages and reports the last stage reached on failure.
++`-vv` additionally prints the CLI version, selected network, and exact pinned Fresnica source revision.
++Diagnostics intentionally never dump the raw argument vector or hidden input, so command arguments cannot accidentally expose a mnemonic, Stellar secret, Fresnica passphrase, SEP-10 token, or unlock material through verbose logging.
++
++Put verbosity flags before the command:
++
++```sh
++fresnica -v balance
++fresnica -vv --network testnet anchor discover USDC:G...
++```
++
++Default failures stay concise and point to `-v` for additional context.
++
++## Anchor protocol boundary
++
++The implemented CLI anchor surface covers capability discovery, SEP-10 authentication, SEP-24/SEP-6 transfer flows, transfer status/payment handoff, and SEP-12 customer status/update. Reusable protocol/HTTP/application semantics remain in `fresnica-client`; CLI owns terminal argument parsing, hidden input, rendering, confirmation, and local file selection.
++
+ ## Build
+ 
+ ```sh
+@@ -158,8 +183,7 @@
+ 
+ ## Deliberate non-goals of this slice
+ 
+-Local chain-data caching, anchor protocols, and TUI presentation remain in the
+-Python reference for now.
++Local chain-data caching and TUI presentation remain outside the CLI command surface.
+ 
+ The native client does not expose a raw `sign-xdr` shortcut. Routine transaction
+ signing stays behind client-side construction and review rather than creating a
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/anchor.rs fresnica-terminal-work/crates/cli/src/anchor.rs
+--- fresnica-terminal-baseline/crates/cli/src/anchor.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/anchor.rs	2026-09-05 11:11:06.188074653 +0000
+@@ -28,12 +28,30 @@
+         return Err(usage().to_owned());
+     };
+     match command {
+-        "discover" => command_discover(client, &arguments[1..]),
+-        "auth" => command_auth(client, &arguments[1..]),
+-        "deposit" => command_transfer(client, AnchorTransferKind::Deposit, &arguments[1..]),
+-        "withdraw" => command_transfer(client, AnchorTransferKind::Withdraw, &arguments[1..]),
+-        "status" => command_status(client, &arguments[1..]),
+-        "customer" => command_customer(client, &arguments[1..]),
++        "discover" => {
++            crate::diagnostics::stage("anchor: discover capabilities");
++            command_discover(client, &arguments[1..])
++        }
++        "auth" => {
++            crate::diagnostics::stage("anchor: SEP-10 authentication");
++            command_auth(client, &arguments[1..])
++        }
++        "deposit" => {
++            crate::diagnostics::stage("anchor: start deposit");
++            command_transfer(client, AnchorTransferKind::Deposit, &arguments[1..])
++        }
++        "withdraw" => {
++            crate::diagnostics::stage("anchor: start withdrawal");
++            command_transfer(client, AnchorTransferKind::Withdraw, &arguments[1..])
++        }
++        "status" => {
++            crate::diagnostics::stage("anchor: fetch transfer status");
++            command_status(client, &arguments[1..])
++        }
++        "customer" => {
++            crate::diagnostics::stage("anchor: SEP-12 customer flow");
++            command_customer(client, &arguments[1..])
++        }
+         _ => Err(usage().to_owned()),
+     }
+ }
+@@ -778,8 +796,10 @@
+     home_domain: &str,
+     capabilities: &AnchorCapabilities,
+ ) -> Result<Zeroizing<String>, String> {
++    crate::diagnostics::stage("anchor SEP-10: fetch account authorization state");
+     let ledger_account = client.ledger_account(&record.address)?;
+     let authorization = sep10_authorization_plan(ledger_account.as_ref(), &record.address)?;
++    crate::diagnostics::stage("anchor SEP-10: request and validate challenge");
+     let challenge =
+         prepare_anchor_sep10_challenge(network, &record.address, home_domain, capabilities)?;
+     let mut envelope = parse_transaction_xdr(challenge.transaction_xdr())?;
+@@ -790,7 +810,8 @@
+         key: challenge.server_signing_key().to_owned(),
+     });
+     let excluded = BTreeSet::from([challenge.server_signing_key().to_owned()]);
+-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
++    crate::diagnostics::stage("anchor SEP-10: sign required local conditions");
++    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
+     sign_needed_local_ed25519(
+         client.storage(),
+         &authorization,
+@@ -801,6 +822,7 @@
+         &mut envelope,
+         passcode.as_str(),
+     )?;
++    crate::diagnostics::stage("anchor SEP-10: exchange signed challenge");
+     exchange_anchor_sep10_challenge(network, &challenge, &authorization, &envelope)
+ }
+ 
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/dex.rs fresnica-terminal-work/crates/cli/src/dex.rs
+--- fresnica-terminal-baseline/crates/cli/src/dex.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/dex.rs	2026-09-05 11:11:06.187639668 +0000
+@@ -22,6 +22,7 @@
+ 
+ fn command_orderbook(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let request = OrderbookRequest::parse(arguments)?;
++    crate::diagnostics::stage("DEX: fetch order book");
+     let orderbook = client.order_book(&request.selling, &request.buying)?;
+     if request.json {
+         println!(
+@@ -60,6 +61,7 @@
+ 
+ fn command_offers(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let request = OffersRequest::parse(arguments)?;
++    crate::diagnostics::stage("DEX: fetch open offers");
+     let snapshot = client.open_offers(request.wallet.as_deref(), request.limit)?;
+     if request.json {
+         println!(
+ diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/dex_history.rs fresnica-terminal-work/crates/cli/src/dex_history.rs
+--- fresnica-terminal-baseline/crates/cli/src/dex_history.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/dex_history.rs	2026-09-05 11:11:06.187773359 +0000
+@@ -16,6 +16,7 @@
+ 
+ fn command_trades(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let request = PairHistoryRequest::parse(arguments, 20, "trades")?;
++    crate::diagnostics::stage("DEX: fetch pair trades");
+     let snapshot = client.pair_trades(&request.base, &request.counter, request.limit)?;
+ 
+     if request.json {
+@@ -95,6 +96,7 @@
+ 
+ fn command_candles(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let request = CandleRequest::parse(arguments)?;
++    crate::diagnostics::stage("DEX: fetch candles");
+     let snapshot = client.candles(
+         &request.base,
+         &request.counter,
+ diff -ruN '--exclude=prepare-terminal-relea
