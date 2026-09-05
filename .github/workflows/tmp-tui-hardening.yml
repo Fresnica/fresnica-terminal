@@ -39,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/tmp_tui_hardening.py split
+          python3 -c 'from pathlib import Path; p=Path("crates/tui/src/main.rs"); s=p.read_text(); old="                Event::Key(key) if key.kind == KeyEventKind::Press => {\n                    if app.handle_key(key.code) {\n                        break Ok(());\n                    }\n                }"; new="                Event::Key(key)\n                    if key.kind == KeyEventKind::Press && app.handle_key(key.code) =>\n                {\n                    break Ok(());\n                }"; assert old in s; p.write_text(s.replace(old, new, 1))'
           sed -i 's/MarketForm, MarketSnapshot, Mode, OfferForm, SendForm, TrustlineForm/MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, SendForm, TrustlineForm, TrustlineFormAction/' crates/tui/src/render.rs
           sed -i 's/Action: b buy, s sell, u update, c cancel/Action: b buy, s sell, e edit, x cancel/' crates/tui/src/render.rs
           grep -q 'Action: b buy, s sell, e edit, x cancel' crates/tui/src/render.rs
