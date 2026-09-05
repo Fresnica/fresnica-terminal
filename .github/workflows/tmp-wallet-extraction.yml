@@ -51,7 +51,6 @@ jobs:
           if "mod wallet;" in text or Path("crates/cli/src/wallet.rs").exists():
               raise SystemExit("wallet module already exists")
 
-          # Move the contiguous wallet command/lifecycle block out of main.rs.
           start = text.index("fn command_info(")
           prompt_hidden = text.index("fn prompt_hidden(")
           prompt_new = text.index("fn prompt_new_passcode(")
@@ -62,7 +61,6 @@ jobs:
           wallet_commands = text[start:prompt_hidden]
           prompt_new_block = text[prompt_new:validate_network]
 
-          # Remove only the wallet-specific unit test from main.rs; it moves with the parser.
           test_start = text.index("    #[test]\n    fn parses_create_options_without_cli_framework()")
           next_test = text.index("    #[test]\n    fn parses_verbose_global_options()", test_start)
           wallet_test = text[test_start:next_test]
@@ -70,7 +68,6 @@ jobs:
           main = text[:start] + text[prompt_hidden:prompt_new] + text[validate_network:]
           main = main[:main.index("    #[test]\n    fn parses_create_options_without_cli_framework()")] + main[main.index("    #[test]\n    fn parses_verbose_global_options()") :]
 
-          # main.rs keeps only global CLI dependencies and dispatches wallet work to the module.
           main = main.replace("mod trust;\n", "mod trust;\nmod wallet;\n", 1)
           main = main.replace("use std::io::{self, Write};\n", "", 1)
           old_client_import = '''use fresnica_client::{\n    wallet as wallet_ops, FresnicaClient, RevealedSigningMaterial, WalletRecord, WalletStorage,\n};\nuse fresnica_sdk::{FresnicaSdk, SdkAccountKind};\nuse serde_json::Map;\n'''
@@ -110,9 +107,10 @@ jobs:
 
           test "$(grep -c '^pub(crate) fn command_wallet' crates/cli/src/wallet.rs)" -eq 1
           test "$(grep -c '^pub(crate) fn command_info' crates/cli/src/wallet.rs)" -eq 1
-          ! rg '^fn (command_wallet|wallet_create|wallet_import|wallet_attach|wallet_detach|wallet_reveal|wallet_backup|wallet_restore|wallet_delete|prompt_new_passcode)' crates/cli/src/main.rs
-          rg '^mod wallet;$' crates/cli/src/main.rs
-          rg 'wallet::command_info|wallet::command_wallet' crates/cli/src/main.rs
+          ! grep -Eq '^fn (command_wallet|wallet_create|wallet_import|wallet_attach|wallet_detach|wallet_reveal|wallet_backup|wallet_restore|wallet_delete|prompt_new_passcode)' crates/cli/src/main.rs
+          grep -Eq '^mod wallet;$' crates/cli/src/main.rs
+          grep -q 'wallet::command_info' crates/cli/src/main.rs
+          grep -q 'wallet::command_wallet' crates/cli/src/main.rs
 
       - name: Validate behavior and boundary
         shell: bash
