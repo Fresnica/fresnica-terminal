@@ -56,8 +56,8 @@ jobs:
           )
           replace_exact(
               "crates/cli/src/dex_write.rs",
-              ".submit_offer(prepared, passcode.as_str().to_owned())?",
-              ".submit_offer(prepared, passcode.as_str())?",
+              "client.submit_offer(&prepared, passcode.as_str().to_owned())?",
+              "client.submit_offer(&prepared, passcode.as_str())?",
           )
           replace_exact(
               "crates/cli/src/transaction_flow.rs",
