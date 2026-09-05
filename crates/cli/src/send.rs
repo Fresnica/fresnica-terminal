@@ -24,7 +24,6 @@ pub(crate) fn review_and_submit_payment(
     amount_text: &str,
     asset_text: &str,
     destination_address: &str,
-    contact_name: Option<&str>,
     memo: PaymentMemo,
     yes: bool,
 ) -> Result<(), String> {
@@ -34,7 +33,7 @@ pub(crate) fn review_and_submit_payment(
         amount_text,
         asset_text,
         destination_address,
-        contact_name,
+        None,
         memo,
     )?;
     review_and_submit_prepared(client, &prepared, yes)

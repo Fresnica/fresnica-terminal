@@ -409,10 +409,10 @@ struct MnemonicOptions {
     strength: usize,
 }
 
-fn parse_mnemonic_options<'a>(
-    arguments: &'a [String],
+fn parse_mnemonic_options(
+    arguments: &[String],
     allow_strength: bool,
-) -> Result<(&'a str, MnemonicOptions), String> {
+) -> Result<(&str, MnemonicOptions), String> {
     let name = arguments
         .first()
         .ok_or_else(|| "wallet name is required".to_owned())?;
