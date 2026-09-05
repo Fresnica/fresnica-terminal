@@ -1,0 +1,830 @@
+name: Prepare terminal release
+
+on:
+  push:
+    branches:
+      - release/terminal-v0.1.0-diagnostics
+    paths:
+      - .github/workflows/prepare-terminal-release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply audited terminal release changes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+          import textwrap
+
+          OLD = "8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03"
+          NEW = "b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} occurrences, found {count}: {old[:80]!r}")
+              p.write_text(text.replace(old, new))
+
+          # Move the independent terminal repository to the exact shared source
+          # revision that published Native SDK 0.3.0. Terminal still consumes the
+          # Rust client/SDK directly; it does not depend on Native/UniFFI artifacts.
+          Path("FRESNICA_REV").write_text(NEW + "\n")
+          replace("Cargo.toml", OLD, NEW, expected=2)
+          lock = Path("Cargo.lock")
+          lock_text = lock.read_text()
+          if lock_text.count(OLD) != 6:
+              raise SystemExit(f"Cargo.lock: expected 6 old revision occurrences, found {lock_text.count(OLD)}")
+          lock.write_text(lock_text.replace(OLD, NEW))
+
+          main = Path("crates/cli/src/main.rs")
+          text = main.read_text()
+
+          old = 'use zeroize::Zeroizing;\n\nconst HELP: &str = r#"Fresnica native Rust CLI'
+          new = 'use zeroize::Zeroizing;\n\nconst FRESNICA_REVISION: &str = include_str!("../../../FRESNICA_REV");\n\nconst HELP: &str = r#"Fresnica native Rust CLI'
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to insert Fresnica revision constant")
+          text = text.replace(old, new)
+
+          old = '  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]\n  fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...\n\nNetwork commands:'
+          new = '  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]\n  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]\n  fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...\n\nGlobal options:\n  -v, --verbose                Show safe failure context\n  -vv                          Add command/network/version diagnostics without dumping raw arguments\n\nNetwork commands:'
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to update help/global options")
+          text = text.replace(old, new)
+
+          old = '''fn main() {
+              if let Err(error) = run() {
+                  eprintln!("Error: {error}");
+                  process::exit(2);
+              }
+          }
+
+          fn run() -> Result<(), String> {
+              let arguments: Vec<String> = env::args().skip(1).collect();
+              let global = GlobalOptions::parse(&arguments)?;
+          '''
+          new = '''fn main() {
+              let arguments: Vec<String> = env::args().skip(1).collect();
+              let global = match GlobalOptions::parse(&arguments) {
+                  Ok(global) => global,
+                  Err(error) => {
+                      let failure = CliFailure::new(error, "parsing global options");
+                      render_failure(&failure, leading_verbosity(&arguments), &arguments);
+                      process::exit(2);
+                  }
+              };
+              let verbosity = global.verbosity;
+              if let Err(failure) = run(global) {
+                  render_failure(&failure, verbosity, &arguments);
+                  process::exit(2);
+              }
+          }
+
+          fn run(global: GlobalOptions) -> Result<(), CliFailure> {
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to replace main/run entrypoint")
+          text = text.replace(old, new)
+
+          old = '''    if global.command == ["--version"] || global.command == ["-V"] {
+              println!("fresnica {} · Rust Core linked", env!("CARGO_PKG_VERSION"));
+              return Ok(());
+          }
+
+              let client = FresnicaClient::new(&global.home, &global.network)?;
+              let storage = client.storage();
+              match global.command[0].as_str() {
+                  "info" => command_info(storage, &global.command[1..]),
+                  "account" => read_commands::command_account(&client, &global.command[1..]),
+                  "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
+                  "history" => read_commands::command_history(&client, &global.command[1..]),
+                  "send" => send::command_send(&client, &global.command[1..]),
+                  "contact" => contacts::command_contact(storage, &global.command[1..]),
+                  "trust" => trust::command_trust(&client, &global.command[1..]),
+                  "dex" => dex::command_dex(&client, &global.command[1..]),
+                  "anchor" => anchor::command_anchor(&client, &global.command[1..]),
+                  "wallet" => command_wallet(storage, &global.network, &global.command[1..]),
+                  other => Err(format!("unknown command: {other}\\n\\n{HELP}")),
+              }
+          }
+          '''
+          new = '''    if global.command == ["--version"] || global.command == ["-V"] {
+              println!(
+                  "fresnica {} · Fresnica source {}",
+                  env!("CARGO_PKG_VERSION"),
+                  short_fresnica_revision()
+              );
+              return Ok(());
+          }
+
+              let client = FresnicaClient::new(&global.home, &global.network)
+                  .map_err(|error| CliFailure::new(error, "initializing Fresnica client"))?;
+              let storage = client.storage();
+              let result: Result<(), String> = match global.command[0].as_str() {
+                  "info" => command_info(storage, &global.command[1..]),
+                  "account" => read_commands::command_account(&client, &global.command[1..]),
+                  "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
+                  "history" => read_commands::command_history(&client, &global.command[1..]),
+                  "send" => send::command_send(&client, &global.command[1..]),
+                  "contact" => contacts::command_contact(storage, &global.command[1..]),
+                  "trust" => trust::command_trust(&client, &global.command[1..]),
+                  "dex" => dex::command_dex(&client, &global.command[1..]),
+                  "anchor" => anchor::command_anchor(&client, &global.command[1..]),
+                  "wallet" => command_wallet(storage, &global.network, &global.command[1..]),
+                  other => Err(format!("unknown command: {other}\\n\\n{HELP}")),
+              };
+              result.map_err(|error| CliFailure::new(error, command_context(&global.command)))
+          }
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to replace version/dispatch block")
+          text = text.replace(old, new)
+
+          old = '''struct GlobalOptions {
+              home: PathBuf,
+              network: String,
+              command: Vec<String>,
+          }
+          '''
+          new = '''struct GlobalOptions {
+              home: PathBuf,
+              network: String,
+              verbosity: u8,
+              command: Vec<String>,
+          }
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to add verbosity field")
+          text = text.replace(old, new)
+
+          old = '        let mut home = None;\n        let mut network = "mainnet".to_owned();\n        let mut index = 0;'
+          new = '        let mut home = None;\n        let mut network = "mainnet".to_owned();\n        let mut verbosity = 0u8;\n        let mut index = 0;'
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to initialize verbosity")
+          text = text.replace(old, new)
+
+          old = '''            match arguments[index].as_str() {
+                      "--home" => {
+          '''
+          new = '''            match arguments[index].as_str() {
+                      "-v" | "--verbose" => {
+                          verbosity = (verbosity + 1).min(2);
+                          index += 1;
+                      }
+                      "-vv" => {
+                          verbosity = 2;
+                          index += 1;
+                      }
+                      "--home" => {
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to add verbosity parser")
+          text = text.replace(old, new)
+
+          old = '        Ok(Self {\n            home,\n            network,\n            command: arguments[index..].to_vec(),\n        })'
+          new = '        Ok(Self {\n            home,\n            network,\n            verbosity,\n            command: arguments[index..].to_vec(),\n        })'
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to store verbosity")
+          text = text.replace(old, new)
+
+          marker = 'fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {'
+          helpers = r'''
+          #[derive(Debug)]
+          struct CliFailure {
+              message: String,
+              context: &'static str,
+          }
+
+          impl CliFailure {
+              fn new(message: String, context: &'static str) -> Self {
+                  Self { message, context }
+              }
+          }
+
+          fn fresnica_revision() -> &'static str {
+              FRESNICA_REVISION.trim()
+          }
+
+          fn short_fresnica_revision() -> &'static str {
+              let revision = fresnica_revision();
+              revision.get(..12).unwrap_or(revision)
+          }
+
+          fn render_failure(failure: &CliFailure, verbosity: u8, arguments: &[String]) {
+              eprintln!("Error: {}", failure.message);
+              if verbosity == 0 {
+                  eprintln!("Hint: rerun with -v for diagnostic context.");
+                  return;
+              }
+              eprintln!("Context: {}", failure.context);
+              if verbosity == 1 {
+                  eprintln!("Hint: use -vv for safe command/network/version diagnostics.");
+                  return;
+              }
+              eprintln!("Diagnostic:");
+              eprintln!(
+                  "  command: {}",
+                  safe_diagnostic_command(arguments).as_deref().unwrap_or("-")
+              );
+              eprintln!("  network: {}", diagnostic_network(arguments));
+              eprintln!("  cli-version: {}", env!("CARGO_PKG_VERSION"));
+              eprintln!("  fresnica-source: {}", fresnica_revision());
+              eprintln!("  note: additional diagnostics omit raw arguments and secret input");
+          }
+
+          fn leading_verbosity(arguments: &[String]) -> u8 {
+              let mut verbosity = 0u8;
+              let mut index = 0;
+              while index < arguments.len() {
+                  match arguments[index].as_str() {
+                      "-v" | "--verbose" => {
+                          verbosity = (verbosity + 1).min(2);
+                          index += 1;
+                      }
+                      "-vv" => {
+                          verbosity = 2;
+                          index += 1;
+                      }
+                      "--home" | "--network" => {
+                          if index + 1 >= arguments.len() {
+                              break;
+                          }
+                          index += 2;
+                      }
+                      _ => break,
+                  }
+              }
+              verbosity
+          }
+
+          fn diagnostic_network(arguments: &[String]) -> &'static str {
+              let mut network = "mainnet";
+              let mut index = 0;
+              while index < arguments.len() {
+                  match arguments[index].as_str() {
+                      "-v" | "--verbose" | "-vv" => index += 1,
+                      "--home" => {
+                          if index + 1 >= arguments.len() {
+                              return "<invalid>";
+                          }
+                          index += 2;
+                      }
+                      "--network" => {
+                          let Some(value) = arguments.get(index + 1) else {
+                              return "<invalid>";
+                          };
+                          network = match value.as_str() {
+                              "mainnet" => "mainnet",
+                              "testnet" => "testnet",
+                              _ => "<invalid>",
+                          };
+                          index += 2;
+                      }
+                      _ => break,
+                  }
+              }
+              network
+          }
+
+          fn safe_diagnostic_command(arguments: &[String]) -> Option<String> {
+              let mut index = 0;
+              while index < arguments.len() {
+                  match arguments[index].as_str() {
+                      "-v" | "--verbose" | "-vv" => index += 1,
+                      "--home" | "--network" => {
+                          if index + 1 >= arguments.len() {
+                              return None;
+                          }
+                          index += 2;
+                      }
+                      _ => break,
+                  }
+              }
+              let command = arguments.get(index)?.as_str();
+              let mut path = command.to_owned();
+              let allowed_subcommand = match command {
+                  "wallet" => matches!(
+                      arguments.get(index + 1).map(String::as_str),
+                      Some(
+                          "list"
+                              | "use"
+                              | "create"
+                              | "import-secret"
+                              | "import-mnemonic"
+                              | "import-watch"
+                              | "attach-secret"
+                              | "attach-mnemonic"
+                              | "detach-signer"
+                              | "testnet-fund"
+                              | "fund"
+                              | "reveal"
+                              | "backup"
+                              | "restore"
+                              | "delete"
+                      )
+                  ),
+                  "contact" => matches!(
+                      arguments.get(index + 1).map(String::as_str),
+                      Some("list" | "add" | "remove")
+                  ),
+                  "trust" => matches!(
+                      arguments.get(index + 1).map(String::as_str),
+                      Some("add" | "limit" | "remove")
+                  ),
+                  "dex" => matches!(
+                      arguments.get(index + 1).map(String::as_str),
+                      Some(
+                          "orderbook"
+                              | "offers"
+                              | "buy"
+                              | "sell"
+                              | "update"
+                              | "cancel"
+                              | "trades"
+                              | "fills"
+                              | "candles"
+                      )
+                  ),
+                  "anchor" => matches!(
+                      arguments.get(index + 1).map(String::as_str),
+                      Some("discover" | "auth" | "deposit" | "withdraw" | "status" | "customer")
+                  ),
+                  _ => false,
+              };
+              if allowed_subcommand {
+                  path.push(' ');
+                  path.push_str(&arguments[index + 1]);
+              }
+              Some(path)
+          }
+
+          fn command_context(command: &[String]) -> &'static str {
+              match command.first().map(String::as_str) {
+                  Some("info" | "wallet" | "contact") => "processing local terminal state",
+                  Some("account" | "balance" | "assets" | "history") => "reading Stellar network state",
+                  Some("send") => "processing payment transaction",
+                  Some("trust") => "processing trustline transaction",
+                  Some("dex") => "processing Stellar DEX command",
+                  Some("anchor") => "processing Stellar anchor protocol command",
+                  _ => "dispatching CLI command",
+              }
+          }
+
+          '''
+          helpers = textwrap.dedent(helpers)
+          if text.count(marker) != 1:
+              raise SystemExit("main.rs: unable to insert diagnostics helpers")
+          text = text.replace(marker, helpers + marker)
+
+          old = '    println!("SDK/Core:   Rust (direct link)");'
+          new = '    println!("Shared API: Fresnica SDK/client @ {}", short_fresnica_revision());'
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to align runtime architecture label")
+          text = text.replace(old, new)
+
+          old = '''        assert_eq!(options.strength, 128);
+              }
+          }
+          '''
+          new = '''        assert_eq!(options.strength, 128);
+              }
+
+              #[test]
+              fn parses_global_verbosity_without_a_cli_framework() {
+                  let args = ["-v", "--network", "testnet", "--verbose", "account"]
+                      .map(str::to_owned);
+                  let global = GlobalOptions::parse(&args).unwrap();
+                  assert_eq!(global.verbosity, 2);
+                  assert_eq!(global.network, "testnet");
+                  assert_eq!(global.command, ["account"]);
+              }
+
+              #[test]
+              fn diagnostics_do_not_scan_command_values_for_verbosity() {
+                  let args = ["send", "1", "XLM", "to", "G...", "--memo", "-vv"]
+                      .map(str::to_owned);
+                  assert_eq!(leading_verbosity(&args), 0);
+                  assert_eq!(safe_diagnostic_command(&args).as_deref(), Some("send"));
+              }
+
+              #[test]
+              fn diagnostics_only_emit_whitelisted_subcommands() {
+                  let args = ["-vv", "wallet", "import-secret", "private-value"]
+                      .map(str::to_owned);
+                  assert_eq!(
+                      safe_diagnostic_command(&args).as_deref(),
+                      Some("wallet import-secret")
+                  );
+              }
+          }
+          '''
+          old = textwrap.dedent(old)
+          new = textwrap.dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit("main.rs: unable to add diagnostics tests")
+          text = text.replace(old, new)
+          main.write_text(text)
+
+          # User-facing terminology: Passphrase is the Fresnica protection credential.
+          prompt_paths = [
+              "crates/cli/src/send.rs",
+              "crates/cli/src/trust.rs",
+              "crates/cli/src/dex_write.rs",
+              "crates/cli/src/anchor.rs",
+          ]
+          total = 0
+          for path in prompt_paths:
+              p = Path(path)
+              source = p.read_text()
+              count = source.count('Fresnica passcode: ')
+              total += count
+              p.write_text(source.replace('Fresnica passcode: ', 'Fresnica passphrase: '))
+          if total != 4:
+              raise SystemExit(f"expected 4 stale Fresnica passcode prompts, found {total}")
+
+          # Align CLI documentation with implemented anchor/SEP-12 capabilities and diagnostics.
+          cli_readme = Path("crates/cli/README.md")
+          text = cli_readme.read_text()
+          replace_old = "Friendbot funding, read-only Horizon queries, reviewed payments, issued-asset\ntrustline lifecycle, and Classic SDEX read/write/history operations:"
+          replace_new = "Friendbot funding, read-only Horizon queries, reviewed payments, issued-asset\ntrustline lifecycle, Classic SDEX read/write/history operations, and Stellar anchor flows:"
+          if text.count(replace_old) != 1:
+              raise SystemExit("CLI README: current-scope paragraph drifted")
+          text = text.replace(replace_old, replace_new)
+          anchor_commands = '''- `anchor discover CODE:GISSUER [--json]`
+          - `anchor auth CODE:GISSUER [--wallet NAME]`
+          - `anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
+          - `anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
+          - `anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]`
+          - `anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]`
+          '''
+          anchor_commands = textwrap.dedent(anchor_commands)
+          needle = "- `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`\n"
+          if text.count(needle) != 1:
+              raise SystemExit("CLI README: DEX command anchor missing")
+          text = text.replace(needle, needle + anchor_commands)
+          diagnostics = '''
+          ## Diagnostics
+
+          Global `-v` / `--verbose` adds the safe CLI phase in which a failure occurred.
+          `-vv` additionally reports only the command/subcommand name, selected network,
+          CLI version, and pinned Fresnica source revision. Diagnostic output never dumps
+          the raw argument vector, hidden passphrase input, mnemonic, Stellar secret,
+          SEP-10 token, or `WalletUnlockKey`.
+
+          Put verbosity flags before the command, for example:
+
+          ```sh
+          fresnica -v balance
+          fresnica -vv --network testnet anchor discover USDC:G...
+          ```
+
+          Default failures remain concise and point to `-v` when diagnostic context is
+          available.
+
+          ## Anchor protocol boundary
+
+          Anchor commands cover discovery, SEP-10 authentication, SEP-24/SEP-6 transfer
+          flows, transaction status/payment handoff, and SEP-12 customer status/update.
+          Protocol semantics and reusable HTTP/application logic remain in
+          `fresnica-client`; the CLI owns argument parsing, hidden terminal input,
+          rendering, confirmation, and local file selection.
+
+          '''
+          diagnostics = textwrap.dedent(diagnostics)
+          if text.count("## Build\n") != 1:
+              raise SystemExit("CLI README: Build heading missing")
+          text = text.replace("## Build\n", diagnostics + "## Build\n")
+          old_non_goal = "Local chain-data caching, anchor protocols, and TUI presentation remain in the\nPython reference for now."
+          new_non_goal = "Local chain-data caching and TUI presentation remain outside the CLI command surface."
+          if text.count(old_non_goal) != 1:
+              raise SystemExit("CLI README: stale anchor non-goal not found")
+          text = text.replace(old_non_goal, new_non_goal)
+          cli_readme.write_text(text)
+
+          # Root project contract: extraction origin is historical, active shared pin moves independently.
+          root = Path("README.md")
+          text = root.read_text()
+          old = "This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`."
+          new = "This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`. Terminal v0.1.0 pins `b1d0427ec5c5398c3bb2e01b886e4e3084e46a73`, the source commit that published Native SDK v0.3.0 (Native Binding API 3 / Universal SDK API 5 / Core Client API 5). Terminal consumes the Rust `fresnica-client` / `fresnica-sdk` boundary directly; it does not consume the Native/UniFFI package."
+          if text.count(old) != 1:
+              raise SystemExit("root README: extraction baseline sentence missing")
+          text = text.replace(old, new)
+          release_section = '''
+          ## Releases
+
+          Terminal releases package both binaries from one reviewed source revision:
+          `fresnica` (CLI) and `fresnica-tui` (interactive TUI). The first independent
+          release line is v0.1.0 preview. Publication is marker-gated by
+          `releases/terminal-v0.1.0.json`; release CI re-runs the repository boundary,
+          locked Rust tests/builds, and Python compatibility suite before publishing
+          platform archives, a release manifest, and SHA-256 checksums.
+
+          The CLI supports `-v` and `-vv` failure diagnostics. Extra diagnostics are
+          intentionally restricted to safe command/phase/network/version metadata and
+          never dump the raw argument vector or hidden secret input.
+
+          '''
+          release_section = textwrap.dedent(release_section)
+          if text.count("## Build and test\n") != 1:
+              raise SystemExit("root README: Build and test heading missing")
+          text = text.replace("## Build and test\n", release_section + "## Build and test\n")
+          root.write_text(text)
+
+          tui = Path("crates/tui/README.md")
+          tui_text = tui.read_text()
+          if tui_text.count("masked passcode entry") != 1:
+              raise SystemExit("TUI README: expected stale passcode terminology")
+          tui.write_text(tui_text.replace("masked passcode entry", "masked Fresnica passphrase entry"))
+
+          release_marker = {
+              "kind": "fresnica-terminal-release",
+              "version": "0.1.0",
+              "channel": "preview",
+              "fresnica_rev": NEW,
+              "native_sdk_baseline": "0.3.0",
+              "native_binding_api_version": 3,
+              "sdk_api_version": 5,
+              "core_client_api_version": 5,
+              "products": ["fresnica", "fresnica-tui"],
+          }
+          Path("releases").mkdir(exist_ok=True)
+          Path("releases/terminal-v0.1.0.json").write_text(
+              json.dumps(release_marker, indent=2) + "\n"
+          )
+
+          release_workflow = r'''name: Release Terminal
+
+          on:
+            push:
+              branches: [main]
+              paths:
+                - "releases/terminal-v*.json"
+
+          permissions:
+            contents: write
+
+          env:
+            CARGO_TERM_COLOR: always
+
+          jobs:
+            prepare:
+              runs-on: ubuntu-latest
+              outputs:
+                version: ${{ steps.release.outputs.version }}
+                tag: ${{ steps.release.outputs.tag }}
+                marker: ${{ steps.release.outputs.marker }}
+                fresnica_rev: ${{ steps.release.outputs.fresnica_rev }}
+              steps:
+                - uses: actions/checkout@v4
+                  with:
+                    fetch-depth: 2
+                - id: release
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    mapfile -t markers < <(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -E '^releases/terminal-v[0-9]+\.[0-9]+\.[0-9]+\.json$' || true)
+                    if [[ ${#markers[@]} -ne 1 ]]; then
+                      echo "Expected exactly one terminal release marker in $GITHUB_SHA; found ${#markers[@]}." >&2
+                      exit 1
+                    fi
+                    marker="${markers[0]}"
+                    python3 - "$marker" "$GITHUB_OUTPUT" <<'PY_RELEASE'
+                    import json
+                    import pathlib
+                    import re
+                    import sys
+                    import tomllib
+
+                    marker_path = pathlib.Path(sys.argv[1])
+                    output_path = pathlib.Path(sys.argv[2])
+                    data = json.loads(marker_path.read_text())
+                    if data.get("kind") != "fresnica-terminal-release":
+                        raise SystemExit("invalid terminal release marker kind")
+                    if data.get("channel") != "preview":
+                        raise SystemExit("v0.1 release must remain on the preview channel")
+                    version = data.get("version", "")
+                    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+                        raise SystemExit("invalid terminal release version")
+                    expected_name = f"terminal-v{version}.json"
+                    if marker_path.name != expected_name:
+                        raise SystemExit(f"marker filename must be {expected_name}")
+                    fresnica_rev = pathlib.Path("FRESNICA_REV").read_text().strip()
+                    if data.get("fresnica_rev") != fresnica_rev:
+                        raise SystemExit("release marker fresnica_rev does not match FRESNICA_REV")
+                    for manifest in ("crates/cli/Cargo.toml", "crates/tui/Cargo.toml"):
+                        package_version = tomllib.loads(pathlib.Path(manifest).read_text())["package"]["version"]
+                        if package_version != version:
+                            raise SystemExit(f"{manifest} version {package_version} != release {version}")
+                    with output_path.open("a") as out:
+                        out.write(f"version={version}\n")
+                        out.write(f"tag=v{version}\n")
+                        out.write(f"marker={marker_path.as_posix()}\n")
+                        out.write(f"fresnica_rev={fresnica_rev}\n")
+                    PY_RELEASE
+
+            validate-rust:
+              needs: prepare
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: dtolnay/rust-toolchain@stable
+                  with:
+                    components: rustfmt
+                - run: bash scripts/validate-boundary.sh
+                - run: cargo fmt --all -- --check
+                - run: cargo test --workspace --all-targets --locked
+                - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+                - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+
+            python-compatibility:
+              needs: prepare
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: dtolnay/rust-toolchain@stable
+                - uses: actions/checkout@v4
+                  with:
+                    repository: Fresnica/fresnica
+                    ref: ${{ needs.prepare.outputs.fresnica_rev }}
+                    path: upstream
+                - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+                - name: Install uv
+                  uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+                  with:
+                    version: "0.12.5"
+                    enable-cache: true
+                - run: uv python install 3.11
+                  working-directory: upstream/reference/python
+                - run: uv sync --locked
+                  working-directory: upstream/reference/python
+                - run: uv run pytest -q tests/test_rust_cli_compat.py
+                  working-directory: upstream/reference/python
+                  env:
+                    FRESNICA_RUST_CLI_BIN: ${{ github.workspace }}/target/release/fresnica
+
+            build:
+              needs: [prepare, validate-rust, python-compatibility]
+              strategy:
+                fail-fast: false
+                matrix:
+                  os: [ubuntu-latest, macos-latest, windows-latest]
+              runs-on: ${{ matrix.os }}
+              env:
+                VERSION: ${{ needs.prepare.outputs.version }}
+              steps:
+                - uses: actions/checkout@v4
+                - uses: dtolnay/rust-toolchain@stable
+                - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+                - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+                - name: Package Unix binaries
+                  if: runner.os != 'Windows'
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    mkdir -p package dist
+                    cp target/release/fresnica package/
+                    cp target/release/fresnica-tui package/
+                    cp README.md package/README.md
+                    cp crates/cli/README.md package/CLI-README.md
+                    cp crates/tui/README.md package/TUI-README.md
+                    archive="fresnica-terminal-${VERSION}-${RUNNER_OS,,}-${RUNNER_ARCH,,}.zip"
+                    (cd package && zip -9 -r "../dist/$archive" .)
+                - name: Package Windows binaries
+                  if: runner.os == 'Windows'
+                  shell: pwsh
+                  run: |
+                    New-Item -ItemType Directory -Force package, dist | Out-Null
+                    Copy-Item target/release/fresnica.exe package/
+                    Copy-Item target/release/fresnica-tui.exe package/
+                    Copy-Item README.md package/README.md
+                    Copy-Item crates/cli/README.md package/CLI-README.md
+                    Copy-Item crates/tui/README.md package/TUI-README.md
+                    $os = $env:RUNNER_OS.ToLower()
+                    $arch = $env:RUNNER_ARCH.ToLower()
+                    $archive = "fresnica-terminal-$env:VERSION-$os-$arch.zip"
+                    Compress-Archive -Path package/* -DestinationPath "dist/$archive" -CompressionLevel Optimal
+                - uses: actions/upload-artifact@v4
+                  with:
+                    name: terminal-${{ runner.os }}-${{ runner.arch }}
+                    path: dist/*
+                    if-no-files-found: error
+
+            publish:
+              needs: [prepare, build]
+              runs-on: ubuntu-latest
+              env:
+                GH_TOKEN: ${{ github.token }}
+                VERSION: ${{ needs.prepare.outputs.version }}
+                TAG: ${{ needs.prepare.outputs.tag }}
+                FRESNICA_REV: ${{ needs.prepare.outputs.fresnica_rev }}
+                MARKER: ${{ needs.prepare.outputs.marker }}
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/download-artifact@v4
+                  with:
+                    pattern: terminal-*
+                    path: dist
+                    merge-multiple: true
+                - name: Build release manifest and checksums
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    cp "$MARKER" dist/terminal-release-marker.json
+                    python3 <<'PY_MANIFEST'
+                    import hashlib
+                    import json
+                    import os
+                    from pathlib import Path
+
+                    dist = Path("dist")
+                    assets = {}
+                    for path in sorted(dist.glob("*.zip")):
+                        assets[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    manifest = {
+                        "kind": "fresnica-terminal-release-manifest",
+                        "version": os.environ["VERSION"],
+                        "commit": os.environ["GITHUB_SHA"],
+                        "fresnica_rev": os.environ["FRESNICA_REV"],
+                        "assets": assets,
+                    }
+                    (dist / "fresnica-terminal-release-manifest.json").write_text(
+                        json.dumps(manifest, indent=2) + "\n"
+                    )
+                    PY_MANIFEST
+                    (cd dist && sha256sum *.zip fresnica-terminal-release-manifest.json terminal-release-marker.json > SHA256SUMS)
+                - name: Publish preview release
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                      echo "Release $TAG already exists; refusing to overwrite it." >&2
+                      exit 1
+                    fi
+                    cat > release-notes.md <<EOF
+                    Fresnica Terminal v${VERSION} is the first independent preview release of the Rust terminal products.
+
+                    - \\`fresnica\\`: CLI with safe \\`-v\\` / \\`-vv\\` failure diagnostics and aligned Passphrase terminology.
+                    - \\`fresnica-tui\\`: interactive terminal UI from the same reviewed source line.
+                    - Shared Fresnica source: \\`${FRESNICA_REV}\\`, the commit that published Native SDK v0.3.0 (Native API 3 / SDK API 5 / Core Client API 5).
+                    - Terminal continues to consume the Rust client/SDK boundary directly; Native/UniFFI binaries are not a terminal dependency.
+                    - Platform archives are accompanied by a release manifest and SHA-256 checksums.
+                    EOF
+                    gh release create "$TAG" \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --target "$GITHUB_SHA" \
+                      --title "Fresnica Terminal v${VERSION}" \
+                      --prerelease \
+                      --notes-file release-notes.md \
+                      dist/*.zip \
+                      dist/fresnica-terminal-release-manifest.json \
+                      dist/terminal-release-marker.json \
+                      dist/SHA256SUMS
+          '''
+          release_workflow = textwrap.dedent(release_workflow)
+          Path(".github/workflows/release.yml").write_text(release_workflow)
+          PY
+      - name: Format and validate repository boundary
+        shell: bash
+        run: |
+          cargo fmt --all
+          bash scripts/validate-boundary.sh
+          cargo fmt --all -- --check
+          git diff --check
+      - name: Run locked Rust tests
+        run: cargo test --workspace --all-targets --locked
+      - name: Build release binaries
+        run: |
+          cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - name: Commit clean release preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/prepare-terminal-release.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "release: prepare Fresnica Terminal v0.1.0"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
