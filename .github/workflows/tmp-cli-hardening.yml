@@ -1,0 +1,142 @@
+name: Temporary CLI Hardening Validation
+
+on:
+  push:
+    branches:
+      - refactor/terminal-shared-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  harden-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refactor/terminal-shared-foundation
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - name: Apply surgical CLI cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Before removing the direct dependency, prove transaction_flow is the
+          # only current CLI source file that names stellar_xdr directly.
+          stellar_refs="$(grep -R -n --include='*.rs' 'stellar_xdr' crates/cli/src || true)"
+          printf '%s\n' "$stellar_refs"
+          test "$(printf '%s\n' "$stellar_refs" | grep -c 'crates/cli/src/transaction_flow.rs' || true)" -eq 1
+          test "$(printf '%s\n' "$stellar_refs" | sed '/^$/d' | wc -l)" -eq 1
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f"{path}: expected {count} matches, found {actual}: {old!r}")
+              p.write_text(text.replace(old, new, count))
+
+          transaction = Path("crates/cli/src/transaction_flow.rs")
+          transaction.write_text('''use std::io::{self, Write};\n\npub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};\n\npub fn confirm_submission() -> Result<bool, String> {\n    print!("Submit this transaction? [y/N] ");\n    io::stdout()\n        .flush()\n        .map_err(|error| format!("unable to write prompt: {error}"))?;\n    let mut answer = String::new();\n    io::stdin()\n        .read_line(&mut answer)\n        .map_err(|error| format!("unable to read confirmation: {error}"))?;\n    Ok(matches!(\n        answer.trim().to_ascii_lowercase().as_str(),\n        "y" | "yes"\n    ))\n}\n''')
+
+          replace_exact(
+              "crates/cli/src/send.rs",
+              '''    destination_address: &str,\n    contact_name: Option<&str>,\n    memo: PaymentMemo,''',
+              '''    destination_address: &str,\n    memo: PaymentMemo,''',
+          )
+          replace_exact(
+              "crates/cli/src/send.rs",
+              '''        destination_address,\n        contact_name,\n        memo,''',
+              '''        destination_address,\n        None,\n        memo,''',
+          )
+          replace_exact(
+              "crates/cli/src/anchor.rs",
+              '''        &asset.display(),\n        &payment.destination,\n        None,\n        payment.memo,''',
+              '''        &asset.display(),\n        &payment.destination,\n        payment.memo,''',
+          )
+          replace_exact(
+              "crates/cli/src/wallet.rs",
+              '''fn parse_mnemonic_options<'a>(\n    arguments: &'a [String],\n    allow_strength: bool,\n) -> Result<(&'a str, MnemonicOptions), String> {''',
+              '''fn parse_mnemonic_options(\n    arguments: &[String],\n    allow_strength: bool,\n) -> Result<(&str, MnemonicOptions), String> {''',
+          )
+          replace_exact(
+              "crates/cli/Cargo.toml",
+              'stellar-xdr = "=28.0.0"\n',
+              '',
+          )
+
+          ci = Path(".github/workflows/ci.yml")
+          text = ci.read_text()
+          old = '''      - uses: dtolnay/rust-toolchain@stable\n        with:\n          components: rustfmt\n      - run: bash scripts/validate-boundary.sh\n      - run: cargo fmt --all -- --check\n      - run: cargo test --workspace --all-targets --locked\n'''
+          new = '''      - uses: dtolnay/rust-toolchain@stable\n        with:\n          components: rustfmt,clippy\n      - run: bash scripts/validate-boundary.sh\n      - run: cargo fmt --all -- --check\n      - run: cargo clippy -p fresnica-cli --all-targets --locked -- -D warnings\n      - run: cargo test --workspace --all-targets --locked\n'''
+          if text.count(old) != 1:
+              raise SystemExit(".github/workflows/ci.yml: rust gate block changed unexpectedly")
+          ci.write_text(text.replace(old, new, 1))
+          PY
+
+          rustfmt --edition 2021 --config skip_children=true \
+            crates/cli/src/transaction_flow.rs \
+            crates/cli/src/send.rs \
+            crates/cli/src/anchor.rs \
+            crates/cli/src/wallet.rs
+
+          ! grep -R -n --include='*.rs' 'stellar_xdr' crates/cli/src
+          ! grep -q '^stellar-xdr' crates/cli/Cargo.toml
+
+      - name: Validate strict CLI gate and behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/validate-boundary.sh
+          cargo fmt --all -- --check
+          git diff --check
+          cargo clippy -p fresnica-cli --all-targets --locked -- -D warnings
+          cargo test --workspace --all-targets --locked
+          cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Fresnica/fresnica
+          ref: 9ba6f23cefe34e8d5940b311ec78f27eed982fe7
+          path: upstream
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.5"
+          enable-cache: true
+
+      - name: Validate RefPython CLI compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv python install 3.11
+          (cd upstream/reference/python && uv sync --locked)
+          (cd upstream/reference/python && FRESNICA_RUST_CLI_BIN="$GITHUB_WORKSPACE/target/release/fresnica" uv run pytest -q tests/test_rust_cli_compat.py)
+
+      - name: Commit validated CLI hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "fresnica-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            .github/workflows/ci.yml \
+            crates/cli/Cargo.toml \
+            crates/cli/src/transaction_flow.rs \
+            crates/cli/src/send.rs \
+            crates/cli/src/anchor.rs \
+            crates/cli/src/wallet.rs
+          git diff --cached --quiet && { echo "No product diff produced"; exit 1; }
+          git commit -m "refactor(cli): tighten presentation boundary"
+          git push origin HEAD:refactor/terminal-shared-foundation
