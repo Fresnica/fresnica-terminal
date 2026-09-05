@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import re
+import sys
+
+MAIN = Path("crates/tui/src/main.rs")
+
+
+def add_tests() -> None:
+    text = MAIN.read_text()
+    marker = "fn browse_send_enters_form_without_horizon()"
+    if marker in text:
+        raise SystemExit("state-transition tests already present")
+    insert_at = text.rfind("\n}")
+    if insert_at < 0:
+        raise SystemExit("unable to find test module closing brace")
+    tests = r'''
+
+    fn local_app(watch_only: bool) -> (App, PathBuf) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!(
+            "fresnica-tui-local-state-{}-{nonce}",
+            std::process::id()
+        ));
+        let client = FresnicaClient::new(&home, "testnet").unwrap();
+        let wallet = WalletRecord {
+            name: "primary".to_owned(),
+            address: "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR".to_owned(),
+            wallet_type: if watch_only { "watch-only" } else { "secret" }.to_owned(),
+            network: "testnet".to_owned(),
+            secret: None,
+            metadata: Default::default(),
+        };
+        (
+            App {
+                client,
+                wallets: vec![wallet],
+                selected: 0,
+                balances: Vec::new(),
+                operations: Vec::new(),
+                offers: Vec::new(),
+                status: String::new(),
+                mode: Mode::Browse,
+            },
+            home,
+        )
+    }
+
+    #[test]
+    fn browse_send_enters_form_without_horizon() {
+        let (mut app, home) = local_app(false);
+        assert!(!app.handle_key(KeyCode::Char('s')));
+        assert!(matches!(app.mode, Mode::Send(_)));
+        assert_eq!(app.status, "Preparing payment");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn watch_only_send_is_blocked_without_horizon() {
+        let (mut app, home) = local_app(true);
+        assert!(!app.handle_key(KeyCode::Char('s')));
+        assert!(matches!(app.mode, Mode::Browse));
+        assert!(app.status.contains("watch-only"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn send_form_navigation_and_cancel_stay_local() {
+        let (mut app, home) = local_app(false);
+        app.handle_key(KeyCode::Char('s'));
+        app.handle_key(KeyCode::Char('1'));
+        match &app.mode {
+            Mode::Send(form) => {
+                assert_eq!(form.amount, "1");
+                assert_eq!(form.active, 0);
+            }
+            _ => panic!("expected send form"),
+        }
+        app.handle_key(KeyCode::Enter);
+        assert!(matches!(&app.mode, Mode::Send(form) if form.active == 1));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        assert_eq!(app.status, "Payment cancelled before review");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn trustline_action_and_cancel_stay_local() {
+        let (mut app, home) = local_app(false);
+        app.handle_key(KeyCode::Char('t'));
+        app.handle_key(KeyCode::Right);
+        assert!(matches!(
+            &app.mode,
+            Mode::Trustline(form) if form.action == TrustlineFormAction::SetLimit
+        ));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        assert_eq!(app.status, "Trustline change cancelled before review");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn market_entry_is_read_only_and_cancellable_for_watch_only_wallet() {
+        let (mut app, home) = local_app(true);
+        app.handle_key(KeyCode::Char('d'));
+        assert!(matches!(app.mode, Mode::Market(_)));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        assert_eq!(app.status, "Market selection cancelled");
+        let _ = std::fs::remove_dir_all(home);
+    }
+'''
+    MAIN.write_text(text[:insert_at] + tests + text[insert_at:])
+
+
+def split_tui() -> None:
+    text = MAIN.read_text()
+    state_start = text.index("enum Mode {")
+    app_start = text.index("struct App {", state_start)
+    render_start = text.index("    fn render(&self, frame: &mut Frame)", app_start)
+    render_end = text.index("\n}\n\nfn compact_asset", render_start)
+    helpers_start = text.index("fn compact_asset", render_end)
+    default_home_start = text.index("fn default_home", helpers_start)
+
+    state_body = text[state_start:app_start]
+    app_body = text[app_start:render_start] + "}\n"
+    render_methods = text[render_start:render_end]
+    render_helpers = text[helpers_start:default_home_start]
+
+    state_types = [
+        "Mode",
+        "MarketSnapshot",
+        "MarketForm",
+        "PreparedWrite",
+        "SendForm",
+        "TrustlineFormAction",
+        "TrustlineForm",
+        "OfferFormAction",
+        "OfferForm",
+    ]
+    for name in state_types:
+        state_body = re.sub(
+            rf"(?m)^(enum|struct) {name}(?= |\{{)",
+            rf"pub(super) \1 {name}",
+            state_body,
+            count=1,
+        )
+
+    for name in ["MarketSnapshot", "MarketForm", "SendForm", "TrustlineForm", "OfferForm"]:
+        match = re.search(
+            rf"pub\(super\) struct {name} \{{\n(.*?)\n\}}",
+            state_body,
+            re.S,
+        )
+        if not match:
+            raise SystemExit(f"unable to find struct block for {name}")
+        fields = re.sub(
+            r"(?m)^    ([a-zA-Z_][a-zA-Z0-9_]*):",
+            r"    pub(super) \1:",
+            match.group(1),
+        )
+        state_body = state_body[: match.start(1)] + fields + state_body[match.end(1) :]
+    state_body = re.sub(r"(?m)^    fn ", "    pub(super) fn ", state_body)
+
+    Path("crates/tui/src/state.rs").write_text(
+        '''use fresnica_client::{
+    CandleSnapshot, OfferRequest, OfferSide, OrderBookSnapshot, PairTradesSnapshot, PaymentRequest,
+    PreparedOffer, PreparedPayment, PreparedTrustline, TrustlineAction, TrustlineRequest,
+};
+
+'''
+        + state_body
+    )
+
+    app_body = app_body.replace("struct App {", "pub(super) struct App {", 1)
+    app_body = re.sub(
+        r"(?m)^    (client|wallets|selected|balances|operations|offers|status|mode):",
+        r"    pub(super) \1:",
+        app_body,
+    )
+    for method in ["new", "selected_wallet", "handle_key"]:
+        app_body = app_body.replace(
+            f"    fn {method}(",
+            f"    pub(super) fn {method}(",
+            1,
+        )
+    Path("crates/tui/src/app.rs").write_text(
+        '''use std::time::{SystemTime, UNIX_EPOCH};
+
+use fresnica_client::{BalanceSnapshot, FresnicaClient, HistorySnapshot, OpenOffer, WalletRecord};
+use ratatui::crossterm::event::KeyCode;
+use serde_json::Value;
+use zeroize::Zeroize;
+
+use super::state::{
+    MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, PreparedWrite, SendForm,
+    TrustlineForm, TrustlineFormAction,
+};
+
+'''
+        + app_body
+    )
+
+    render_methods = render_methods.replace(
+        "    fn render(&self, frame: &mut Frame)",
+        "    pub(super) fn render(&self, frame: &mut Frame)",
+        1,
+    )
+    render_helpers = render_helpers.replace(
+        "fn compact_asset(value: &str)",
+        "pub(super) fn compact_asset(value: &str)",
+        1,
+    )
+    Path("crates/tui/src/render.rs").write_text(
+        '''use fresnica_client::{
+    balance_asset_label, operation_summary, OfferReviewDetails, PreparedOffer, PreparedPayment,
+    PreparedTrustline,
+};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table};
+use ratatui::Frame;
+use serde_json::Value;
+
+use super::app::App;
+use super::state::{MarketForm, MarketSnapshot, Mode, OfferForm, SendForm, TrustlineForm};
+
+impl App {
+'''
+        + render_methods
+        + '''}
+
+'''
+        + render_helpers
+    )
+
+    prefix = text[:state_start]
+    suffix = text[default_home_start:]
+    old_imports = '''use std::env;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use fresnica_client::{
+    balance_asset_label, operation_summary, BalanceSnapshot, CandleSnapshot, FresnicaClient,
+    HistorySnapshot, OfferRequest, OfferReviewDetails, OfferSide, OpenOffer, OrderBookSnapshot,
+    PairTradesSnapshot, PaymentRequest, PreparedOffer, PreparedPayment, PreparedTrustline,
+    TrustlineAction, TrustlineRequest, WalletRecord,
+};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table};
+use ratatui::Frame;
+use serde_json::Value;
+use zeroize::Zeroize;
+'''
+    new_imports = '''mod app;
+mod render;
+mod state;
+
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process;
+
+use fresnica_client::FresnicaClient;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
+
+use app::App;
+'''
+    if old_imports not in prefix:
+        raise SystemExit("unexpected TUI import block")
+    prefix = prefix.replace(old_imports, new_imports, 1)
+
+    test_import = "mod tests {\n    use super::*;\n"
+    replacement = '''mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use fresnica_client::{OfferRequest, OfferSide, TrustlineAction, WalletRecord};
+    use ratatui::crossterm::event::KeyCode;
+
+    use super::render::compact_asset;
+    use super::state::{
+        MarketForm, Mode, OfferForm, OfferFormAction, SendForm, TrustlineForm, TrustlineFormAction,
+    };
+'''
+    if test_import not in suffix:
+        raise SystemExit("unexpected test module header")
+    suffix = suffix.replace(test_import, replacement, 1)
+    MAIN.write_text(prefix + suffix)
+
+    for workflow in [
+        Path(".github/workflows/ci.yml"),
+        Path(".github/workflows/release.yml"),
+    ]:
+        workflow_text = workflow.read_text()
+        old = "cargo clippy -p fresnica-cli --all-targets --locked -- -D warnings"
+        new = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+        if old not in workflow_text:
+            raise SystemExit(f"expected CLI clippy gate missing in {workflow}")
+        workflow.write_text(workflow_text.replace(old, new))
+
+
+def main() -> None:
+    if len(sys.argv) != 2 or sys.argv[1] not in {"tests", "split"}:
+        raise SystemExit("usage: tmp_tui_hardening.py tests|split")
+    if sys.argv[1] == "tests":
+        add_tests()
+    else:
+        split_tui()
+
+
+if __name__ == "__main__":
+    main()
