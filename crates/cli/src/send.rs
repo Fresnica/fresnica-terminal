@@ -5,7 +5,9 @@ use fresnica_client::{
 use crate::transaction_flow::confirm_submission;
 
 pub fn command_send(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+    crate::diagnostics::stage("payment: parse request");
     let request = SendRequest::parse(arguments)?;
+    crate::diagnostics::stage("payment: prepare reviewed transaction");
     let prepared = client.prepare_payment(&PaymentRequest {
         wallet: request.wallet.clone(),
         amount: request.amount,
@@ -26,6 +28,7 @@ pub(crate) fn review_and_submit_payment(
     memo: PaymentMemo,
     yes: bool,
 ) -> Result<(), String> {
+    crate::diagnostics::stage("payment: prepare anchor payment");
     let prepared = client.prepare_payment_to_address(
         record,
         amount_text,
@@ -42,13 +45,15 @@ fn review_and_submit_prepared(
     prepared: &PreparedPayment,
     yes: bool,
 ) -> Result<(), String> {
+    crate::diagnostics::stage("payment: review prepared transaction");
     render_review(&prepared.review);
     if !yes && !confirm_submission()? {
         println!("Transaction cancelled.");
         return Ok(());
     }
 
-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
+    crate::diagnostics::stage("payment: sign and submit");
+    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
     let submission = client.submit_payment(prepared, passcode.as_str().to_owned())?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {

@@ -16,6 +16,7 @@ pub fn command_dex_history(client: &FresnicaClient, arguments: &[String]) -> Res
 
 fn command_trades(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let request = PairHistoryRequest::parse(arguments, 20, "trades")?;
+    crate::diagnostics::stage("DEX: fetch pair trades");
     let snapshot = client.pair_trades(&request.base, &request.counter, request.limit)?;
 
     if request.json {
@@ -95,6 +96,7 @@ fn command_fills(client: &FresnicaClient, arguments: &[String]) -> Result<(), St
 
 fn command_candles(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let request = CandleRequest::parse(arguments)?;
+    crate::diagnostics::stage("DEX: fetch candles");
     let snapshot = client.candles(
         &request.base,
         &request.counter,

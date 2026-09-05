@@ -3,14 +3,18 @@ use fresnica_client::{FresnicaClient, OfferRequest, OfferReview, OfferReviewDeta
 use crate::transaction_flow::confirm_submission;
 
 pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+    crate::diagnostics::stage("DEX write: parse request");
     let request = WriteRequest::parse(arguments)?;
+    crate::diagnostics::stage("DEX write: prepare reviewed transaction");
     let prepared = client.prepare_offer(&request.service)?;
+    crate::diagnostics::stage("DEX write: review prepared transaction");
     render_offer_review(&prepared.review);
     if !request.yes && !confirm_submission()? {
         println!("Transaction cancelled.");
         return Ok(());
     }
-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
+    crate::diagnostics::stage("DEX write: sign and submit");
+    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
     let submission = client.submit_offer(&prepared, passcode.as_str().to_owned())?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {

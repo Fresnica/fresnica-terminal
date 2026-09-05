@@ -12,7 +12,7 @@ Current reference slice:
 - recent account activity;
 - manual refresh;
 - reviewed XLM/issued-asset payment preparation through `fresnica-client`;
-- masked passcode entry and SDK-backed submission with shared pending-transaction protection.
+- masked Fresnica passphrase entry and SDK-backed submission with shared pending-transaction protection.
 
 The TUI owns interaction state and confirmation. Payment validation, exact review data, transaction construction, signing handoff, submission, and pending retry protection are shared client-service behavior rather than copies of CLI command handlers.
 
