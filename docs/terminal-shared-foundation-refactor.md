@@ -1,6 +1,6 @@
 # Terminal Shared Foundation Refactor
 
-Status: active — foundation evidence complete; CLI/TUI hardening remains
+Status: active — foundation, CLI and TUI hardening complete; final integration pending
 
 Branch: `refactor/terminal-shared-foundation`
 
@@ -41,7 +41,7 @@ Rules:
 
 ## Target boundary
 
-Evidence now shows that Payment, Trustline and DEX already share their semantic implementation through `fresnica-client`.
+Evidence shows that Payment, Trustline and DEX already share their semantic implementation through `fresnica-client`.
 
 ```text
               Fresnica client / SDK
@@ -86,13 +86,9 @@ Fix or clarify in the owning Fresnica project first, then update Terminal's exac
 
 ## Execution order
 
-### Phase 0 - Conformance and boundary audit — complete for foundation flows
+### Phase 0 - Conformance and boundary audit — complete
 
-Map Terminal flows against:
-
-- Fresnica Capability / Flow contracts;
-- RefPython reference semantics;
-- current pinned Rust client / SDK behavior.
+Mapped Terminal flows against Fresnica Capability / Flow contracts, RefPython reference semantics and the pinned Rust client / SDK behavior.
 
 The audit established that Payment, Trustline and DEX semantics already live at the correct shared `fresnica-client` boundary. See `terminal-flow-audit.md`.
 
@@ -131,59 +127,70 @@ CLI argv --------------------> PaymentRequest
 
 The shared implementation already exists in `fresnica-client`. A Terminal-local Payment Flow wrapper would be a forwarding layer with no independent responsibility, so it is deliberately **not** created.
 
-### Phase 3 - Expand only proven boundaries — foundation review complete
+### Phase 3 - Expand only proven boundaries — complete
 
 - **Trustline:** same proven client boundary as Payment; no Terminal service layer justified.
 - **DEX writes:** same proven prepared-request/submission boundary; no Terminal service layer justified.
 - **Read flows:** shared query semantics already in `fresnica-client`; presentation stays local.
-- **Wallet lifecycle:** CLI presentation is isolated in its own module while wallet semantics remain upstream; TUI responsibility review remains.
-- **Anchor:** currently CLI-only orchestration, so no Terminal-wide extraction without a second consumer or stronger contract evidence.
+- **Wallet lifecycle:** CLI presentation is isolated in its own module while wallet semantics remain upstream.
+- **Anchor:** remains CLI-only orchestration, so no Terminal-wide extraction without a second consumer or stronger contract evidence.
 
 A previous pattern is never applied mechanically when the next flow has different semantics.
 
-### Phase 4 - CLI hardening
+### Phase 4 - CLI hardening — complete
 
-Before structural TUI work:
+The CLI is now primarily parsing, prompting, authorization interaction and rendering over the shared client boundary:
 
-- keep CLI primarily parsing, prompting, authorization interaction and rendering;
-- remove only proven forwarding/ownership duplication;
-- keep exact/public output regression coverage where compatibility matters;
-- keep the direct client/SDK dependency boundary explicit;
-- enforce a deliberate clippy gate rather than hiding warnings.
+- wallet presentation moved out of the entrypoint without moving wallet semantics;
+- redundant local transaction sign/submit forwarding removed;
+- direct CLI `stellar-xdr` dependency removed;
+- public `info` output has a real-binary regression test;
+- the source pin moves with the exact upstream passphrase fix;
+- no parser framework or command redesign was introduced.
 
-Current evidence already removed the redundant CLI transaction sign/submit wrapper and direct `stellar-xdr` dependency, isolated wallet presentation, and established `clippy -D warnings`. The remaining gate is final CLI responsibility/diff review, not a parser-framework rewrite.
+The remaining large Anchor module is intentionally not split into a shared layer for symmetry: there is no second Terminal Anchor consumer and no stronger contract evidence requiring such an abstraction.
 
-### Phase 5 - TUI responsibility and structure hardening
+### Phase 5 - TUI responsibility and structure hardening — complete
 
-Do not assume that TUI needs a new shared business-flow layer: Payment, Trustline and DEX already call the same `fresnica-client` capabilities as CLI.
+The TUI was handled test-first. Before moving code, five high-value no-Horizon state-transition tests were added for local browse/form/cancel/watch-only behavior. Those tests run with an isolated local `FresnicaClient` and complement the existing Form -> Request tests.
 
-Proceed test-first:
+Only after they passed, the former monolithic source was mechanically separated into natural presentation responsibilities:
 
-1. identify important `state + event -> state/effect` transitions;
-2. add direct tests around those transitions before moving code;
-3. separate natural presentation responsibilities such as state/forms/update/render only where the current file demonstrates a stable seam;
-4. preserve TUI behavior and shared-client semantics exactly;
-5. do not introduce a state-machine framework or new feature while splitting files.
+```text
+main.rs    415 lines  terminal lifecycle, options, tests
+app.rs     487 lines  application state and key/effect orchestration
+state.rs   328 lines  modes, forms and request construction
+render.rs  642 lines  ratatui rendering and display helpers
+```
 
-### Phase 6 - Final integration and release
+The split deliberately does **not** introduce a state-machine framework, a new business-flow crate, or a feature redesign. Payment, Trustline and DEX continue to call the same `fresnica-client` capabilities.
 
-The refactor branch remains the development target through the full milestone.
+The wider review also corrected one existing Offer-form help drift (`u/c` was advertised while `e/x` was implemented) and promoted clippy to the entire workspace:
 
-A **draft PR may be used as a CI/integration surface while development continues**, but it is not a merge signal.
+```text
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+Staged validation passed after the split: workspace clippy, all workspace tests, both release builds and `git diff --check`.
+
+### Phase 6 - Final integration and release — active
+
+The refactor branch remains the development target through the final integration gate. PR #3 is kept as a draft CI surface until the exact final head is formally green.
 
 Before finalizing/merging:
 
 - review the exact branch diff against the recorded baseline;
 - run repository boundary validation;
 - formatter check;
+- workspace-wide clippy with warnings denied;
 - workspace tests with lockfile;
-- focused compatibility/conformance tests;
+- focused RefPython compatibility/conformance tests;
 - release builds for CLI and TUI;
-- clippy gate;
 - verify no relay/probe/temp files remain;
-- verify documentation matches the final architecture.
+- verify documentation matches the final architecture;
+- verify the immutable v0.1.0 release marker remains unchanged.
 
-Only after the full refactor is complete and final CI is green:
+Only after the full final head is green:
 
 1. mark/finalize the PR from `refactor/terminal-shared-foundation` to `main`;
 2. merge according to repository convention;
@@ -197,7 +204,7 @@ Do not use `main` as the working target before this completion gate.
 
 - no new Fresnica Application framework/reference implementation;
 - no requirement for Desktop/Mobile to depend on Terminal code;
-- no new UI design during the foundation/CLI phases;
+- no new UI design during this refactor;
 - no feature expansion disguised as refactoring;
 - no broad Core/SDK cleanup beyond concrete upstream gaps exposed by this work;
 - no mechanical rewrite into a new command/parser/state-machine framework;

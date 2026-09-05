@@ -1,6 +1,6 @@
 # Terminal Flow Conformance Audit
 
-Status: active evidence record
+Status: active evidence record — implementation hardening complete; final integration pending
 
 Branch: `refactor/terminal-shared-foundation`
 
@@ -84,7 +84,7 @@ CLI delegates wallet lifecycle behavior to `fresnica_client::wallet` and storage
 
 The CLI wallet presentation has been mechanically isolated into `crates/cli/src/wallet.rs`; this is a presentation-module extraction, not a new semantic layer. Core wallet protection, envelope, signer and passphrase behavior remains in the owning Fresnica layers.
 
-TUI wallet state and rendering still require Phase 5 responsibility review before any structural extraction.
+TUI structural review found no competing wallet semantics that should be promoted into a new Terminal service layer. TUI application state remains presentation-local in `app.rs` / `state.rs` and continues to consume `fresnica-client` for shared wallet behavior.
 
 ## Anchor
 
@@ -128,15 +128,50 @@ The release workflow previously required the immutable marker for the already-pu
 
 PR validation now uses the current source pin without rewriting historical markers. Strict marker/source equality is required when a version changes or a release marker changes; publish still occurs only from a release-marker push to `main`.
 
+### 5. TUI state/structure debt — resolved without a framework rewrite
+
+The Rust TUI had one source file combining lifecycle, state/form models, key/effect handling, rendering and tests. Before moving code, five no-Horizon tests were added for high-value local transitions:
+
+- browse -> send form;
+- watch-only send rejection;
+- send form navigation/cancel;
+- trustline action selection/cancel;
+- watch-only read-only market entry/cancel.
+
+These tests run against a local `FresnicaClient` with an isolated temporary home and do not require Horizon. They raised direct TUI coverage to 15 unit tests.
+
+After those tests passed, the presentation code was mechanically separated into:
+
+```text
+crates/tui/src/main.rs    415 lines  lifecycle / options / tests
+crates/tui/src/app.rs     487 lines  application state / event effects
+crates/tui/src/state.rs   328 lines  modes / forms / request construction
+crates/tui/src/render.rs  642 lines  ratatui rendering / display helpers
+```
+
+The split did not introduce a state-machine framework or a second business-flow layer. Payment, Trustline and DEX semantics continue to come from `fresnica-client`.
+
+The same review found an existing presentation drift: Offer form help advertised `u update / c cancel` while the implemented keys and footer were `e edit / x cancel`. The help text now matches the implemented keys.
+
+### 6. Workspace clippy coverage — resolved
+
+Both normal CI and release validation now run:
+
+```text
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+The wider gate exposed one existing collapsible key-event match; it was fixed with an equivalent match guard rather than suppressed.
+
 ## Current architectural conclusion
 
-The original hypothesis was that CLI code would need to be extracted into a new Terminal-local shared Flow library before TUI migration. Phase 0 evidence narrowed that hypothesis:
+The original hypothesis was that CLI code would need to be extracted into a new Terminal-local shared Flow library before TUI migration. Repository evidence disproved that requirement:
 
-> For Payment, Trustline and DEX, the shared semantic implementation already exists in `fresnica-client`. CLI and TUI are already mostly presentation adapters. Adding a second shared forwarding layer would duplicate an existing boundary.
+> For Payment, Trustline and DEX, the shared semantic implementation already exists in `fresnica-client`. CLI and TUI are presentation adapters over that boundary. Adding a second forwarding layer would duplicate the existing owner.
 
-The refactor therefore proceeds by **removing proven defects and duplication, not by requiring a new crate**. A Terminal-local shared module/crate will be introduced only if later Wallet/Anchor/TUI evidence shows stable common behavior that neither belongs in presentation nor in Fresnica client/SDK.
+The final structure therefore removes proven defects and separates presentation responsibilities without inventing a new cross-platform authority. A Terminal-local shared module/crate should still be introduced only if future evidence shows stable common behavior that neither belongs in presentation nor in Fresnica client/SDK.
 
-## Foundation gates completed
+## Implementation gates completed
 
 1. Rust-client passphrase-lifetime fix landed upstream at exact SHA `9ba6f23cefe34e8d5940b311ec78f27eed982fe7`.
 2. Terminal exact source pin and lockfile moved to that SHA.
@@ -144,13 +179,17 @@ The refactor therefore proceeds by **removing proven defects and duplication, no
 4. Duplicate `info` output is fixed with a real-binary regression test.
 5. CLI wallet presentation is isolated without moving wallet semantics out of Fresnica.
 6. Direct CLI `stellar-xdr` dependency and redundant sign/submit forwarding were removed.
-7. CLI clippy is promoted to a `-D warnings` CI gate.
-8. Boundary, formatting, workspace tests, release builds and RefPython CLI compatibility passed on the exact product cleanup before the final PR integration run.
+7. CLI responsibility review is complete for this milestone; Anchor remains local because no second Terminal consumer justifies another shared layer.
+8. Five high-value local TUI state transitions are directly tested before structural movement.
+9. TUI presentation responsibilities are split into `main/app/state/render` without semantic redesign.
+10. Workspace-wide clippy is a `-D warnings` gate.
+11. Boundary, formatting, workspace tests, CLI/TUI release builds and RefPython CLI compatibility passed during staged implementation validation.
+12. Temporary validation workflow/script artifacts were removed from the final branch tree.
 
-## Next gates
+## Final integration gates
 
-1. Finish CLI responsibility review; do not invent a Payment/Trustline/DEX forwarding layer where `fresnica-client` already owns the behavior.
-2. Audit the TUI as `state + event -> effect` presentation code over the same shared client capabilities.
-3. Add high-value state/effect tests before mechanical TUI file splitting.
-4. Split the TUI only along responsibilities proven by the audit (state/forms/update/render), preserving behavior.
-5. Run the full final branch gates, remove all temporary artifacts, then merge once and decide the next Terminal release from the completed compatibility impact.
+1. Review the exact final branch diff against `main@a742ef3130e455c9cbdbf42378d07f3e1f30153f`.
+2. Require clean formal PR `CI` and `Release Terminal` validation on the final head.
+3. Confirm the v0.1.0 release marker remains immutable and no temporary artifacts are present.
+4. Merge the completed branch once, verify the resulting `main` SHA and post-merge CI.
+5. Select the next Terminal patch/minor version from the actual compatibility impact, then publish and verify the release artifacts/checksums.
