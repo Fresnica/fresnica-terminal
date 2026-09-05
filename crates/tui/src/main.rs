@@ -1736,4 +1736,101 @@ mod tests {
             }
         );
     }
+
+    fn local_app(watch_only: bool) -> (App, PathBuf) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!(
+            "fresnica-tui-local-state-{}-{nonce}",
+            std::process::id()
+        ));
+        let client = FresnicaClient::new(&home, "testnet").unwrap();
+        let wallet = WalletRecord {
+            name: "primary".to_owned(),
+            address: "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR".to_owned(),
+            wallet_type: if watch_only { "watch-only" } else { "secret" }.to_owned(),
+            network: "testnet".to_owned(),
+            secret: None,
+            metadata: Default::default(),
+        };
+        (
+            App {
+                client,
+                wallets: vec![wallet],
+                selected: 0,
+                balances: Vec::new(),
+                operations: Vec::new(),
+                offers: Vec::new(),
+                status: String::new(),
+                mode: Mode::Browse,
+            },
+            home,
+        )
+    }
+
+    #[test]
+    fn browse_send_enters_form_without_horizon() {
+        let (mut app, home) = local_app(false);
+        assert!(!app.handle_key(KeyCode::Char('s')));
+        assert!(matches!(app.mode, Mode::Send(_)));
+        assert_eq!(app.status, "Preparing payment");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn watch_only_send_is_blocked_without_horizon() {
+        let (mut app, home) = local_app(true);
+        assert!(!app.handle_key(KeyCode::Char('s')));
+        assert!(matches!(app.mode, Mode::Browse));
+        assert!(app.status.contains("watch-only"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn send_form_navigation_and_cancel_stay_local() {
+        let (mut app, home) = local_app(false);
+        app.handle_key(KeyCode::Char('s'));
+        app.handle_key(KeyCode::Char('1'));
+        match &app.mode {
+            Mode::Send(form) => {
+                assert_eq!(form.amount, "1");
+                assert_eq!(form.active, 0);
+            }
+            _ => panic!("expected send form"),
+        }
+        app.handle_key(KeyCode::Enter);
+        assert!(matches!(&app.mode, Mode::Send(form) if form.active == 1));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        assert_eq!(app.status, "Payment cancelled before review");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn trustline_action_and_cancel_stay_local() {
+        let (mut app, home) = local_app(false);
+        app.handle_key(KeyCode::Char('t'));
+        app.handle_key(KeyCode::Right);
+        assert!(matches!(
+            &app.mode,
+            Mode::Trustline(form) if form.action == TrustlineFormAction::SetLimit
+        ));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        assert_eq!(app.status, "Trustline change cancelled before review");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn market_entry_is_read_only_and_cancellable_for_watch_only_wallet() {
+        let (mut app, home) = local_app(true);
+        app.handle_key(KeyCode::Char('d'));
+        assert!(matches!(app.mode, Mode::Market(_)));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        assert_eq!(app.status, "Market selection cancelled");
+        let _ = std::fs::remove_dir_all(home);
+    }
 }
