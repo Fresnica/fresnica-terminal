@@ -1,0 +1,229 @@
+name: Release Terminal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "releases/terminal-v*.json"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "releases/terminal-v*.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "FRESNICA_REV"
+      - "crates/**"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      fresnica_rev: ${{ steps.release.outputs.fresnica_rev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$GITHUB_OUTPUT" <<'PY_RELEASE'
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+          import tomllib
+
+          output = pathlib.Path(sys.argv[1])
+          cli_version = tomllib.loads(pathlib.Path("crates/cli/Cargo.toml").read_text())["package"]["version"]
+          tui_version = tomllib.loads(pathlib.Path("crates/tui/Cargo.toml").read_text())["package"]["version"]
+          if cli_version != tui_version:
+              raise SystemExit("CLI and TUI versions must match for a terminal release")
+          version = cli_version
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+              raise SystemExit("invalid terminal release version")
+          marker = pathlib.Path(f"releases/terminal-v{version}.json")
+          if not marker.is_file():
+              raise SystemExit(f"missing release marker: {marker}")
+          if os.environ.get("GITHUB_EVENT_NAME") == "push":
+              changed = subprocess.check_output(
+                  ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", os.environ["GITHUB_SHA"]],
+                  text=True,
+              ).splitlines()
+              if marker.as_posix() not in changed:
+                  raise SystemExit(f"push did not add/change current release marker: {marker}")
+          data = json.loads(marker.read_text())
+          if data.get("kind") != "fresnica-terminal-release":
+              raise SystemExit("invalid terminal release marker kind")
+          if data.get("channel") != "preview":
+              raise SystemExit("terminal v0.1.0 must remain on the preview channel")
+          if data.get("version") != version:
+              raise SystemExit("release marker version mismatch")
+          fresnica_rev = pathlib.Path("FRESNICA_REV").read_text().strip()
+          if data.get("fresnica_rev") != fresnica_rev:
+              raise SystemExit("release marker Fresnica revision mismatch")
+          with output.open("a") as out:
+              out.write(f"version={version}\n")
+              out.write(f"tag=v{version}\n")
+              out.write(f"fresnica_rev={fresnica_rev}\n")
+          PY_RELEASE
+
+  validate:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: bash scripts/validate-boundary.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --all-targets --locked
+      - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - uses: actions/checkout@v4
+        with:
+          repository: Fresnica/fresnica
+          ref: ${{ needs.prepare.outputs.fresnica_rev }}
+          path: upstream
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.5"
+          enable-cache: true
+      - run: uv python install 3.11
+        working-directory: upstream/reference/python
+      - run: uv sync --locked
+        working-directory: upstream/reference/python
+      - run: uv run pytest -q tests/test_rust_cli_compat.py
+        working-directory: upstream/reference/python
+        env:
+          FRESNICA_RUST_CLI_BIN: ${{ github.workspace }}/target/release/fresnica
+
+  build:
+    needs: [prepare, validate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            extension: ""
+          - os: macos-latest
+            extension: ""
+          - os: windows-latest
+            extension: ".exe"
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - name: Package Unix binaries
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p package dist
+          cp "target/release/fresnica${{ matrix.extension }}" package/
+          cp "target/release/fresnica-tui${{ matrix.extension }}" package/
+          cp README.md package/README.md
+          cp crates/cli/README.md package/CLI-README.md
+          cp crates/tui/README.md package/TUI-README.md
+          os="$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
+          arch="$(printf '%s' "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')"
+          (cd package && zip -9 -r "../dist/fresnica-terminal-${VERSION}-${os}-${arch}.zip" .)
+      - name: Package Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package, dist | Out-Null
+          Copy-Item "target/release/fresnica${{ matrix.extension }}" package/
+          Copy-Item "target/release/fresnica-tui${{ matrix.extension }}" package/
+          Copy-Item README.md package/README.md
+          Copy-Item crates/cli/README.md package/CLI-README.md
+          Copy-Item crates/tui/README.md package/TUI-README.md
+          $os = $env:RUNNER_OS.ToLower()
+          $arch = $env:RUNNER_ARCH.ToLower()
+          Compress-Archive -Path package/* -DestinationPath "dist/fresnica-terminal-$env:VERSION-$os-$arch.zip" -CompressionLevel Optimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push'
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      FRESNICA_REV: ${{ needs.prepare.outputs.fresnica_rev }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: terminal-*
+          path: dist
+          merge-multiple: true
+      - name: Build release manifest and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY_MANIFEST'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          dist = Path("dist")
+          assets = {}
+          for path in sorted(dist.glob("*.zip")):
+              assets[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+          manifest = {
+              "kind": "fresnica-terminal-release-manifest",
+              "version": os.environ["VERSION"],
+              "commit": os.environ["GITHUB_SHA"],
+              "fresnica_rev": os.environ["FRESNICA_REV"],
+              "assets": assets,
+          }
+          (dist / "fresnica-terminal-release-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n"
+          )
+          PY_MANIFEST
+          (cd dist && sha256sum *.zip fresnica-terminal-release-manifest.json > SHA256SUMS)
+      - name: Publish immutable preview tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          cat > release-notes.md <<EOF
+          Fresnica Terminal v${VERSION} is the first independent preview release of the Rust terminal products.
+
+          - \`fresnica\`: CLI with safe \`-v\` / \`-vv\` diagnostics.
+          - \`fresnica-tui\`: interactive terminal UI from the same source line.
+          - Shared Fresnica source: \`${FRESNICA_REV}\`, the commit that published Native SDK v0.3.0.
+          - Terminal consumes the Rust client/SDK boundary directly; Native/UniFFI binaries are not a dependency.
+          EOF
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Fresnica Terminal v${VERSION}" \
+            --prerelease \
+            --notes-file release-notes.md \
+            dist/*.zip \
+            dist/fresnica-terminal-release-manifest.json \
+            dist/SHA256SUMS
