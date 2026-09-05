@@ -49,26 +49,48 @@ jobs:
           version = cli_version
           if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
               raise SystemExit("invalid terminal release version")
-          marker = pathlib.Path(f"releases/terminal-v{version}.json")
-          if not marker.is_file():
-              raise SystemExit(f"missing release marker: {marker}")
-          if os.environ.get("GITHUB_EVENT_NAME") == "push":
+
+          event = os.environ.get("GITHUB_EVENT_NAME")
+          changed = []
+          version_changed = False
+          if event == "push":
               changed = subprocess.check_output(
                   ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", os.environ["GITHUB_SHA"]],
                   text=True,
               ).splitlines()
-              if marker.as_posix() not in changed:
-                  raise SystemExit(f"push did not add/change current release marker: {marker}")
-          data = json.loads(marker.read_text())
-          if data.get("kind") != "fresnica-terminal-release":
-              raise SystemExit("invalid terminal release marker kind")
-          if data.get("channel") != "preview":
-              raise SystemExit("terminal v0.1.0 must remain on the preview channel")
-          if data.get("version") != version:
-              raise SystemExit("release marker version mismatch")
+          elif event == "pull_request":
+              changed = subprocess.check_output(
+                  ["git", "diff", "--name-only", "HEAD^1", "HEAD"],
+                  text=True,
+              ).splitlines()
+              base_cli = subprocess.check_output(
+                  ["git", "show", "HEAD^1:crates/cli/Cargo.toml"],
+                  text=True,
+              )
+              base_version = tomllib.loads(base_cli)["package"]["version"]
+              version_changed = base_version != version
+
+          marker_pattern = re.compile(r"releases/terminal-v[0-9]+\.[0-9]+\.[0-9]+\.json")
+          changed_markers = [path for path in changed if marker_pattern.fullmatch(path)]
+          marker = pathlib.Path(f"releases/terminal-v{version}.json")
+          validate_marker = event == "push" or version_changed or bool(changed_markers)
+
           fresnica_rev = pathlib.Path("FRESNICA_REV").read_text().strip()
-          if data.get("fresnica_rev") != fresnica_rev:
-              raise SystemExit("release marker Fresnica revision mismatch")
+          if validate_marker:
+              if not marker.is_file():
+                  raise SystemExit(f"missing release marker: {marker}")
+              if marker.as_posix() not in changed_markers:
+                  raise SystemExit(f"release change did not add/change current release marker: {marker}")
+              data = json.loads(marker.read_text())
+              if data.get("kind") != "fresnica-terminal-release":
+                  raise SystemExit("invalid terminal release marker kind")
+              if data.get("channel") != "preview":
+                  raise SystemExit("terminal release marker must remain on the preview channel")
+              if data.get("version") != version:
+                  raise SystemExit("release marker version mismatch")
+              if data.get("fresnica_rev") != fresnica_rev:
+                  raise SystemExit("release marker Fresnica revision mismatch")
+
           with output.open("a") as out:
               out.write(f"version={version}\n")
               out.write(f"tag=v{version}\n")
@@ -82,9 +104,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt,clippy
       - run: bash scripts/validate-boundary.sh
       - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       - run: cargo build --release --locked -p fresnica-cli --bin fresnica
       - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
@@ -211,12 +234,12 @@ jobs:
             exit 1
           fi
           cat > release-notes.md <<EOF
-          Fresnica Terminal v${VERSION} is the first independent preview release of the Rust terminal products.
+          Fresnica Terminal v${VERSION} preview release.
 
           - \`fresnica\`: CLI with safe \`-v\` / \`-vv\` diagnostics.
           - \`fresnica-tui\`: interactive terminal UI from the same source line.
-          - Shared Fresnica source: \`${FRESNICA_REV}\`, the commit that published Native SDK v0.3.0.
-          - Terminal consumes the Rust client/SDK boundary directly; Native/UniFFI binaries are not a dependency.
+          - Shared Fresnica source: \`${FRESNICA_REV}\`.
+          - Terminal consumes the Rust client/SDK boundary directly; Native/UniFFI binaries are not a runtime dependency.
           EOF
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \

@@ -1016,7 +1016,6 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
- "stellar-xdr",
  "time",
  "ureq",
  "zeroize",
@@ -1025,7 +1024,7 @@ dependencies = [
 [[package]]
 name = "fresnica-client"
 version = "0.1.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=b1d0427ec5c5398c3bb2e01b886e4e3084e46a73#b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=9ba6f23cefe34e8d5940b311ec78f27eed982fe7#9ba6f23cefe34e8d5940b311ec78f27eed982fe7"
 dependencies = [
  "base64 0.23.1",
  "fresnica-core",
@@ -1048,7 +1047,7 @@ dependencies = [
 [[package]]
 name = "fresnica-core"
 version = "0.2.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=b1d0427ec5c5398c3bb2e01b886e4e3084e46a73#b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=9ba6f23cefe34e8d5940b311ec78f27eed982fe7#9ba6f23cefe34e8d5940b311ec78f27eed982fe7"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -1069,7 +1068,7 @@ dependencies = [
 [[package]]
 name = "fresnica-sdk"
 version = "0.2.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=b1d0427ec5c5398c3bb2e01b886e4e3084e46a73#b1d0427ec5c5398c3bb2e01b886e4e3084e46a73"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=9ba6f23cefe34e8d5940b311ec78f27eed982fe7#9ba6f23cefe34e8d5940b311ec78f27eed982fe7"
 dependencies = [
  "base64 0.23.1",
  "fresnica-core",
