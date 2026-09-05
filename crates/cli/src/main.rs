@@ -240,7 +240,6 @@ fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), Str
         }
     );
     println!("SDK/Core:   Rust (direct link)");
-    println!("SDK/Core:   Rust (direct link)");
     println!(
         "Shared API:  Fresnica SDK/client @ {}",
         diagnostics::short_fresnica_revision()

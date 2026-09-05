@@ -40,7 +40,7 @@ pub fn sign_and_submit(
         network,
         envelope,
         horizon,
-        passcode.as_str().to_owned(),
+        passcode.as_str(),
     )?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {

@@ -54,7 +54,7 @@ fn review_and_submit_prepared(
 
     crate::diagnostics::stage("payment: sign and submit");
     let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-    let submission = client.submit_payment(prepared, passcode.as_str().to_owned())?;
+    let submission = client.submit_payment(prepared, passcode.as_str())?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {
         println!("Ledger:    {ledger}");

@@ -894,19 +894,19 @@ impl App {
         if submit {
             let result = match &mut self.mode {
                 Mode::Passcode { prepared, passcode } => {
-                    let submitted_passcode = passcode.clone();
-                    passcode.zeroize();
-                    match prepared {
+                    let result = match prepared {
                         PreparedWrite::Payment(prepared) => {
-                            self.client.submit_payment(prepared, submitted_passcode)
+                            self.client.submit_payment(prepared, passcode.as_str())
                         }
                         PreparedWrite::Trustline(prepared) => {
-                            self.client.submit_trustline(prepared, submitted_passcode)
+                            self.client.submit_trustline(prepared, passcode.as_str())
                         }
                         PreparedWrite::Offer(prepared) => {
-                            self.client.submit_offer(prepared, submitted_passcode)
+                            self.client.submit_offer(prepared, passcode.as_str())
                         }
-                    }
+                    };
+                    passcode.zeroize();
+                    result
                 }
                 _ => return false,
             };
