@@ -5,7 +5,9 @@ use fresnica_client::{
 use crate::transaction_flow::confirm_submission;
 
 pub fn command_trust(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+    crate::diagnostics::stage("trustline: parse request");
     let request = TrustRequest::parse(arguments)?;
+    crate::diagnostics::stage("trustline: prepare reviewed transaction");
     let prepared = client.prepare_trustline(&request.service_request())?;
     review_and_submit(client, &prepared, request.yes())
 }
@@ -15,13 +17,15 @@ fn review_and_submit(
     prepared: &PreparedTrustline,
     yes: bool,
 ) -> Result<(), String> {
+    crate::diagnostics::stage("trustline: review prepared transaction");
     render_review(&prepared.review);
     if !yes && !confirm_submission()? {
         println!("Transaction cancelled.");
         return Ok(());
     }
 
-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
+    crate::diagnostics::stage("trustline: sign and submit");
+    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
     let submission = client.submit_trustline(prepared, passcode.as_str().to_owned())?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {

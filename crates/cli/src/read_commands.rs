@@ -3,6 +3,7 @@ use serde_json::Value;
 
 pub fn command_account(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let options = parse_output_options(arguments, "fresnica account [--wallet NAME] [--json]")?;
+    crate::diagnostics::stage("account: fetch Horizon state");
     let snapshot = client.account(options.wallet.as_deref())?;
     if options.json {
         println!(
@@ -53,6 +54,7 @@ pub fn command_account(client: &FresnicaClient, arguments: &[String]) -> Result<
 
 pub fn command_balance(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let options = parse_output_options(arguments, "fresnica balance [--wallet NAME] [--json]")?;
+    crate::diagnostics::stage("balance: fetch Horizon state");
     let snapshot = client.balances(options.wallet.as_deref())?;
 
     if options.json {
@@ -86,6 +88,7 @@ pub fn command_balance(client: &FresnicaClient, arguments: &[String]) -> Result<
 
 pub fn command_history(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let options = parse_history_options(arguments)?;
+    crate::diagnostics::stage("history: fetch Horizon operations");
     let snapshot = client.history(options.wallet.as_deref(), options.limit)?;
 
     if options.json {

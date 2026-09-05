@@ -32,7 +32,8 @@ pub fn sign_and_submit(
     envelope: &mut TransactionEnvelope,
     horizon: &HorizonGateway,
 ) -> Result<(), String> {
-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
+    crate::diagnostics::stage("transaction: sign and submit");
+    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
     let submission = client_sign_and_submit(
         storage,
         record,

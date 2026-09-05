@@ -28,12 +28,30 @@ pub fn command_anchor(client: &FresnicaClient, arguments: &[String]) -> Result<(
         return Err(usage().to_owned());
     };
     match command {
-        "discover" => command_discover(client, &arguments[1..]),
-        "auth" => command_auth(client, &arguments[1..]),
-        "deposit" => command_transfer(client, AnchorTransferKind::Deposit, &arguments[1..]),
-        "withdraw" => command_transfer(client, AnchorTransferKind::Withdraw, &arguments[1..]),
-        "status" => command_status(client, &arguments[1..]),
-        "customer" => command_customer(client, &arguments[1..]),
+        "discover" => {
+            crate::diagnostics::stage("anchor: discover capabilities");
+            command_discover(client, &arguments[1..])
+        }
+        "auth" => {
+            crate::diagnostics::stage("anchor: SEP-10 authentication");
+            command_auth(client, &arguments[1..])
+        }
+        "deposit" => {
+            crate::diagnostics::stage("anchor: start deposit");
+            command_transfer(client, AnchorTransferKind::Deposit, &arguments[1..])
+        }
+        "withdraw" => {
+            crate::diagnostics::stage("anchor: start withdrawal");
+            command_transfer(client, AnchorTransferKind::Withdraw, &arguments[1..])
+        }
+        "status" => {
+            crate::diagnostics::stage("anchor: fetch transfer status");
+            command_status(client, &arguments[1..])
+        }
+        "customer" => {
+            crate::diagnostics::stage("anchor: SEP-12 customer flow");
+            command_customer(client, &arguments[1..])
+        }
         _ => Err(usage().to_owned()),
     }
 }
@@ -778,8 +796,10 @@ fn authenticate_anchor_sep10(
     home_domain: &str,
     capabilities: &AnchorCapabilities,
 ) -> Result<Zeroizing<String>, String> {
+    crate::diagnostics::stage("anchor SEP-10: fetch account authorization state");
     let ledger_account = client.ledger_account(&record.address)?;
     let authorization = sep10_authorization_plan(ledger_account.as_ref(), &record.address)?;
+    crate::diagnostics::stage("anchor SEP-10: request and validate challenge");
     let challenge =
         prepare_anchor_sep10_challenge(network, &record.address, home_domain, capabilities)?;
     let mut envelope = parse_transaction_xdr(challenge.transaction_xdr())?;
@@ -790,7 +810,8 @@ fn authenticate_anchor_sep10(
         key: challenge.server_signing_key().to_owned(),
     });
     let excluded = BTreeSet::from([challenge.server_signing_key().to_owned()]);
-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
+    crate::diagnostics::stage("anchor SEP-10: sign required local conditions");
+    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
     sign_needed_local_ed25519(
         client.storage(),
         &authorization,
@@ -801,6 +822,7 @@ fn authenticate_anchor_sep10(
         &mut envelope,
         passcode.as_str(),
     )?;
+    crate::diagnostics::stage("anchor SEP-10: exchange signed challenge");
     exchange_anchor_sep10_challenge(network, &challenge, &authorization, &envelope)
 }
 

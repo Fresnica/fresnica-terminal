@@ -1,6 +1,7 @@
 mod anchor;
 mod contacts;
 mod dex;
+mod diagnostics;
 mod friendbot;
 mod read_commands;
 mod send;
@@ -38,7 +39,12 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
   fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
   fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...
+
+Global options:
+  -v, --verbose                Show safe execution stages and failure context
+  -vv                          Also show CLI version, network, and pinned Fresnica source
 
 Network commands:
   account                       Show current Horizon account state
@@ -79,15 +85,24 @@ independent Core salt/nonce-derived encryption keys.
 "#;
 
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("Error: {error}");
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    diagnostics::set_verbosity(diagnostics::leading_verbosity(&arguments));
+    let global = match GlobalOptions::parse(&arguments) {
+        Ok(global) => global,
+        Err(error) => {
+            diagnostics::render_error(&error);
+            process::exit(2);
+        }
+    };
+    diagnostics::set_verbosity(global.verbosity);
+    diagnostics::startup(&global.network);
+    if let Err(error) = run(global) {
+        diagnostics::render_error(&error);
         process::exit(2);
     }
 }
 
-fn run() -> Result<(), String> {
-    let arguments: Vec<String> = env::args().skip(1).collect();
-    let global = GlobalOptions::parse(&arguments)?;
+fn run(global: GlobalOptions) -> Result<(), String> {
     if global.command.is_empty() {
         print!("{HELP}");
         return Ok(());
@@ -97,12 +112,18 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if global.command == ["--version"] || global.command == ["-V"] {
-        println!("fresnica {} · Rust Core linked", env!("CARGO_PKG_VERSION"));
+        println!(
+            "fresnica {} · Fresnica source {}",
+            env!("CARGO_PKG_VERSION"),
+            diagnostics::short_fresnica_revision()
+        );
         return Ok(());
     }
 
+    diagnostics::stage("initialize Fresnica client");
     let client = FresnicaClient::new(&global.home, &global.network)?;
     let storage = client.storage();
+    diagnostics::stage(command_stage(&global.command));
     match global.command[0].as_str() {
         "info" => command_info(storage, &global.command[1..]),
         "account" => read_commands::command_account(&client, &global.command[1..]),
@@ -121,6 +142,7 @@ fn run() -> Result<(), String> {
 struct GlobalOptions {
     home: PathBuf,
     network: String,
+    verbosity: u8,
     command: Vec<String>,
 }
 
@@ -128,9 +150,18 @@ impl GlobalOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut home = None;
         let mut network = "mainnet".to_owned();
+        let mut verbosity = 0u8;
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].as_str() {
+                "-v" | "--verbose" => {
+                    verbosity = (verbosity + 1).min(2);
+                    index += 1;
+                }
+                "-vv" => {
+                    verbosity = 2;
+                    index += 1;
+                }
                 "--home" => {
                     index += 1;
                     let value = arguments
@@ -158,8 +189,25 @@ impl GlobalOptions {
         Ok(Self {
             home,
             network,
+            verbosity,
             command: arguments[index..].to_vec(),
         })
+    }
+}
+
+fn command_stage(command: &[String]) -> &'static str {
+    match command.first().map(String::as_str) {
+        Some("info") => "CLI command: info",
+        Some("account") => "CLI command: account",
+        Some("balance" | "assets") => "CLI command: balance",
+        Some("history") => "CLI command: history",
+        Some("send") => "CLI command: send",
+        Some("contact") => "CLI command: contact",
+        Some("trust") => "CLI command: trust",
+        Some("dex") => "CLI command: dex",
+        Some("anchor") => "CLI command: anchor",
+        Some("wallet") => "CLI command: wallet",
+        _ => "CLI command dispatch",
     }
 }
 
@@ -191,7 +239,10 @@ fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), Str
             "no"
         }
     );
-    println!("SDK/Core:   Rust (direct link)");
+    println!(
+        "Shared API:  Fresnica SDK/client @ {}",
+        diagnostics::short_fresnica_revision()
+    );
     Ok(())
 }
 
@@ -693,5 +744,14 @@ mod tests {
         assert_eq!(options.index, 4);
         assert_eq!(options.language.as_deref(), Some("japanese"));
         assert_eq!(options.strength, 128);
+    }
+
+    #[test]
+    fn parses_verbose_global_options() {
+        let args = ["-v", "--network", "testnet", "--verbose", "account"].map(str::to_owned);
+        let global = GlobalOptions::parse(&args).unwrap();
+        assert_eq!(global.verbosity, 2);
+        assert_eq!(global.network, "testnet");
+        assert_eq!(global.command, ["account"]);
     }
 }

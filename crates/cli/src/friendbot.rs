@@ -23,6 +23,7 @@ pub fn command_fund(
         ));
     }
 
+    crate::diagnostics::stage("Friendbot: request testnet funding");
     let result = FriendbotClient::new(FRIENDBOT_URL).fund(&record.address)?;
     let mut message = format!("Funded wallet \"{}\" on testnet", record.name);
     if let Some(hash) = result.get("hash").and_then(Value::as_str) {
@@ -53,11 +54,11 @@ impl FriendbotClient {
         let mut response = agent
             .get(&url)
             .call()
-            .map_err(|_| "Unable to fund testnet account".to_owned())?;
+            .map_err(|error| format!("Unable to fund testnet account: {error}"))?;
         let text = response
             .body_mut()
             .read_to_string()
-            .map_err(|_| "Unable to fund testnet account".to_owned())?;
+            .map_err(|error| format!("Unable to fund testnet account: {error}"))?;
         Ok(serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({"status": text})))
     }
 }
@@ -114,10 +115,9 @@ mod tests {
     #[test]
     fn rejects_unsuccessful_friendbot_response() {
         let base = mock_friendbot(400, r#"{"detail":"bad account"}"#);
-        assert_eq!(
-            FriendbotClient::new(&base).fund("GACCOUNT").unwrap_err(),
-            "Unable to fund testnet account"
-        );
+        let error = FriendbotClient::new(&base).fund("GACCOUNT").unwrap_err();
+        assert!(error.starts_with("Unable to fund testnet account: "));
+        assert_ne!(error, "Unable to fund testnet account");
     }
 
     #[test]

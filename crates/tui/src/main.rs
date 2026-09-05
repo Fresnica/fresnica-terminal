@@ -32,7 +32,7 @@ Keys:
   d           open the DEX market selector
 
 Write flow:
-  form -> shared service preparation -> review -> passcode -> SDK/Core signing -> Horizon
+  form -> shared service preparation -> review -> Fresnica passphrase -> SDK/Core signing -> Horizon
 
 The Rust TUI is an engineering/reference UI over fresnica-client. It does not
 implement separate wallet, cryptographic, transaction, or Horizon semantics.
@@ -771,7 +771,7 @@ impl App {
                         prepared: PreparedWrite::Payment(prepared.clone()),
                         passcode: String::new(),
                     };
-                    self.status = "Enter Fresnica passcode; input is masked".to_owned();
+                    self.status = "Enter Fresnica passphrase; input is masked".to_owned();
                 }
                 KeyCode::Char('n') | KeyCode::Esc => {
                     self.mode = Mode::Browse;
@@ -785,7 +785,7 @@ impl App {
                         prepared: PreparedWrite::Trustline(prepared.clone()),
                         passcode: String::new(),
                     };
-                    self.status = "Enter Fresnica passcode; input is masked".to_owned();
+                    self.status = "Enter Fresnica passphrase; input is masked".to_owned();
                 }
                 KeyCode::Char('n') | KeyCode::Esc => {
                     self.mode = Mode::Browse;
@@ -799,7 +799,7 @@ impl App {
                         prepared: PreparedWrite::Offer(prepared.clone()),
                         passcode: String::new(),
                     };
-                    self.status = "Enter Fresnica passcode; input is masked".to_owned();
+                    self.status = "Enter Fresnica passphrase; input is masked".to_owned();
                 }
                 KeyCode::Char('n') | KeyCode::Esc => {
                     self.mode = Mode::Browse;
@@ -814,7 +814,7 @@ impl App {
                     self.status = "Transaction cancelled before signing".to_owned();
                 }
                 KeyCode::Enter if passcode.is_empty() => {
-                    self.status = "Fresnica passcode cannot be empty".to_owned();
+                    self.status = "Fresnica passphrase cannot be empty".to_owned();
                 }
                 KeyCode::Enter => submit = true,
                 KeyCode::Backspace => {
@@ -920,7 +920,7 @@ impl App {
                     };
                 }
                 Err(error) if error.contains("invalid Fresnica passcode") => {
-                    self.status = error;
+                    self.status = error.replace("Fresnica passcode", "Fresnica passphrase");
                 }
                 Err(error) => {
                     self.mode = Mode::Browse;
@@ -1511,9 +1511,11 @@ impl App {
         let area = popup_area(frame.area());
         let masked = "*".repeat(passcode.chars().count());
         let lines = vec![
-            Line::from("The passcode is passed to the shared client service only after review."),
+            Line::from(
+                "The Fresnica passphrase is passed to the shared client service only after review.",
+            ),
             Line::from(""),
-            Line::from(format!("Fresnica passcode: {masked}")),
+            Line::from(format!("Fresnica passphrase: {masked}")),
             Line::from(""),
             Line::from("Enter submits the prepared transaction."),
         ];

@@ -22,6 +22,7 @@ pub fn command_dex(client: &FresnicaClient, arguments: &[String]) -> Result<(), 
 
 fn command_orderbook(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let request = OrderbookRequest::parse(arguments)?;
+    crate::diagnostics::stage("DEX: fetch order book");
     let orderbook = client.order_book(&request.selling, &request.buying)?;
     if request.json {
         println!(
@@ -60,6 +61,7 @@ fn command_orderbook(client: &FresnicaClient, arguments: &[String]) -> Result<()
 
 fn command_offers(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let request = OffersRequest::parse(arguments)?;
+    crate::diagnostics::stage("DEX: fetch open offers");
     let snapshot = client.open_offers(request.wallet.as_deref(), request.limit)?;
     if request.json {
         println!(
