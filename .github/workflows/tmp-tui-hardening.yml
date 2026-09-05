@@ -40,6 +40,9 @@ jobs:
           set -euo pipefail
           python3 scripts/tmp_tui_hardening.py split
           sed -i 's/MarketForm, MarketSnapshot, Mode, OfferForm, SendForm, TrustlineForm/MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, SendForm, TrustlineForm, TrustlineFormAction/' crates/tui/src/render.rs
+          sed -i 's/Action: b buy, s sell, u update, c cancel/Action: b buy, s sell, e edit, x cancel/' crates/tui/src/render.rs
+          grep -q 'Action: b buy, s sell, e edit, x cancel' crates/tui/src/render.rs
+          if grep -q 'u update, c cancel' crates/tui/src/render.rs; then exit 1; fi
           cargo fmt --all
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo test --workspace --all-targets --locked
