@@ -1,0 +1,157 @@
+name: Temporary Wallet Extraction Validation
+
+on:
+  push:
+    branches:
+      - refactor/terminal-shared-foundation
+
+permissions:
+  contents: write
+
+jobs:
+  extract-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refactor/terminal-shared-foundation
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - name: Extract wallet presentation responsibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/cli/src/main.rs")
+          text = path.read_text()
+
+          def require_once(needle):
+              count = text.count(needle)
+              if count != 1:
+                  raise SystemExit(f"main.rs: expected exactly one {needle!r}, found {count}")
+
+          for needle in (
+              "mod trust;\n",
+              "use std::io::{self, Write};\n",
+              "fn command_info(",
+              "fn command_wallet(",
+              "fn prompt_hidden(",
+              "fn prompt_new_passcode(",
+              "fn validate_network(",
+              "fn parses_create_options_without_cli_framework()",
+          ):
+              require_once(needle)
+          if "mod wallet;" in text or Path("crates/cli/src/wallet.rs").exists():
+              raise SystemExit("wallet module already exists")
+
+          # Move the contiguous wallet command/lifecycle block out of main.rs.
+          start = text.index("fn command_info(")
+          prompt_hidden = text.index("fn prompt_hidden(")
+          prompt_new = text.index("fn prompt_new_passcode(")
+          validate_network = text.index("fn validate_network(")
+          if not (start < prompt_hidden < prompt_new < validate_network):
+              raise SystemExit("main.rs wallet markers are out of expected order")
+
+          wallet_commands = text[start:prompt_hidden]
+          prompt_new_block = text[prompt_new:validate_network]
+
+          # Remove only the wallet-specific unit test from main.rs; it moves with the parser.
+          test_start = text.index("    #[test]\n    fn parses_create_options_without_cli_framework()")
+          next_test = text.index("    #[test]\n    fn parses_verbose_global_options()", test_start)
+          wallet_test = text[test_start:next_test]
+
+          main = text[:start] + text[prompt_hidden:prompt_new] + text[validate_network:]
+          main = main[:main.index("    #[test]\n    fn parses_create_options_without_cli_framework()")] + main[main.index("    #[test]\n    fn parses_verbose_global_options()") :]
+
+          # main.rs keeps only global CLI dependencies and dispatches wallet work to the module.
+          main = main.replace("mod trust;\n", "mod trust;\nmod wallet;\n", 1)
+          main = main.replace("use std::io::{self, Write};\n", "", 1)
+          old_client_import = '''use fresnica_client::{\n    wallet as wallet_ops, FresnicaClient, RevealedSigningMaterial, WalletRecord, WalletStorage,\n};\nuse fresnica_sdk::{FresnicaSdk, SdkAccountKind};\nuse serde_json::Map;\n'''
+          if main.count(old_client_import) != 1:
+              raise SystemExit("main.rs client import block changed unexpectedly")
+          main = main.replace(old_client_import, "use fresnica_client::FresnicaClient;\n", 1)
+          main = main.replace(
+              '        "info" => command_info(storage, &global.command[1..]),',
+              '        "info" => wallet::command_info(storage, &global.command[1..]),',
+              1,
+          )
+          main = main.replace(
+              '        "wallet" => command_wallet(storage, &global.network, &global.command[1..]),',
+              '        "wallet" => wallet::command_wallet(storage, &global.network, &global.command[1..]),',
+              1,
+          )
+
+          if "fn command_wallet(" in main or "fn wallet_create(" in main or "fn prompt_new_passcode(" in main:
+              raise SystemExit("wallet implementation leaked into main.rs after extraction")
+
+          wallet_commands = wallet_commands.replace(
+              "fn command_info(", "pub(crate) fn command_info(", 1
+          ).replace(
+              "fn command_wallet(", "pub(crate) fn command_wallet(", 1
+          )
+
+          header = '''use std::io::{self, Write};\n\nuse fresnica_client::{\n    wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage,\n};\nuse fresnica_sdk::{FresnicaSdk, SdkAccountKind};\nuse serde_json::Map;\nuse zeroize::Zeroizing;\n\nuse crate::{diagnostics, expand_path, friendbot, prompt_hidden, validate_network, HELP};\n\n'''
+          tests = '''\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n''' + wallet_test + '}\n'
+          wallet = header + wallet_commands + prompt_new_block + tests
+
+          path.write_text(main)
+          Path("crates/cli/src/wallet.rs").write_text(wallet)
+          PY
+
+          rustfmt --edition 2021 --config skip_children=true \
+            crates/cli/src/main.rs crates/cli/src/wallet.rs
+
+          test "$(grep -c '^pub(crate) fn command_wallet' crates/cli/src/wallet.rs)" -eq 1
+          test "$(grep -c '^pub(crate) fn command_info' crates/cli/src/wallet.rs)" -eq 1
+          ! rg '^fn (command_wallet|wallet_create|wallet_import|wallet_attach|wallet_detach|wallet_reveal|wallet_backup|wallet_restore|wallet_delete|prompt_new_passcode)' crates/cli/src/main.rs
+          rg '^mod wallet;$' crates/cli/src/main.rs
+          rg 'wallet::command_info|wallet::command_wallet' crates/cli/src/main.rs
+
+      - name: Validate behavior and boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/validate-boundary.sh
+          cargo fmt --all -- --check
+          git diff --check
+          cargo test --workspace --all-targets --locked
+          cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo clippy -p fresnica-cli --all-targets --locked
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Fresnica/fresnica
+          ref: 9ba6f23cefe34e8d5940b311ec78f27eed982fe7
+          path: upstream
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.5"
+          enable-cache: true
+
+      - name: Validate RefPython CLI compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv python install 3.11
+          (cd upstream/reference/python && uv sync --locked)
+          (cd upstream/reference/python && FRESNICA_RUST_CLI_BIN="$GITHUB_WORKSPACE/target/release/fresnica" uv run pytest -q tests/test_rust_cli_compat.py)
+
+      - name: Commit validated extraction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "fresnica-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/cli/src/main.rs crates/cli/src/wallet.rs
+          git diff --cached --quiet && { echo "No product diff produced"; exit 1; }
+          git commit -m "refactor(cli): isolate wallet presentation"
+          git push origin HEAD:refactor/terminal-shared-foundation
