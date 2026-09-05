@@ -1,6 +1,6 @@
 # Terminal Shared Foundation Refactor
 
-Status: active
+Status: active — foundation evidence complete; CLI/TUI hardening remains
 
 Branch: `refactor/terminal-shared-foundation`
 
@@ -8,9 +8,9 @@ Baseline `main`: `a742ef3130e455c9cbdbf42378d07f3e1f30153f`
 
 ## Purpose
 
-Refactor the already-working Fresnica Terminal implementation so the CLI and TUI share Terminal-local implementation code while remaining conformant with Fresnica's Capability / Flow / security contracts.
+Refactor the already-working Fresnica Terminal implementation so CLI and TUI consume shared behavior from the **correct owning layer** while remaining conformant with Fresnica Capability / Flow / security contracts.
 
-The work starts from existing CLI behavior. It does not invent a new cross-platform Fresnica Application layer.
+The work starts from existing CLI/TUI behavior. It does not invent a new cross-platform Fresnica Application layer, and it does not require a Terminal-local shared crate when `fresnica-client` / `fresnica-sdk` already provide the proven common boundary.
 
 ## Architectural authority
 
@@ -31,37 +31,40 @@ Rules:
 1. Fresnica contracts define shared semantics and invariants.
 2. RefPython remains the executable laboratory for uncertain product semantics and Application Flows. Terminal does not replace it.
 3. Terminal is an independent production implementation of those contracts.
-4. Code shared by CLI and TUI is a Terminal implementation asset, not an official Fresnica Application reference implementation.
+4. Shared behavior stays at its narrowest correct owner: Fresnica client/SDK when cross-platform semantics already live there; Terminal-local code only for proven Terminal-specific reuse.
 5. Another product such as Fresnica Desktop may reuse proven Terminal code when it fits, but no platform is required to depend on `fresnica-terminal`.
 6. Cross-platform evidence discovered here is classified before promotion:
    - semantic/invariant gap -> feed back to Fresnica contract / ADR / vectors;
-   - reusable SDK capability gap -> feed back to Fresnica SDK/client;
+   - reusable SDK/client capability gap -> feed back to Fresnica SDK/client;
    - implementation technique only -> remain local or be documented as practice, not promoted as normative architecture.
 7. Security/Core/SDK-owned behavior remains in its owning Fresnica layer. Terminal must not reimplement cryptography, envelope semantics, signature verification, protocol authority, or platform credential policy.
 
 ## Target boundary
 
-CLI and TUI should become I/O and presentation adapters around Terminal-local shared implementation where real duplication exists.
+Evidence now shows that Payment, Trustline and DEX already share their semantic implementation through `fresnica-client`.
 
 ```text
-Fresnica client / SDK
-         |
-Terminal-local shared implementation
-         |
-   +-----+-----+
-   |           |
-  CLI         TUI
-argv/prompt   events/forms
-text output   ratatui render
+              Fresnica client / SDK
+          shared semantics and prepared models
+                 /             \
+                /               \
+              CLI               TUI
+         argv / prompt      events / forms
+         text rendering     ratatui rendering
+                \               /
+                 \             /
+          optional Terminal-local sharing
+          only for proven presentation-neutral
+          Terminal-specific responsibility
 ```
 
-CLI/TUI may retain platform-specific interaction state. Shared code is extracted only when existing behavior demonstrates a stable common responsibility.
+CLI/TUI retain platform-specific interaction state. Shared Terminal code is extracted only when existing behavior demonstrates a stable common responsibility that is not already owned upstream.
 
 Do not create a broad `application-flow` framework in advance. Crate/module naming and final boundaries must follow evidence from the existing code.
 
 ## Classification used during audit
 
-Every relevant CLI/TUI responsibility must be classified as one of:
+Every relevant CLI/TUI responsibility is classified as one of:
 
 ### A. Presentation / I/O
 
@@ -71,7 +74,7 @@ Keep these in CLI/TUI.
 
 ### B. Terminal-local shared implementation
 
-Examples: presentation-neutral request/review/result models or orchestration genuinely shared by CLI and TUI.
+Examples: presentation-neutral orchestration genuinely shared by CLI and TUI and not already supplied by `fresnica-client` / `fresnica-sdk`.
 
 Extract only after the existing implementation proves the common boundary.
 
@@ -83,82 +86,92 @@ Fix or clarify in the owning Fresnica project first, then update Terminal's exac
 
 ## Execution order
 
-### Phase 0 - Conformance and boundary audit
+### Phase 0 - Conformance and boundary audit — complete for foundation flows
 
-Before structural edits, map current Terminal flows against:
+Map Terminal flows against:
 
 - Fresnica Capability / Flow contracts;
 - RefPython reference semantics;
 - current pinned Rust client / SDK behavior.
 
-Produce a concrete classification of presentation code, Terminal-local shared code, and upstream gaps.
+The audit established that Payment, Trustline and DEX semantics already live at the correct shared `fresnica-client` boundary. See `terminal-flow-audit.md`.
 
-### Phase 1 - Foundation defects
+### Phase 1 - Foundation defects — complete
 
-Handle already-proven foundational defects before extraction:
+Resolved proven foundational defects without unrelated Core/SDK work:
 
-- passphrase secret-lifetime ownership issue at the correct Fresnica Rust client boundary;
-- Terminal callers updated to avoid unnecessary secret copies after the upstream API permits it;
-- duplicate `fresnica info` compatibility line regression;
-- high-value regression tests for public behavior.
+- passphrase secret-lifetime ownership fixed at the Fresnica Rust client boundary;
+- Terminal callers borrow the existing secret buffer;
+- duplicate `fresnica info` compatibility line fixed;
+- real-binary output regression coverage added;
+- exact shared source pin updated to the fixing Fresnica commit.
 
-No unrelated Core/SDK refactor.
+### Phase 2 - Payment as the first boundary proof — complete, no new layer justified
 
-### Phase 2 - Payment as the first extraction sample
+Payment was used to test the original extraction hypothesis.
 
-Use the existing send/payment path because it is currently the clearest flow.
-
-Goal:
+Actual evidence:
 
 ```text
-CLI input
- -> Terminal-local shared payment implementation
- -> structured review/result
- -> CLI confirmation/authorization/rendering
+CLI argv --------------------> PaymentRequest
+                               |
+                               v
+                    FresnicaClient::prepare_payment
+                               |
+                         PreparedPayment
+                               |
+                    +----------+----------+
+                    |                     |
+              CLI review/prompt      TUI review/state
+                    |                     |
+                    +----------+----------+
+                               |
+                    FresnicaClient::submit_payment
 ```
 
-Requirements:
+The shared implementation already exists in `fresnica-client`. A Terminal-local Payment Flow wrapper would be a forwarding layer with no independent responsibility, so it is deliberately **not** created.
 
-- preserve existing CLI behavior and public contract;
-- conform to Fresnica payment/security semantics;
-- do not move CLI presentation into shared code;
-- prove behavior with focused tests before expanding the pattern.
+### Phase 3 - Expand only proven boundaries — foundation review complete
 
-### Phase 3 - Expand only proven boundaries
+- **Trustline:** same proven client boundary as Payment; no Terminal service layer justified.
+- **DEX writes:** same proven prepared-request/submission boundary; no Terminal service layer justified.
+- **Read flows:** shared query semantics already in `fresnica-client`; presentation stays local.
+- **Wallet lifecycle:** CLI presentation is isolated in its own module while wallet semantics remain upstream; TUI responsibility review remains.
+- **Anchor:** currently CLI-only orchestration, so no Terminal-wide extraction without a second consumer or stronger contract evidence.
 
-After Payment is stable, evaluate in order:
+A previous pattern is never applied mechanically when the next flow has different semantics.
 
-1. Trustline;
-2. wallet lifecycle/read flows;
-3. DEX;
-4. Anchor.
+### Phase 4 - CLI hardening
 
-Each flow is independently audited and verified. A previous extraction pattern is not applied mechanically if the next flow has different semantics.
+Before structural TUI work:
 
-### Phase 4 - CLI hardening complete
+- keep CLI primarily parsing, prompting, authorization interaction and rendering;
+- remove only proven forwarding/ownership duplication;
+- keep exact/public output regression coverage where compatibility matters;
+- keep the direct client/SDK dependency boundary explicit;
+- enforce a deliberate clippy gate rather than hiding warnings.
 
-Before TUI migration:
+Current evidence already removed the redundant CLI transaction sign/submit wrapper and direct `stellar-xdr` dependency, isolated wallet presentation, and established `clippy -D warnings`. The remaining gate is final CLI responsibility/diff review, not a parser-framework rewrite.
 
-- CLI business-flow duplication should be removed where justified;
-- CLI remains primarily parsing, prompting, authorization interaction and rendering;
-- exact/public output behavior has regression coverage where compatibility matters;
-- shared implementation has focused unit/conformance tests;
-- clippy baseline is clean enough to establish an appropriate gate without hiding existing warnings.
+### Phase 5 - TUI responsibility and structure hardening
 
-### Phase 5 - TUI migration
+Do not assume that TUI needs a new shared business-flow layer: Payment, Trustline and DEX already call the same `fresnica-client` capabilities as CLI.
 
-Only after the shared Terminal foundation is proven through CLI:
+Proceed test-first:
 
-- replace duplicated TUI business-flow implementation with shared Terminal code;
-- preserve TUI-specific state machine, event handling and rendering where appropriate;
-- add direct tests for important `state + event -> state/effect` behavior;
-- split the large TUI source file only along responsibilities revealed by the migration, not according to a preselected framework.
+1. identify important `state + event -> state/effect` transitions;
+2. add direct tests around those transitions before moving code;
+3. separate natural presentation responsibilities such as state/forms/update/render only where the current file demonstrates a stable seam;
+4. preserve TUI behavior and shared-client semantics exactly;
+5. do not introduce a state-machine framework or new feature while splitting files.
 
 ### Phase 6 - Final integration and release
 
 The refactor branch remains the development target through the full milestone.
 
-Before merge:
+A **draft PR may be used as a CI/integration surface while development continues**, but it is not a merge signal.
+
+Before finalizing/merging:
 
 - review the exact branch diff against the recorded baseline;
 - run repository boundary validation;
@@ -166,13 +179,13 @@ Before merge:
 - workspace tests with lockfile;
 - focused compatibility/conformance tests;
 - release builds for CLI and TUI;
-- clippy gate if the baseline has been deliberately cleaned and accepted;
+- clippy gate;
 - verify no relay/probe/temp files remain;
 - verify documentation matches the final architecture.
 
 Only after the full refactor is complete and final CI is green:
 
-1. open/finalize the PR from `refactor/terminal-shared-foundation` to `main`;
+1. mark/finalize the PR from `refactor/terminal-shared-foundation` to `main`;
 2. merge according to repository convention;
 3. verify the resulting `main` SHA and post-merge CI;
 4. select the next Terminal version from the actual compatibility impact;
@@ -188,7 +201,8 @@ Do not use `main` as the working target before this completion gate.
 - no feature expansion disguised as refactoring;
 - no broad Core/SDK cleanup beyond concrete upstream gaps exposed by this work;
 - no mechanical rewrite into a new command/parser/state-machine framework;
-- no premature shared abstraction for code used only once.
+- no premature shared abstraction for code used only once;
+- no wrapper layer whose only job is forwarding to an existing `fresnica-client` capability.
 
 ## Drift guard
 
@@ -202,10 +216,12 @@ The source, tests, Fresnica contracts and verified CI remain the final truth; th
 
 This milestone is complete when:
 
-- CLI and TUI share the Terminal-local implementation that evidence shows should be shared;
-- both remain independent presentation/I/O adapters rather than competing business implementations;
+- CLI and TUI consume shared semantics from the correct owning layer rather than maintaining competing business implementations;
+- Terminal-local shared code exists only where evidence proves a real Terminal-specific common responsibility;
+- both CLI and TUI remain independent presentation/I/O adapters;
 - Terminal conforms to Fresnica contracts without creating a new cross-platform Application authority;
 - upstream Fresnica gaps found during the work have been fixed or explicitly recorded at the owning layer;
+- high-value TUI state/effect behavior is directly tested and the TUI source is split only along proven presentation seams;
 - the full refactor branch passes final validation;
 - the completed branch is merged to `main` once;
 - a new verified Fresnica Terminal release is published from the merged result.
