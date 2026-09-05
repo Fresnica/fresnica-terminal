@@ -1,0 +1,389 @@
+se.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/dex_write.rs fresnica-terminal-work/crates/cli/src/dex_write.rs
+--- fresnica-terminal-baseline/crates/cli/src/dex_write.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/dex_write.rs	2026-09-05 11:11:06.187580929 +0000
+@@ -3,14 +3,18 @@
+ use crate::transaction_flow::confirm_submission;
+ 
+ pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
++    crate::diagnostics::stage("DEX write: parse request");
+     let request = WriteRequest::parse(arguments)?;
++    crate::diagnostics::stage("DEX write: prepare reviewed transaction");
+     let prepared = client.prepare_offer(&request.service)?;
++    crate::diagnostics::stage("DEX write: review prepared transaction");
+     render_offer_review(&prepared.review);
+     if !request.yes && !confirm_submission()? {
+         println!("Transaction cancelled.");
+         return Ok(());
+     }
+-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
++    crate::diagnostics::stage("DEX write: sign and submit");
++    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
+     let submission = client.submit_offer(&prepared, passcode.as_str().to_owned())?;
+     println!("Submitted: {}", submission.hash);
+     if let Some(ledger) = submission.ledger {
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/diagnostics.rs fresnica-terminal-work/crates/cli/src/diagnostics.rs
+--- fresnica-terminal-baseline/crates/cli/src/diagnostics.rs	1970-01-01 00:00:00.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/diagnostics.rs	2026-09-05 11:11:49.554366794 +0000
+@@ -0,0 +1,95 @@
++use std::sync::atomic::{AtomicU8, Ordering};
++use std::sync::Mutex;
++
++static VERBOSITY: AtomicU8 = AtomicU8::new(0);
++static LAST_STAGE: Mutex<Option<&'static str>> = Mutex::new(None);
++
++const FRESNICA_REVISION: &str = include_str!("../../../FRESNICA_REV");
++
++pub fn leading_verbosity(arguments: &[String]) -> u8 {
++    let mut verbosity = 0u8;
++    let mut index = 0usize;
++    while index < arguments.len() {
++        match arguments[index].as_str() {
++            "-v" | "--verbose" => {
++                verbosity = (verbosity + 1).min(2);
++                index += 1;
++            }
++            "-vv" => {
++                verbosity = 2;
++                index += 1;
++            }
++            "--home" | "--network" => {
++                if index + 1 >= arguments.len() {
++                    break;
++                }
++                index += 2;
++            }
++            _ => break,
++        }
++    }
++    verbosity
++}
++
++pub fn set_verbosity(verbosity: u8) {
++    VERBOSITY.store(verbosity.min(2), Ordering::Relaxed);
++}
++
++pub fn stage(stage: &'static str) {
++    if let Ok(mut current) = LAST_STAGE.lock() {
++        *current = Some(stage);
++    }
++    if VERBOSITY.load(Ordering::Relaxed) >= 1 {
++        eprintln!("[fresnica] {stage}");
++    }
++}
++
++pub fn startup(network: &str) {
++    if VERBOSITY.load(Ordering::Relaxed) < 2 {
++        return;
++    }
++    eprintln!("[fresnica] cli-version={}", env!("CARGO_PKG_VERSION"));
++    eprintln!("[fresnica] fresnica-source={}", fresnica_revision());
++    eprintln!("[fresnica] network={network}");
++    eprintln!("[fresnica] diagnostics=raw-arguments-and-hidden-input-omitted");
++}
++
++pub fn render_error(error: &str) {
++    eprintln!("Error: {error}");
++    let verbosity = VERBOSITY.load(Ordering::Relaxed);
++    if verbosity == 0 {
++        eprintln!("Hint: rerun with -v for diagnostic context.");
++        return;
++    }
++    if let Ok(current) = LAST_STAGE.lock() {
++        if let Some(stage) = *current {
++            eprintln!("Failed during: {stage}");
++        }
++    }
++    if verbosity == 1 {
++        eprintln!("Hint: use -vv for version/network diagnostics.");
++    }
++}
++
++pub fn fresnica_revision() -> &'static str {
++    FRESNICA_REVISION.trim()
++}
++
++pub fn short_fresnica_revision() -> &'static str {
++    let revision = fresnica_revision();
++    revision.get(..12).unwrap_or(revision)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn verbosity_is_read_only_from_leading_global_options() {
++        let args = ["-v", "--network", "testnet", "--verbose", "account"].map(str::to_owned);
++        assert_eq!(leading_verbosity(&args), 2);
++
++        let memo = ["send", "1", "XLM", "to", "G...", "--memo", "-vv"].map(str::to_owned);
++        assert_eq!(leading_verbosity(&memo), 0);
++    }
++}
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/friendbot.rs fresnica-terminal-work/crates/cli/src/friendbot.rs
+--- fresnica-terminal-baseline/crates/cli/src/friendbot.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/friendbot.rs	2026-09-05 11:12:21.161868201 +0000
+@@ -23,6 +23,7 @@
+         ));
+     }
+ 
++    crate::diagnostics::stage("Friendbot: request testnet funding");
+     let result = FriendbotClient::new(FRIENDBOT_URL).fund(&record.address)?;
+     let mut message = format!("Funded wallet \"{}\" on testnet", record.name);
+     if let Some(hash) = result.get("hash").and_then(Value::as_str) {
+@@ -53,11 +54,11 @@
+         let mut response = agent
+             .get(&url)
+             .call()
+-            .map_err(|_| "Unable to fund testnet account".to_owned())?;
++            .map_err(|error| format!("Unable to fund testnet account: {error}"))?;
+         let text = response
+             .body_mut()
+             .read_to_string()
+-            .map_err(|_| "Unable to fund testnet account".to_owned())?;
++            .map_err(|error| format!("Unable to fund testnet account: {error}"))?;
+         Ok(serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({"status": text})))
+     }
+ }
+@@ -114,10 +115,9 @@
+     #[test]
+     fn rejects_unsuccessful_friendbot_response() {
+         let base = mock_friendbot(400, r#"{"detail":"bad account"}"#);
+-        assert_eq!(
+-            FriendbotClient::new(&base).fund("GACCOUNT").unwrap_err(),
+-            "Unable to fund testnet account"
+-        );
++        let error = FriendbotClient::new(&base).fund("GACCOUNT").unwrap_err();
++        assert!(error.starts_with("Unable to fund testnet account: "));
++        assert_ne!(error, "Unable to fund testnet account");
+     }
+ 
+     #[test]
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/main.rs fresnica-terminal-work/crates/cli/src/main.rs
+--- fresnica-terminal-baseline/crates/cli/src/main.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/main.rs	2026-09-05 11:11:49.578367337 +0000
+@@ -1,6 +1,7 @@
+ mod anchor;
+ mod contacts;
+ mod dex;
++mod diagnostics;
+ mod friendbot;
+ mod read_commands;
+ mod send;
+@@ -38,8 +39,13 @@
+   fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
+   fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
+   fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]
++  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
+   fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...
+ 
++Global options:
++  -v, --verbose                Show safe execution stages and failure context
++  -vv                          Also show CLI version, network, and pinned Fresnica source
++
+ Network commands:
+   account                       Show current Horizon account state
+   balance                       Show current account balances and liabilities
+@@ -79,15 +85,24 @@
+ "#;
+ 
+ fn main() {
+-    if let Err(error) = run() {
+-        eprintln!("Error: {error}");
++    let arguments: Vec<String> = env::args().skip(1).collect();
++    diagnostics::set_verbosity(diagnostics::leading_verbosity(&arguments));
++    let global = match GlobalOptions::parse(&arguments) {
++        Ok(global) => global,
++        Err(error) => {
++            diagnostics::render_error(&error);
++            process::exit(2);
++        }
++    };
++    diagnostics::set_verbosity(global.verbosity);
++    diagnostics::startup(&global.network);
++    if let Err(error) = run(global) {
++        diagnostics::render_error(&error);
+         process::exit(2);
+     }
+ }
+ 
+-fn run() -> Result<(), String> {
+-    let arguments: Vec<String> = env::args().skip(1).collect();
+-    let global = GlobalOptions::parse(&arguments)?;
++fn run(global: GlobalOptions) -> Result<(), String> {
+     if global.command.is_empty() {
+         print!("{HELP}");
+         return Ok(());
+@@ -97,12 +112,18 @@
+         return Ok(());
+     }
+     if global.command == ["--version"] || global.command == ["-V"] {
+-        println!("fresnica {} · Rust Core linked", env!("CARGO_PKG_VERSION"));
++        println!(
++            "fresnica {} · Fresnica source {}",
++            env!("CARGO_PKG_VERSION"),
++            diagnostics::short_fresnica_revision()
++        );
+         return Ok(());
+     }
+ 
++    diagnostics::stage("initialize Fresnica client");
+     let client = FresnicaClient::new(&global.home, &global.network)?;
+     let storage = client.storage();
++    diagnostics::stage(command_stage(&global.command));
+     match global.command[0].as_str() {
+         "info" => command_info(storage, &global.command[1..]),
+         "account" => read_commands::command_account(&client, &global.command[1..]),
+@@ -121,6 +142,7 @@
+ struct GlobalOptions {
+     home: PathBuf,
+     network: String,
++    verbosity: u8,
+     command: Vec<String>,
+ }
+ 
+@@ -128,9 +150,18 @@
+     fn parse(arguments: &[String]) -> Result<Self, String> {
+         let mut home = None;
+         let mut network = "mainnet".to_owned();
++        let mut verbosity = 0u8;
+         let mut index = 0;
+         while index < arguments.len() {
+             match arguments[index].as_str() {
++                "-v" | "--verbose" => {
++                    verbosity = (verbosity + 1).min(2);
++                    index += 1;
++                }
++                "-vv" => {
++                    verbosity = 2;
++                    index += 1;
++                }
+                 "--home" => {
+                     index += 1;
+                     let value = arguments
+@@ -158,11 +189,28 @@
+         Ok(Self {
+             home,
+             network,
++            verbosity,
+             command: arguments[index..].to_vec(),
+         })
+     }
+ }
+ 
++fn command_stage(command: &[String]) -> &'static str {
++    match command.first().map(String::as_str) {
++        Some("info") => "CLI command: info",
++        Some("account") => "CLI command: account",
++        Some("balance" | "assets") => "CLI command: balance",
++        Some("history") => "CLI command: history",
++        Some("send") => "CLI command: send",
++        Some("contact") => "CLI command: contact",
++        Some("trust") => "CLI command: trust",
++        Some("dex") => "CLI command: dex",
++        Some("anchor") => "CLI command: anchor",
++        Some("wallet") => "CLI command: wallet",
++        _ => "CLI command dispatch",
++    }
++}
++
+ fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
+     let wallet_name = match arguments {
+         [] => None,
+@@ -191,7 +239,10 @@
+             "no"
+         }
+     );
+-    println!("SDK/Core:   Rust (direct link)");
++    println!(
++        "Shared API:  Fresnica SDK/client @ {}",
++        diagnostics::short_fresnica_revision()
++    );
+     Ok(())
+ }
+ 
+@@ -694,4 +745,13 @@
+         assert_eq!(options.language.as_deref(), Some("japanese"));
+         assert_eq!(options.strength, 128);
+     }
++
++    #[test]
++    fn parses_verbose_global_options() {
++        let args = ["-v", "--network", "testnet", "--verbose", "account"].map(str::to_owned);
++        let global = GlobalOptions::parse(&args).unwrap();
++        assert_eq!(global.verbosity, 2);
++        assert_eq!(global.network, "testnet");
++        assert_eq!(global.command, ["account"]);
++    }
+ }
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/read_commands.rs fresnica-terminal-work/crates/cli/src/read_commands.rs
+--- fresnica-terminal-baseline/crates/cli/src/read_commands.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/read_commands.rs	2026-09-05 11:11:06.187314398 +0000
+@@ -3,6 +3,7 @@
+ 
+ pub fn command_account(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let options = parse_output_options(arguments, "fresnica account [--wallet NAME] [--json]")?;
++    crate::diagnostics::stage("account: fetch Horizon state");
+     let snapshot = client.account(options.wallet.as_deref())?;
+     if options.json {
+         println!(
+@@ -53,6 +54,7 @@
+ 
+ pub fn command_balance(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let options = parse_output_options(arguments, "fresnica balance [--wallet NAME] [--json]")?;
++    crate::diagnostics::stage("balance: fetch Horizon state");
+     let snapshot = client.balances(options.wallet.as_deref())?;
+ 
+     if options.json {
+@@ -86,6 +88,7 @@
+ 
+ pub fn command_history(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+     let options = parse_history_options(arguments)?;
++    crate::diagnostics::stage("history: fetch Horizon operations");
+     let snapshot = client.history(options.wallet.as_deref(), options.limit)?;
+ 
+     if options.json {
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/send.rs fresnica-terminal-work/crates/cli/src/send.rs
+--- fresnica-terminal-baseline/crates/cli/src/send.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/send.rs	2026-09-05 11:11:06.187365715 +0000
+@@ -5,7 +5,9 @@
+ use crate::transaction_flow::confirm_submission;
+ 
+ pub fn command_send(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
++    crate::diagnostics::stage("payment: parse request");
+     let request = SendRequest::parse(arguments)?;
++    crate::diagnostics::stage("payment: prepare reviewed transaction");
+     let prepared = client.prepare_payment(&PaymentRequest {
+         wallet: request.wallet.clone(),
+         amount: request.amount,
+@@ -26,6 +28,7 @@
+     memo: PaymentMemo,
+     yes: bool,
+ ) -> Result<(), String> {
++    crate::diagnostics::stage("payment: prepare anchor payment");
+     let prepared = client.prepare_payment_to_address(
+         record,
+         amount_text,
+@@ -42,13 +45,15 @@
+     prepared: &PreparedPayment,
+     yes: bool,
+ ) -> Result<(), String> {
++    crate::diagnostics::stage("payment: review prepared transaction");
+     render_review(&prepared.review);
+     if !yes && !confirm_submission()? {
+         println!("Transaction cancelled.");
+         return Ok(());
+     }
+ 
+-    let passcode = crate::prompt_hidden("Fresnica passcode: ")?;
++    crate::diagnostics::stage("payment: sign and submit");
++    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
+     let submission = client.submit_payment(prepared, passcode.as_str().to_owned())?;
+     println!("Submitted: {}", submission.hash);
+     if let Some(ledger) = submission.ledger {
+diff -ruN '--exclude=prepare-terminal-release.yml' '--exclude=release.yml' fresnica-terminal-baseline/crates/cli/src/transaction_flow.rs fresnica-terminal-work/crates/cli/src/transaction_flow.rs
+--- fresnica-terminal-baseline/crates/cli/src/transaction_flow.rs	2026-09-05 11:06:42.000000000 +0000
++++ fresnica-terminal-work/crates/cli/src/transaction_flow.rs	2026-09-05 11:11:06.187953230 +0000
+@@ -32,7 +32,8 @@
+     envelope: &mut TransactionEnvelope,
+     horizon: &HorizonGa
