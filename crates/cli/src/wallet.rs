@@ -305,8 +305,7 @@ fn wallet_restore(storage: &WalletStorage, arguments: &[String]) -> Result<(), S
     }
     if !record.watch_only() && wallet_ops::has_app_passcode(storage)? {
         let passcode = prompt_existing_app_passcode(storage)?;
-        wallet_ops::verify_passcode(&record, &passcode)
-            .map_err(|_| "backup does not use the current Fresnica passphrase".to_owned())?;
+        wallet_ops::validate_restore_signer_compatibility(&record, &passcode)?;
     }
     save_new_record(storage, &record)?;
     println!(
