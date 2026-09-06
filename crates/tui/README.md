@@ -28,3 +28,5 @@ cargo run -p fresnica-tui -- --network testnet
 ```
 
 Use `--home PATH` or `FRESNICA_HOME` to point at an isolated wallet directory.
+
+Use global `--horizon-url URL` to override the current Horizon endpoint, or set `FRESNICA_HORIZON_URL` as the session default. The command-line value wins. This changes the provider endpoint only; `--network` remains the Stellar network identity.

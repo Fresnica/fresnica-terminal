@@ -14,7 +14,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use fresnica_client::FresnicaClient;
+use fresnica_client::{FresnicaClient, NetworkProfile};
 use zeroize::Zeroizing;
 
 const HELP: &str = r#"Fresnica native Rust CLI
@@ -43,6 +43,10 @@ Usage:
 Global options:
   -v, --verbose                Show safe execution stages and failure context
   -vv                          Also show CLI version, network, and pinned Fresnica source
+  --horizon-url URL            Override the Horizon endpoint for this invocation
+
+Environment:
+  FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
 
 Network commands:
   account                       Show current Horizon account state
@@ -120,7 +124,11 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     }
 
     diagnostics::stage("initialize Fresnica client");
-    let client = FresnicaClient::new(&global.home, &global.network)?;
+    let mut profile = NetworkProfile::for_network(&global.network)?;
+    if let Some(horizon_url) = horizon_url_override(global.horizon_url.as_deref()) {
+        profile = profile.with_horizon_url(&horizon_url)?;
+    }
+    let client = FresnicaClient::from_profile(&global.home, profile)?;
     let storage = client.storage();
     diagnostics::stage(command_stage(&global.command));
     match global.command[0].as_str() {
@@ -142,6 +150,7 @@ fn run(global: GlobalOptions) -> Result<(), String> {
 struct GlobalOptions {
     home: PathBuf,
     network: String,
+    horizon_url: Option<String>,
     verbosity: u8,
     command: Vec<String>,
 }
@@ -150,6 +159,7 @@ impl GlobalOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut home = None;
         let mut network = "mainnet".to_owned();
+        let mut horizon_url = None;
         let mut verbosity = 0u8;
         let mut index = 0;
         while index < arguments.len() {
@@ -179,6 +189,16 @@ impl GlobalOptions {
                     validate_network(&network)?;
                     index += 1;
                 }
+                "--horizon-url" => {
+                    index += 1;
+                    horizon_url = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| "--horizon-url requires a URL".to_owned())?
+                            .to_owned(),
+                    );
+                    index += 1;
+                }
                 _ => break,
             }
         }
@@ -189,10 +209,17 @@ impl GlobalOptions {
         Ok(Self {
             home,
             network,
+            horizon_url,
             verbosity,
             command: arguments[index..].to_vec(),
         })
     }
+}
+
+fn horizon_url_override(cli_value: Option<&str>) -> Option<String> {
+    cli_value
+        .map(str::to_owned)
+        .or_else(|| env::var("FRESNICA_HORIZON_URL").ok())
 }
 
 fn command_stage(command: &[String]) -> &'static str {
@@ -259,10 +286,23 @@ mod tests {
 
     #[test]
     fn parses_verbose_global_options() {
-        let args = ["-v", "--network", "testnet", "--verbose", "account"].map(str::to_owned);
+        let args = [
+            "-v",
+            "--network",
+            "testnet",
+            "--horizon-url",
+            "https://stellar.example/horizon",
+            "--verbose",
+            "account",
+        ]
+        .map(str::to_owned);
         let global = GlobalOptions::parse(&args).unwrap();
         assert_eq!(global.verbosity, 2);
         assert_eq!(global.network, "testnet");
+        assert_eq!(
+            global.horizon_url.as_deref(),
+            Some("https://stellar.example/horizon")
+        );
         assert_eq!(global.command, ["account"]);
     }
 }
