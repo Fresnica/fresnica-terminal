@@ -1009,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "fresnica-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fresnica-client",
  "fresnica-sdk",
@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "fresnica-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fresnica-client",
  "ratatui",
