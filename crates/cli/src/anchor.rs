@@ -698,7 +698,6 @@ fn command_status(client: &FresnicaClient, arguments: &[String]) -> Result<(), S
         &payment.amount,
         &asset.display(),
         &payment.destination,
-        None,
         payment.memo,
         yes,
     )

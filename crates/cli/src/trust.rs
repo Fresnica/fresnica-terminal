@@ -26,7 +26,7 @@ fn review_and_submit(
 
     crate::diagnostics::stage("trustline: sign and submit");
     let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-    let submission = client.submit_trustline(prepared, passcode.as_str().to_owned())?;
+    let submission = client.submit_trustline(prepared, passcode.as_str())?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {
         println!("Ledger:    {ledger}");
