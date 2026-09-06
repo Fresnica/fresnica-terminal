@@ -303,7 +303,7 @@ fn wallet_restore(storage: &WalletStorage, arguments: &[String]) -> Result<(), S
         }
         record.name = arguments[2].clone();
     }
-    if !record.watch_only() && has_app_passcode(storage)? {
+    if !record.watch_only() && wallet_ops::has_app_passcode(storage)? {
         let passcode = prompt_existing_app_passcode(storage)?;
         wallet_ops::verify_passcode(&record, &passcode)
             .map_err(|_| "backup does not use the current Fresnica passphrase".to_owned())?;
@@ -348,27 +348,8 @@ fn save_new_record(storage: &WalletStorage, record: &WalletRecord) -> Result<(),
     Ok(())
 }
 
-fn signing_records(storage: &WalletStorage) -> Result<Vec<WalletRecord>, String> {
-    Ok(storage
-        .list()?
-        .into_iter()
-        .filter(|record| !record.watch_only() && record.secret.is_some())
-        .collect())
-}
-
-fn has_app_passcode(storage: &WalletStorage) -> Result<bool, String> {
-    Ok(!signing_records(storage)?.is_empty())
-}
-
-fn verify_app_passcode(storage: &WalletStorage, passcode: &str) -> Result<(), String> {
-    for record in signing_records(storage)? {
-        wallet_ops::verify_passcode(&record, passcode)?;
-    }
-    Ok(())
-}
-
 fn prompt_app_passcode(storage: &WalletStorage) -> Result<Zeroizing<String>, String> {
-    if has_app_passcode(storage)? {
+    if wallet_ops::has_app_passcode(storage)? {
         prompt_existing_app_passcode(storage)
     } else {
         prompt_new_passcode()
@@ -380,7 +361,7 @@ fn prompt_existing_app_passcode(storage: &WalletStorage) -> Result<Zeroizing<Str
     if passcode.is_empty() {
         return Err("Fresnica passphrase cannot be empty".to_owned());
     }
-    verify_app_passcode(storage, &passcode)?;
+    wallet_ops::validate_app_passcode(storage, &passcode)?;
     Ok(passcode)
 }
 
