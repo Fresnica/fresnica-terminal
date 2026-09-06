@@ -6,7 +6,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use fresnica_client::FresnicaClient;
+use fresnica_client::{FresnicaClient, NetworkProfile};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
 use app::App;
@@ -14,7 +14,10 @@ use app::App;
 const HELP: &str = r#"Fresnica native Rust TUI
 
 Usage:
-  fresnica-tui [--home PATH] [--network mainnet|testnet] [--wallet NAME]
+  fresnica-tui [--home PATH] [--network mainnet|testnet] [--horizon-url URL] [--wallet NAME]
+
+Environment:
+  FRESNICA_HORIZON_URL   Default Horizon endpoint override; command-line flag wins
 
 Keys:
   q / Esc     quit
@@ -51,7 +54,11 @@ fn run() -> Result<(), String> {
     }
 
     let options = Options::parse(&arguments)?;
-    let client = FresnicaClient::new(&options.home, &options.network)?;
+    let mut profile = NetworkProfile::for_network(&options.network)?;
+    if let Some(horizon_url) = horizon_url_override(options.horizon_url.as_deref()) {
+        profile = profile.with_horizon_url(&horizon_url)?;
+    }
+    let client = FresnicaClient::from_profile(&options.home, profile)?;
     let mut app = App::new(client, options.wallet.as_deref())?;
 
     ratatui::run(|terminal| -> std::io::Result<()> {
@@ -72,6 +79,7 @@ fn run() -> Result<(), String> {
 struct Options {
     home: PathBuf,
     network: String,
+    horizon_url: Option<String>,
     wallet: Option<String>,
 }
 
@@ -79,6 +87,7 @@ impl Options {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut home = None;
         let mut network = "mainnet".to_owned();
+        let mut horizon_url = None;
         let mut wallet = None;
         let mut index = 0;
         while index < arguments.len() {
@@ -103,6 +112,16 @@ impl Options {
                     }
                     index += 1;
                 }
+                "--horizon-url" => {
+                    index += 1;
+                    horizon_url = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| "--horizon-url requires a URL".to_owned())?
+                            .to_owned(),
+                    );
+                    index += 1;
+                }
                 "--wallet" => {
                     index += 1;
                     wallet = Some(
@@ -123,9 +142,16 @@ impl Options {
         Ok(Self {
             home,
             network,
+            horizon_url,
             wallet,
         })
     }
+}
+
+fn horizon_url_override(cli_value: Option<&str>) -> Option<String> {
+    cli_value
+        .map(str::to_owned)
+        .or_else(|| env::var("FRESNICA_HORIZON_URL").ok())
 }
 
 fn default_home() -> Result<PathBuf, String> {
@@ -177,12 +203,18 @@ mod tests {
             "/tmp/fresnica".to_owned(),
             "--network".to_owned(),
             "testnet".to_owned(),
+            "--horizon-url".to_owned(),
+            "https://stellar.example/horizon".to_owned(),
             "--wallet".to_owned(),
             "alpha".to_owned(),
         ])
         .unwrap();
         assert_eq!(options.home, PathBuf::from("/tmp/fresnica"));
         assert_eq!(options.network, "testnet");
+        assert_eq!(
+            options.horizon_url.as_deref(),
+            Some("https://stellar.example/horizon")
+        );
         assert_eq!(options.wallet.as_deref(), Some("alpha"));
     }
 

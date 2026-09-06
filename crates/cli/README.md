@@ -57,6 +57,8 @@ It reads and writes the same wallet record files, `.default` pointer,
 reference client. The default application home is `FRESNICA_HOME` when set,
 otherwise `~/.fresnica`.
 
+The selected Stellar network and the current Horizon service are separate runtime concerns. By default the shared `fresnica-client` profile uses Fresnica's mainnet/testnet Horizon endpoint. Set `FRESNICA_HORIZON_URL` for a shell/session default or pass global `--horizon-url URL` for one invocation; the command-line value wins. The override changes only the provider endpoint, never the selected Stellar network identity or signing passphrase.
+
 Asset discovery preserves exact Stellar identity: `XLM` or `CODE:GISSUER` remains
 authoritative, while domain/name/organization/source are optional metadata only.
 `asset discover` refreshes the bounded mainnet catalog through the shared
@@ -88,8 +90,8 @@ not require signing material, so watch-only testnet wallets are valid targets.
 
 Account state, balances, recent operations, SDEX reads, transaction preparation
 and Horizon submission are client responsibilities. Reusable Rust application
-semantics live in `fresnica-client`, which talks to the matching public or testnet
-Horizon server; none of that HTTP or product policy is moved into `fresnica-core`.
+semantics live in `fresnica-client`, which consumes the resolved network profile and
+current Horizon endpoint; none of that HTTP or product policy is moved into `fresnica-core`.
 
 Reviewed write commands present operation-specific review and ask for
 confirmation before requesting the Fresnica passphrase. Payment preparation, its
@@ -174,6 +176,7 @@ For example:
 ```sh
 target/release/fresnica wallet list
 target/release/fresnica --network testnet wallet testnet-fund
+target/release/fresnica --horizon-url https://stellar.example/horizon balance
 target/release/fresnica account
 target/release/fresnica balance
 target/release/fresnica history --limit 20

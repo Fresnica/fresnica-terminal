@@ -1,12 +1,12 @@
 # Terminal Capability Gap Audit
 
-Status: Asset Discovery P0 complete — released in Terminal v0.2.0
+Status: P1 Classic ledger authorization visibility implemented and validated on feature branches — not merged or released
 
-Audit baseline: `main@8136ab0cc6090cc3bb611e77f0cf3f434c77c3db`
+Audit baseline: `main@ba7e24bbd3e6f527d4d56029a572ac8d6851015c`
 
 Release commit: `main@a2485cad5d2d6048f8ffb6987597c2a3fca2670d`
 
-Current shared-source pin: `Fresnica/fresnica@5f5dc1715fd5a449f538afb6a643100075341732`
+Current shared-source pin: `Fresnica/fresnica@7ea101bce034e85ace3260ff044c983bd5d33cdb` (`feat/ledger-authorization-review-snapshot`, not merged to upstream `main`)
 
 This audit starts after the v0.1.1 shared-foundation refactor was closed. It does not reopen that refactor. Payment, Trustline and DEX write semantics belong to `fresnica-client`; CLI and TUI remain presentation adapters over that boundary.
 
@@ -41,7 +41,7 @@ The Rust TUI covers wallet selection, balances/history, Send, Trustline and SDEX
 | Area | Shared evidence today | Terminal state | Classification | Priority |
 | --- | --- | --- | --- | --- |
 | Asset Discovery / Catalog | Defined Capability; mature RefPython cache-first catalog + picker; Rust client implementation merged | CLI discovery and TUI cache-first picker released in v0.2.0 | Complete product surface | **P0 — complete** |
-| Classic ledger authorization visibility | Rust client plans exact per-transaction authorization and coordinates local Ed25519 multisig | Submission can use local signer records, but review does not explain required/satisfied signer conditions | Product/API review gap | **P1 — next** |
+| Classic ledger authorization visibility | Rust client exposes a prepared-transaction authorization snapshot and still refreshes authorization at submit | CLI/TUI review consumes the shared snapshot; no Terminal-side threshold/signer interpretation | Implemented product surface on feature branches | **P1 — feature-complete, unmerged** |
 | Soroban invoke | RefPython simulation/review/submit semantics proven; Rust client has RPC/Soroban lifecycle | No CLI/TUI product surface | Candidate product-flow gap | **P1, after input/review contract is proven** |
 | History / Activity | RefPython has richer grouped Activity semantics; catalog keeps maturity Defined | Terminal exposes provider-shaped recent history | Candidate semantics | P2 |
 | SEP-53 / Dapp | Core/SDK SEP-53 is normative; generic Dapp request/session model remains Defined | No Terminal Dapp session surface | Candidate semantics | P2; do not invent generic transport |
@@ -157,20 +157,40 @@ The three platform ZIPs were independently downloaded from the exact Release #26
 
 ## P1 — Ledger authorization visibility
 
-This is the next bounded Terminal capability audit.
+The upstream audit confirmed that the authorization semantics already belonged to the shared Rust client. `LedgerAuthorizationPlan` is transaction-specific, operation-source-aware and typed-signer-aware; the shared submit path independently reloads current ledger authorization before coordinating signatures. RefPython remains narrower and is not the normative source for this capability.
 
-The Rust client already supports local Classic multisig better than Terminal currently communicates. Authorization is transaction-specific, not a generic `canSign(account)` property.
+The missing contract was review evidence, not another signing model. Upstream feature commit:
 
-A future review improvement should expose an immutable/snapshot authorization summary associated with the prepared transaction, while submission still refreshes ledger authorization before signing. The UI should be able to explain, for example:
+`Fresnica/fresnica@7ea101bce034e85ace3260ff044c983bd5d33cdb`
+
+adds `LedgerAuthorizationSnapshot`, bound to the prepared transaction hash. It reports, per required source account:
+
+- required authorization weight;
+- weight already satisfied by authorization material on the envelope;
+- additional locally available software-Ed25519 weight;
+- weight still remaining after local capability;
+- the transaction/operation authorization uses that produced the requirement;
+- typed signer condition availability: already satisfied, local Ed25519, or unavailable locally;
+- mandatory transaction-level `extraSigners` with the same typed availability classification.
+
+Payment, Trustline and SDEX Offer reviews carry this snapshot directly. Their prepare paths reuse the Horizon account state already fetched for transaction construction/preflight; P1 does not add a second Horizon request solely for review.
+
+Terminal consumes that shared evidence without reconstructing ledger semantics. CLI review prints the full transaction hash and signer keys. TUI review shows the same required/satisfied/local/remaining weights and typed conditions, compacting long public keys/hashes only for display width. Example shape:
 
 ```text
-required medium threshold: 2
-already satisfied: 0
-local Ed25519 capability available: signer A + signer B
-remaining unsupported condition: none
+Authorization: local signing ready
+  G...: required 2 · satisfied 0 · local 2 · remaining 0
+    operation 1 Payment: medium threshold 2
+    local Ed25519 G... (weight 1)
+    local Ed25519 G... (weight 1)
+Prepared tx: <transaction hash>
 ```
 
-This needs careful upstream API design because signer/ledger state can change between review and submit. Do not bolt a generic account signer list onto Terminal and call it transaction authorization.
+The snapshot is deliberately review-only. Submission does **not** trust it: `sign_and_submit` reloads current Horizon authorization and recomputes the plan before selecting local signatures. This preserves the state-change boundary between review and submit.
+
+No Core, SDK, Native/binding, generic signer-provider abstraction or Terminal-local multisig model was added. RefPython was not widened merely to manufacture parity.
+
+Disposable Terminal validation run `34014521234` passed the repository boundary check, locked workspace format/clippy/tests, CLI/TUI release builds and Rust CLI ↔ RefPython compatibility. The disposable verifier is removed when the validated product patch is collapsed; it is not part of the product tree.
 
 ## P1 — Soroban invoke
 
@@ -198,4 +218,14 @@ Before implementation, prove a stable product input/review shape for common cont
 6. published platform ZIP hashes were independently rechecked against Release #26 artifacts;
 7. release manifest and `SHA256SUMS` were deterministically reconstructed and matched GitHub's published digests.
 
-Next bounded milestone: **P1 Classic ledger authorization visibility**. Start with an upstream API/evidence audit; do not implement a Terminal-only signer interpretation layer.
+## P1 implementation gate — satisfied on feature branches
+
+1. upstream authorization API and RefPython evidence audited before Terminal implementation;
+2. shared Rust review snapshot implemented and tested without changing submit-time refresh semantics;
+3. Payment, Trustline and SDEX Offer reviews carry transaction-specific authorization evidence;
+4. CLI/TUI render the shared snapshot without recalculating thresholds or signer sufficiency;
+5. Terminal is pinned to the exact upstream feature commit while both changes remain unmerged;
+6. repository boundary, format, clippy, tests, release builds and Python compatibility passed;
+7. no disposable verifier files remain in either feature tree.
+
+Next decision point: **hold merge/release and review the two P1 feature branches**. Do not start the Soroban invoke surface merely because P1 is implemented; decide the integration disposition first.
