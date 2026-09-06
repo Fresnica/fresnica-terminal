@@ -3,10 +3,11 @@ name: Temporary TUI Asset Picker
 on:
   push:
     branches:
-      - audit/terminal-capability-gap
+      - probe/tui-asset-picker-cache-first
     paths:
       - .github/workflows/tmp-tui-asset-picker.yml
       - scripts/tmp-integrate-tui-picker.py
+      - scripts/tmp-refine-tui-picker-cache-first.py
 
 permissions:
   contents: write
@@ -17,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: audit/terminal-capability-gap
+          ref: probe/tui-asset-picker-cache-first
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -33,6 +34,8 @@ jobs:
             cargo-sources-${{ runner.os }}-${{ runner.arch }}-
       - name: Apply bounded TUI picker patch
         run: python3 scripts/tmp-integrate-tui-picker.py
+      - name: Refine picker to cache-first UX
+        run: python3 scripts/tmp-refine-tui-picker-cache-first.py
       - name: Format
         run: cargo fmt --all
       - name: Focused TUI tests
@@ -54,5 +57,5 @@ jobs:
           git config user.email "appweb.cn@gmail.com"
           git add crates/tui/src/app.rs crates/tui/src/render.rs crates/tui/src/main.rs
           git diff --cached --check
-          git commit -m "feat(tui): add exact asset picker"
-          git push origin HEAD:audit/terminal-capability-gap
+          git commit -m "feat(tui): add cache-first exact asset picker"
+          git push origin HEAD:probe/tui-asset-picker-cache-first
