@@ -1,12 +1,14 @@
 # Terminal Capability Gap Audit
 
-Status: Asset Discovery P0 branch-validated — formal PR pending
+Status: Asset Discovery P0 complete — released in Terminal v0.2.0
 
-Baseline: `main@8136ab0cc6090cc3bb611e77f0cf3f434c77c3db`
+Audit baseline: `main@8136ab0cc6090cc3bb611e77f0cf3f434c77c3db`
+
+Release commit: `main@a2485cad5d2d6048f8ffb6987597c2a3fca2670d`
 
 Current shared-source pin: `Fresnica/fresnica@5f5dc1715fd5a449f538afb6a643100075341732`
 
-This audit starts after the v0.1.1 shared-foundation refactor was closed. It does not reopen that refactor. Payment, Trustline and DEX write semantics already belong to `fresnica-client`; CLI and TUI remain presentation adapters over that boundary.
+This audit starts after the v0.1.1 shared-foundation refactor was closed. It does not reopen that refactor. Payment, Trustline and DEX write semantics belong to `fresnica-client`; CLI and TUI remain presentation adapters over that boundary.
 
 ## Decision rule
 
@@ -21,7 +23,7 @@ Classify each gap as one of:
 
 ## Current Terminal coverage
 
-The current CLI already covers the main Classic wallet path:
+The current CLI covers the main Classic wallet path:
 
 - wallet lifecycle, watch-only and signer attachment;
 - balance/assets and account history;
@@ -29,16 +31,17 @@ The current CLI already covers the main Classic wallet path:
 - reviewed Payment and Trustline writes;
 - SDEX order book, offers, writes, trades, fills and candles;
 - Anchor discovery, SEP-10, deposit/withdraw/status/customer flows;
-- backup/restore and explicit reveal.
+- backup/restore and explicit reveal;
+- cache-first exact Asset Discovery.
 
-The Rust TUI already covers wallet selection, balances/history, Send, Trustline and SDEX market/offer flows. Its README lagged behind this implementation and is corrected in this branch.
+The Rust TUI covers wallet selection, balances/history, Send, Trustline and SDEX market/offer flows, plus cache-first exact asset selection for the asset fields used by those flows.
 
 ## Gap matrix
 
 | Area | Shared evidence today | Terminal state | Classification | Priority |
 | --- | --- | --- | --- | --- |
-| Asset Discovery / Catalog | Defined Capability; mature RefPython cache-first catalog + picker; Rust client implementation merged | CLI discovery and TUI cache-first picker implemented and branch-validated | Product surface gap | **P0 — integration** |
-| Classic ledger authorization visibility | Rust client plans exact per-transaction authorization and coordinates local Ed25519 multisig | Submission can use local signer records, but review does not explain required/satisfied signer conditions | Product/API review gap | **P1** |
+| Asset Discovery / Catalog | Defined Capability; mature RefPython cache-first catalog + picker; Rust client implementation merged | CLI discovery and TUI cache-first picker released in v0.2.0 | Complete product surface | **P0 — complete** |
+| Classic ledger authorization visibility | Rust client plans exact per-transaction authorization and coordinates local Ed25519 multisig | Submission can use local signer records, but review does not explain required/satisfied signer conditions | Product/API review gap | **P1 — next** |
 | Soroban invoke | RefPython simulation/review/submit semantics proven; Rust client has RPC/Soroban lifecycle | No CLI/TUI product surface | Candidate product-flow gap | **P1, after input/review contract is proven** |
 | History / Activity | RefPython has richer grouped Activity semantics; catalog keeps maturity Defined | Terminal exposes provider-shaped recent history | Candidate semantics | P2 |
 | SEP-53 / Dapp | Core/SDK SEP-53 is normative; generic Dapp request/session model remains Defined | No Terminal Dapp session surface | Candidate semantics | P2; do not invent generic transport |
@@ -48,7 +51,7 @@ The Rust TUI already covers wallet selection, balances/history, Send, Trustline 
 
 ## P0 — Asset Discovery / Catalog
 
-Current friction is structural: Send, Trustline and DEX operate on exact asset identity but Terminal historically expected the user to already know and type `CODE:GISSUER`. RefPython demonstrated the safer product shape:
+The original friction was structural: Send, Trustline and DEX operate on exact asset identity but Terminal historically expected the user to already know and type `CODE:GISSUER`. RefPython demonstrated the safer product shape:
 
 ```text
 cached exact identities
@@ -89,9 +92,9 @@ Evidence:
 
 No Core, SDK, Native/binding or new application-Flow authority was added.
 
-### Terminal CLI surface — implemented and branch-validated
+### Terminal CLI surface — released
 
-Terminal now pins the exact merged upstream SHA and adds:
+Terminal pins the exact merged upstream SHA and provides:
 
 ```text
 fresnica asset discover [--limit N] [--cached] [--json]
@@ -105,11 +108,9 @@ Compatibility rules:
 - `--cached` prevents remote refresh;
 - JSON output exposes network, refresh state and catalog entries.
 
-The CLI patch passed boundary validation, workspace tests, workspace clippy with `-D warnings`, CLI/TUI release builds and diff-check before its product commit was pushed.
+### Terminal TUI surface — released
 
-### Terminal TUI surface — implemented and branch-validated
-
-The Rust TUI implementation remains presentation-only and consumes the same shared catalog:
+The Rust TUI remains presentation-only and consumes the same shared catalog:
 
 - `/` on a focused asset/base/counter field opens a picker from local cache immediately;
 - `r` explicitly refreshes the bounded catalog;
@@ -121,16 +122,42 @@ The Rust TUI implementation remains presentation-only and consumes the same shar
 
 This follows RefPython's cache-first UX evidence without introducing a background-worker abstraction solely for parity. Search is deliberately deferred from the first Rust TUI slice; the catalog is bounded to 50 and manual exact entry remains authoritative.
 
-Validation evidence from disposable probe run `34010167207` on the exact product blobs:
+Disposable TUI probe run `34010167207` passed 19/19 focused tests, workspace clippy with warnings denied, workspace tests, CLI/TUI release builds and exact diff-check. No probe workflow or patch script entered the product tree.
 
-- focused `fresnica-tui` tests: 19/19 passed;
-- workspace clippy with warnings denied: passed;
-- workspace tests: passed;
-- CLI and TUI release builds: passed;
-- exact diff-check: passed;
-- no probe workflow or patch script is part of the product tree.
+### Terminal integration and release evidence
+
+Feature PR #8:
+
+- clean feature head: `3acf9e2586684c64759307361b0fe5c4cd042d3f`;
+- CI #42 and Release Terminal #24 passed, including Linux/macOS/Windows packaging and Windows smoke;
+- squash merge: `861ce5a21dbb73a667e57f8b3478e96bbe0bb530`;
+- merge commit is GitHub Verified;
+- post-merge CI #43 passed.
+
+Release PR #9:
+
+- release head: `cc4afbda0adbef2e0af8c0d91545604cc8246270`;
+- CI #44 and Release Terminal #25 passed, including Windows smoke;
+- squash merge / v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`;
+- release commit is GitHub Verified;
+- post-merge CI #45 passed;
+- Release Terminal #26 passed and published prerelease tag `v0.2.0` targeting exactly `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
+
+Published v0.2.0 SHA-256:
+
+```text
+b957de4e007ed03df7edfdb414036db7a53ab8f29b52fcc912292be9680e6a4b  fresnica-terminal-0.2.0-linux-x64.zip
+00a804548ea6d26ec2d009a5995a0f18b9c4d38529657c20bdef8aa0f967584f  fresnica-terminal-0.2.0-macos-arm64.zip
+9de90ce2b4d888dae243eba6472f195e066b7e2c048c7b21b97d1704dad1ccc3  fresnica-terminal-0.2.0-windows-x64.zip
+c6979a5ff77325e353026a7b8727e3416164f0505a9dbb239e002b58a24c233f  fresnica-terminal-release-manifest.json
+80a69fdb3edd3a18017929773e63d8f6034084cb6f20d13dcd5e643e50cbaf2a  SHA256SUMS
+```
+
+The three platform ZIPs were independently downloaded from the exact Release #26 workflow artifacts and re-hashed. The publish job's deterministic manifest/checksum procedure was then reproduced from those exact ZIP hashes, the release commit and `FRESNICA_REV`; the reconstructed manifest and `SHA256SUMS` have the same byte lengths and SHA-256 digests reported by GitHub Release.
 
 ## P1 — Ledger authorization visibility
+
+This is the next bounded Terminal capability audit.
 
 The Rust client already supports local Classic multisig better than Terminal currently communicates. Authorization is transaction-specific, not a generic `canSign(account)` property.
 
@@ -151,7 +178,7 @@ The technical substrate is substantial: RefPython proved simulation/assembly/rev
 
 Before implementation, prove a stable product input/review shape for common contract argument types or an explicit expert XDR mode. Reintroducing direct `stellar-xdr` parsing into the CLI would reverse the v0.1.1 boundary cleanup unless the responsibility is deliberately placed in the shared Rust client.
 
-## Explicit non-goals for P0
+## Explicit non-goals carried forward
 
 - no second Payment/Trustline/DEX Flow layer;
 - no generic Dapp transport/session framework;
@@ -159,20 +186,16 @@ Before implementation, prove a stable product input/review shape for common cont
 - no hardware HID code in Core or generic Rust capability semantics;
 - no code-only asset identity;
 - no removal of exact/manual asset entry;
-- no broad Activity DTO promotion as a side effect of asset discovery;
-- no recommendation/ranking engine disguised as the catalog;
-- no TUI async framework solely to mimic RefPython background refresh.
+- no recommendation/ranking engine disguised as the catalog.
 
-## Current completion gate
+## P0 completion gate — satisfied
 
-Already satisfied on the branch-validated product tree:
+1. shared Rust catalog merged and verified;
+2. CLI and cache-first TUI surfaces validated and merged;
+3. no temporary verifier files entered the product tree;
+4. feature PR, release PR, post-merge CI and cross-platform Release workflows passed;
+5. v0.2.0 targets the exact GitHub-Verified release commit;
+6. published platform ZIP hashes were independently rechecked against Release #26 artifacts;
+7. release manifest and `SHA256SUMS` were deterministically reconstructed and matched GitHub's published digests.
 
-1. final cache-first TUI picker passed focused tests, workspace clippy/tests and both release builds;
-2. temporary probe/verifier files are absent from the Terminal product tree;
-3. exact branch diff was reviewed against `main@8136ab0cc6090cc3bb611e77f0cf3f434c77c3db` and contains only the intended Asset Discovery/pin/docs changes.
-
-Remaining integration gate:
-
-4. formal Terminal PR CI and Release validation must pass on the exact clean head;
-5. the final squash commit on `main` must be GitHub Verified and post-merge CI must pass;
-6. version/release publication is decided only after the merged compatibility impact is reviewed.
+Next bounded milestone: **P1 Classic ledger authorization visibility**. Start with an upstream API/evidence audit; do not implement a Terminal-only signer interpretation layer.
