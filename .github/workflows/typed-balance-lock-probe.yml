@@ -13,19 +13,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Apply typed balance product transform
+        run: python3 .github/typed-balance-transform.py
+      - name: Format transformed Rust
+        run: cargo fmt --all
       - name: Resolve updated Fresnica git pin
-        run: cargo check -p fresnica-cli
-      - name: Commit generated lockfile to verifier branch
+        run: cargo check --workspace
+      - name: Commit generated verifier state
         shell: bash
         run: |
-          if git diff --quiet -- Cargo.lock; then
-            echo "Cargo.lock already current"
+          if git diff --quiet -- Cargo.lock crates/cli/src/read_commands.rs crates/tui/src/app.rs crates/tui/src/render.rs; then
+            echo "Verifier state already current"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock
-          git commit -m "verify: capture typed balance lockfile"
+          git add Cargo.lock crates/cli/src/read_commands.rs crates/tui/src/app.rs crates/tui/src/render.rs
+          git commit -m "verify: capture typed balance product state"
           git push origin HEAD:verify/typed-balance-lock
       - name: Upload generated lockfile
         uses: actions/upload-artifact@v4
