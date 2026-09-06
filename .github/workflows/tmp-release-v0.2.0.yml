@@ -1,0 +1,111 @@
+name: Temporary v0.2.0 Release Probe
+
+on:
+  push:
+    branches: [probe/release-v0.2.0]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: probe/release-v0.2.0
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q '^version = "0.2.0"$' crates/cli/Cargo.toml \
+            && grep -q '^version = "0.2.0"$' crates/tui/Cargo.toml \
+            && test -f releases/terminal-v0.2.0.json; then
+            echo "release files already prepared"
+            exit 0
+          fi
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in (Path("crates/cli/Cargo.toml"), Path("crates/tui/Cargo.toml")):
+              text = path.read_text()
+              old = 'version = "0.1.1"'
+              if text.count(old) != 1:
+                  raise SystemExit(f"{path}: expected one {old!r}")
+              path.write_text(text.replace(old, 'version = "0.2.0"', 1))
+
+          marker = {
+              "kind": "fresnica-terminal-release",
+              "version": "0.2.0",
+              "channel": "preview",
+              "fresnica_rev": "5f5dc1715fd5a449f538afb6a643100075341732",
+              "native_sdk_baseline": "0.3.0",
+              "native_binding_api_version": 3,
+              "sdk_api_version": 5,
+              "core_client_api_version": 5,
+              "products": ["fresnica", "fresnica-tui"],
+          }
+          Path("releases/terminal-v0.2.0.json").write_text(json.dumps(marker, indent=2) + "\n")
+          PY
+          cargo check --workspace
+      - name: Validate generated release state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo check --workspace --locked
+          python3 <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          for path in (Path("crates/cli/Cargo.toml"), Path("crates/tui/Cargo.toml")):
+              text = path.read_text()
+              if not re.search(r'^version = "0\.2\.0"$', text, re.M):
+                  raise SystemExit(f"{path}: version is not 0.2.0")
+
+          lock = Path("Cargo.lock").read_text()
+          for package in ("fresnica-cli", "fresnica-tui"):
+              pattern = rf'name = "{package}"\nversion = "0\.2\.0"'
+              if not re.search(pattern, lock):
+                  raise SystemExit(f"Cargo.lock: {package} is not 0.2.0")
+
+          marker = json.loads(Path("releases/terminal-v0.2.0.json").read_text())
+          if marker["version"] != "0.2.0":
+              raise SystemExit("marker version mismatch")
+          if marker["fresnica_rev"] != Path("FRESNICA_REV").read_text().strip():
+              raise SystemExit("marker Fresnica revision mismatch")
+          PY
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              "Cargo.lock",
+              "crates/cli/Cargo.toml",
+              "crates/tui/Cargo.toml",
+              "releases/terminal-v0.2.0.json",
+          }
+          changed = {
+              line[3:]
+              for line in subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines()
+          }
+          if changed != allowed:
+              raise SystemExit(f"unexpected release diff: {sorted(changed)}")
+          PY
+      - name: Commit generated product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Cargo.lock crates/cli/Cargo.toml crates/tui/Cargo.toml \
+            && test -f releases/terminal-v0.2.0.json \
+            && git ls-files --error-unmatch releases/terminal-v0.2.0.json >/dev/null 2>&1; then
+            echo "product commit already present"
+            exit 0
+          fi
+          git config user.name "Eno"
+          git config user.email "appweb.cn@gmail.com"
+          git add Cargo.lock crates/cli/Cargo.toml crates/tui/Cargo.toml releases/terminal-v0.2.0.json
+          git commit -m "release: prepare Fresnica Terminal v0.2.0"
+          git push origin HEAD:probe/release-v0.2.0
