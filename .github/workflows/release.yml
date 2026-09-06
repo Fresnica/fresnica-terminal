@@ -105,6 +105,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
+      - name: Restore Cargo source cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-sources-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore native release target cache
+        uses: actions/cache@v4
+        with:
+          path: target/release
+          key: native-release-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'FRESNICA_REV') }}
+          restore-keys: |
+            native-release-target-v1-${{ runner.os }}-${{ runner.arch }}-
       - run: bash scripts/validate-boundary.sh
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -137,55 +153,160 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            artifact: terminal-Linux-X64
+            asset_os: linux
+            asset_arch: x64
             extension: ""
+            binary_dir: target/release
+            cross_windows: false
           - os: macos-latest
+            artifact: terminal-macOS-ARM64
+            asset_os: macos
+            asset_arch: arm64
             extension: ""
-          - os: windows-latest
+            binary_dir: target/release
+            cross_windows: false
+          - os: ubuntu-latest
+            artifact: terminal-Windows-X64
+            asset_os: windows
+            asset_arch: x64
             extension: ".exe"
+            binary_dir: target/x86_64-pc-windows-msvc/release
+            cross_windows: true
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked -p fresnica-cli --bin fresnica
-      - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
-      - name: Package Unix binaries
-        if: runner.os != 'Windows'
+      - name: Install native Rust toolchain
+        if: ${{ !matrix.cross_windows }}
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Windows Rust target
+        if: matrix.cross_windows
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Restore Cargo source cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-sources-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore native release target cache
+        if: ${{ !matrix.cross_windows }}
+        uses: actions/cache@v4
+        with:
+          path: target/release
+          key: native-release-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'FRESNICA_REV') }}
+          restore-keys: |
+            native-release-target-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Windows MSVC sysroot cache
+        if: matrix.cross_windows
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cargo-xwin
+          key: xwin-sysroot-${{ runner.os }}-${{ runner.arch }}-cargo-xwin-0.23.1
+      - name: Restore Windows cross-build target cache
+        if: matrix.cross_windows
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/release
+            target/x86_64-pc-windows-msvc
+          key: windows-target-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'FRESNICA_REV') }}
+          restore-keys: |
+            windows-target-v2-${{ runner.os }}-${{ runner.arch }}-
+      - name: Prepare LLVM for Windows cross-build
+        if: matrix.cross_windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y clang lld llvm
+          if command -v llvm-config-18 >/dev/null; then
+            llvm_config="$(command -v llvm-config-18)"
+          else
+            llvm_config="$(command -v llvm-config)"
+          fi
+          llvm_bindir="$($llvm_config --bindir)"
+          echo "$llvm_bindir" >> "$GITHUB_PATH"
+          export PATH="$llvm_bindir:$PATH"
+          command -v clang
+          command -v lld-link
+      - name: Install cargo-xwin
+        if: matrix.cross_windows
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1
+        with:
+          tool: cargo-xwin@0.23.1
+      - name: Prime Windows MSVC sysroot cache
+        if: matrix.cross_windows
+        shell: bash
+        env:
+          XWIN_ARCH: x86_64
+          XWIN_CROSS_COMPILER: clang
+        run: cargo xwin cache windows-msvc-sysroot
+      - name: Build native binaries
+        if: ${{ !matrix.cross_windows }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - name: Build Windows MSVC binaries
+        if: matrix.cross_windows
+        shell: bash
+        env:
+          TARGET: x86_64-pc-windows-msvc
+          XWIN_ARCH: x86_64
+          XWIN_CROSS_COMPILER: clang
+        run: |
+          set -euo pipefail
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-cli --bin fresnica
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-tui --bin fresnica-tui
+      - name: Package binaries
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p package dist
-          cp "target/release/fresnica${{ matrix.extension }}" package/
-          cp "target/release/fresnica-tui${{ matrix.extension }}" package/
+          cp "${{ matrix.binary_dir }}/fresnica${{ matrix.extension }}" package/
+          cp "${{ matrix.binary_dir }}/fresnica-tui${{ matrix.extension }}" package/
           cp README.md package/README.md
           cp crates/cli/README.md package/CLI-README.md
           cp crates/tui/README.md package/TUI-README.md
-          os="$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
-          arch="$(printf '%s' "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')"
-          (cd package && zip -9 -r "../dist/fresnica-terminal-${VERSION}-${os}-${arch}.zip" .)
-      - name: Package Windows binaries
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force package, dist | Out-Null
-          Copy-Item "target/release/fresnica${{ matrix.extension }}" package/
-          Copy-Item "target/release/fresnica-tui${{ matrix.extension }}" package/
-          Copy-Item README.md package/README.md
-          Copy-Item crates/cli/README.md package/CLI-README.md
-          Copy-Item crates/tui/README.md package/TUI-README.md
-          $os = $env:RUNNER_OS.ToLower()
-          $arch = $env:RUNNER_ARCH.ToLower()
-          Compress-Archive -Path package/* -DestinationPath "dist/fresnica-terminal-$env:VERSION-$os-$arch.zip" -CompressionLevel Optimal
+          (cd package && zip -9 -r "../dist/fresnica-terminal-${VERSION}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.zip" .)
       - uses: actions/upload-artifact@v4
         with:
-          name: terminal-${{ runner.os }}-${{ runner.arch }}
+          name: ${{ matrix.artifact }}
           path: dist/*.zip
           if-no-files-found: error
 
+  windows-smoke:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: terminal-Windows-X64
+          path: dist
+      - name: Run Windows release binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = (Get-ChildItem "dist/*.zip" | Select-Object -First 1).FullName
+          Expand-Archive -Path $zip -DestinationPath package
+          & "package/fresnica.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "package/fresnica.exe" --help | Select-Object -First 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "package/fresnica-tui.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   publish:
     if: github.event_name == 'push'
-    needs: [prepare, build]
+    needs: [prepare, build, windows-smoke]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
