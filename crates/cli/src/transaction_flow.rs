@@ -5,8 +5,6 @@ use fresnica_client::{
     LedgerSignerAvailability, LedgerSignerKind,
 };
 
-pub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};
-
 pub fn render_authorization_review(snapshot: &LedgerAuthorizationSnapshot) {
     for line in authorization_review_lines(snapshot) {
         println!("{line}");
