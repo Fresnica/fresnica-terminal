@@ -1,0 +1,58 @@
+name: Temporary Asset CLI Integration
+
+on:
+  push:
+    branches:
+      - audit/terminal-capability-gap
+    paths:
+      - .github/workflows/tmp-asset-cli-integration.yml
+      - scripts/tmp-integrate-asset-cli.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/terminal-capability-gap
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Restore Cargo source cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-sources-${{ runner.os }}-${{ runner.arch }}-
+      - name: Apply bounded asset CLI patch
+        run: python3 scripts/tmp-integrate-asset-cli.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Boundary
+        run: bash scripts/validate-boundary.sh
+      - name: Tests
+        run: cargo test --workspace --all-targets --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Release builds
+        run: |
+          cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - name: Diff check
+        run: git diff --check
+      - name: Commit product patch
+        run: |
+          set -euo pipefail
+          git config user.name "Eno"
+          git config user.email "appweb.cn@gmail.com"
+          git add FRESNICA_REV Cargo.toml Cargo.lock crates/cli/src/main.rs crates/cli/src/asset_discovery.rs
+          git diff --cached --check
+          git commit -m "feat(cli): expose asset discovery catalog"
+          git push origin HEAD:audit/terminal-capability-gap
