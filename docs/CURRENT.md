@@ -1,16 +1,18 @@
 # Fresnica Terminal Current State
 
-Status: **architecture-convergence milestone implemented and validated on a stacked Draft PR line; not merged to `main` and not released**.
+Status: **architecture-convergence milestone implemented and validated; stacked Draft PRs remain unmerged and no release is planned yet**.
 
 Last verified: 2026-09-06.
 
 ## Source of truth
 
-- Released baseline: `main@ba7e24bbd3e6f527d4d56029a572ac8d6851015c` with Terminal v0.2.0 released from `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
-- Current Terminal product head: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`.
-- Current Terminal tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
-- Current shared Fresnica source pin: upstream PR #167 `refactor/rust-client-history-read-model@65a9da804ca16849e320d24365e6e839e62cf5d8`.
-- Both Terminal #19 and upstream #167 remain Draft/open intentionally.
+- Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
+- Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
+- Current Terminal product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`.
+- Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
+- Terminal Rust source pin: `Fresnica/fresnica@65a9da804ca16849e320d24365e6e839e62cf5d8`, the validated History implementation commit from upstream #167.
+- Upstream #167 current head: `a63fc62a6289fc3b4696556eb436c9a0147feb96`. Its only change after the Terminal pin is the carried-forward `docs/capabilities/network.md` Rust-runtime scope correction; Rust source is unchanged.
+- Upstream cumulative integration candidate: Draft PR #169, head `f01f6607bcd1cbf5e28de800ce215187bf23091f`, one commit directly on upstream `main`, with a tree byte-identical to #167 current top.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts.
 
@@ -33,7 +35,7 @@ Terminal machine output      Terminal human presentation
 Fresnica-owned schema        CLI / TUI wording and compaction
 ```
 
-Desktop or another Rust product may consume `fresnica-client` semantic DTOs directly. Terminal-specific English wording, abbreviations and layout are not shared API.
+Desktop or another Rust product may consume `fresnica-client` semantic DTOs directly. Terminal-specific English wording, abbreviations and layout are not shared API. Mobile/Web are not required to route their Application Capabilities through the Rust `fresnica-client` runtime.
 
 ## Implemented Draft stack
 
@@ -71,9 +73,9 @@ The current Terminal stack is intentionally linear and unmerged:
    - `history --json` is generated directly from typed DTOs and does not pass through human presentation;
    - full account/asset identity remains available to other Rust consumers such as a future Desktop product.
 
-The corresponding upstream Fresnica Rust-client work is also a stacked Draft line through #167. Do not repin these Terminal branches to unrelated upstream heads without first checking their direct stack dependency and rerunning the exact gates.
+The corresponding upstream Fresnica Rust-client work is a stacked Draft line through #167. One parent-layer drift was found during closeout: #157 received a documentation-only Network runtime-scope correction after #159 had already forked. That exact correction was carried to #167 top as `a63fc62a6289fc3b4696556eb436c9a0147feb96`; Required CI #92 passed. No other parent-head drift was found in #159 -> #167.
 
-## Validation at the current top
+## Validation at the current tops
 
 Terminal #19 exact head `85fba1612ba7709a8040a0d1a1afc1011cd00d08` has passed:
 
@@ -82,7 +84,9 @@ Terminal #19 exact head `85fba1612ba7709a8040a0d1a1afc1011cd00d08` has passed:
 - Release Terminal #37 / run `34034975655`: validate, Linux x64 package, macOS arm64 package, Windows x64 package and Windows release-binary smoke;
 - PR publish step correctly skipped.
 
-Upstream #167 exact head `65a9da804ca16849e320d24365e6e839e62cf5d8` passed Required CI #89 / run `34034280333`.
+Upstream History implementation commit `65a9da804ca16849e320d24365e6e839e62cf5d8` passed Required CI #89 / run `34034280333`.
+
+Upstream #167 current head `a63fc62a6289fc3b4696556eb436c9a0147feb96` passed Required CI #92 / run `34038000875` after the carried-forward architecture document correction.
 
 No merge or release is part of this milestone closeout.
 
@@ -95,12 +99,14 @@ The current top tree was re-audited after #19 against the shared-foundation plac
 - Anchor still contains substantial CLI-only orchestration and JSON input handling. This is an acknowledged exception, not a newly discovered ownership regression: there is still no second Terminal Anchor consumer or stronger shared contract evidence that justifies extracting another layer.
 - The History `1..=200` limit is enforced by `FresnicaClient::history()` itself. Terminal's matching argument guard is user-facing validation rather than a provider-ownership leak. A test name still mentions Horizon page size; that wording alone does not justify a code PR.
 - CLI and TUI authorization rendering intentionally differ in full-key versus compact-key presentation. Do not generalize the new History presentation crate into a universal formatter merely for symmetry.
+- The cumulative Terminal diff from `main` to #19 is purely ahead, contains only expected product/document/formal-boundary files and no disposable verifier artifacts.
+- The cumulative upstream diff is also purely ahead. The only discovered stacked-branch ancestry drift was the #157 documentation correction described above, and it is now present at the validated top.
 
-No new blocking implementation defect was found in this audit.
+No new blocking implementation defect remains from this audit.
 
 ## Milestone boundary
 
-The current architecture-convergence plan is **implemented**. Continuing to add refactor PRs merely because more code can be moved would violate the evidence-driven boundary used for this work.
+The architecture-convergence plan is **implemented**. Continuing to add refactor PRs merely because more code can be moved would violate the evidence-driven boundary used for this work.
 
 The following are separate product/capability decisions, not unfinished cleanup in this milestone:
 
@@ -112,16 +118,20 @@ The following are separate product/capability decisions, not unfinished cleanup 
 - Anchor TUI parity;
 - Horizon-to-RPC/provider migration beyond the semantic boundaries already prepared.
 
-## Next decision point
+## Integration disposition
 
-**Hold merge and release.** The next step is an integration-disposition review, not another automatic feature/refactor slice.
+Do **not** merge the long stacked Draft PRs one by one as the primary integration path. Their purpose is architecture reasoning, surgical implementation and exact-slice CI evidence; the #157 -> #159 documentation fork demonstrates why a long mutable stack is a poor final merge unit.
 
-That review should verify, in order:
+Preferred integration shape:
 
-1. the upstream Fresnica Draft stack through #167 still has the intended parent chain and green exact-head gates;
-2. the Terminal Draft stack #11 -> #19 still has the intended parent chain and green exact-head gates;
-3. the cumulative diff still matches the architecture contracts and contains no verifier/probe product artifacts;
-4. compatibility/release impact is classified from the cumulative behavior, not from individual PR count;
-5. only then decide whether to integrate the stack, reorganize it, or keep selected parts unmerged.
+1. preserve the stacked Draft PRs as evidence;
+2. create one cumulative upstream integration commit directly on current upstream `main` using the validated #167 top tree — Draft PR #169 does this;
+3. run formal CI on that cumulative upstream candidate;
+4. create one cumulative Terminal integration commit directly on current Terminal `main` using the validated #19 product tree plus this `CURRENT.md` closeout record;
+5. keep the Terminal Rust source pin at the already validated `65a9da8...` during integration review because upstream `65a9da8... -> a63fc62...` changes documentation only;
+6. after the upstream integration candidate is actually merged, repin Terminal once to the final upstream merged commit and rerun Terminal gates;
+7. only then decide merge and release timing.
 
-Until that decision is made, do not merge to `main`, publish a new Terminal release, start Soroban merely because the lower-level capability exists, or broaden the presentation crate without concrete duplicate responsibility that has the same presentation requirements.
+This avoids both stacked ancestry drift and pointless dependency-SHA churn during review.
+
+Until that decision is made, do not publish a new Terminal release, start Soroban merely because the lower-level capability exists, or broaden the presentation crate without concrete duplicate responsibility that has the same presentation requirements.
