@@ -23,9 +23,11 @@ jobs:
           - os: ubuntu-latest
             host: ubuntu-cross-clang
             out: ubuntu
+            xwin_cache: ~/.cache/cargo-xwin
           - os: macos-latest
             host: macos-cross-clang
             out: macos
+            xwin_cache: ~/Library/Caches/cargo-xwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +37,30 @@ jobs:
       - name: Start benchmark clock
         shell: bash
         run: date +%s > .bench-start
+      - name: Restore Cargo source cache
+        id: cargo-sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-sources-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Windows MSVC sysroot cache
+        id: xwin-sysroot
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.xwin_cache }}
+          key: xwin-sysroot-${{ runner.os }}-${{ runner.arch }}-cargo-xwin-0.23.1
+      - name: Restore Windows target cache
+        id: windows-target
+        uses: actions/cache@v4
+        with:
+          path: target/${{ env.TARGET }}
+          key: windows-target-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'FRESNICA_REV') }}
+          restore-keys: |
+            windows-target-${{ runner.os }}-${{ runner.arch }}-
       - name: Prepare LLVM on Ubuntu
         if: runner.os == 'Linux'
         shell: bash
@@ -78,6 +104,9 @@ jobs:
         env:
           HOST_NAME: ${{ matrix.host }}
           OUT_NAME: ${{ matrix.out }}
+          CARGO_SOURCE_CACHE_HIT: ${{ steps.cargo-sources.outputs.cache-hit }}
+          XWIN_CACHE_HIT: ${{ steps.xwin-sysroot.outputs.cache-hit }}
+          TARGET_CACHE_HIT: ${{ steps.windows-target.outputs.cache-hit }}
         run: |
           set -euo pipefail
           start="$(cat .bench-start)"
@@ -89,7 +118,7 @@ jobs:
           cp "target/$TARGET/release/fresnica.exe" "out/$OUT_NAME/"
           cp "target/$TARGET/release/fresnica-tui.exe" "out/$OUT_NAME/"
           python3 - "$start" "$build_start" "$end" "$HOST_NAME" "$OUT_NAME" <<'PY'
-          import json, pathlib, sys
+          import json, os, pathlib, sys
           start, build_start, end = map(int, sys.argv[1:4])
           host, out_name = sys.argv[4:6]
           root = pathlib.Path("out") / out_name
@@ -98,6 +127,9 @@ jobs:
               "setup_seconds": build_start - start,
               "build_seconds": end - build_start,
               "total_seconds": end - start,
+              "cargo_source_cache_hit": os.environ.get("CARGO_SOURCE_CACHE_HIT") == "true",
+              "xwin_cache_hit": os.environ.get("XWIN_CACHE_HIT") == "true",
+              "target_cache_hit": os.environ.get("TARGET_CACHE_HIT") == "true",
               "cli_bytes": (root / "fresnica.exe").stat().st_size,
               "tui_bytes": (root / "fresnica-tui.exe").stat().st_size,
           }
@@ -151,7 +183,11 @@ jobs:
           for variant in ("ubuntu", "macos"):
               p = Path("artifacts") / f"windows-sysroot-{variant}" / "benchmark.json"
               rows.append(json.loads(p.read_text()))
-          print("host,setup_s,build_s,total_s,cli_bytes,tui_bytes")
+          print("host,setup_s,build_s,total_s,cargo_source_hit,xwin_hit,target_hit,cli_bytes,tui_bytes")
           for row in rows:
-              print(f'{row["host"]},{row["setup_seconds"]},{row["build_seconds"]},{row["total_seconds"]},{row["cli_bytes"]},{row["tui_bytes"]}')
+              print(
+                  f'{row["host"]},{row["setup_seconds"]},{row["build_seconds"]},{row["total_seconds"]},'
+                  f'{row["cargo_source_cache_hit"]},{row["xwin_cache_hit"]},{row["target_cache_hit"]},'
+                  f'{row["cli_bytes"]},{row["tui_bytes"]}'
+              )
           PY
