@@ -1,10 +1,10 @@
 # Terminal Capability Gap Audit
 
-Status: active product-planning evidence
+Status: active implementation evidence — Asset Discovery P0 in progress
 
 Baseline: `main@8136ab0cc6090cc3bb611e77f0cf3f434c77c3db`
 
-Shared-source pin: `Fresnica/fresnica@9ba6f23cefe34e8d5940b311ec78f27eed982fe7`
+Current shared-source pin: `Fresnica/fresnica@5f5dc1715fd5a449f538afb6a643100075341732`
 
 This audit starts after the v0.1.1 shared-foundation refactor was closed. It does not reopen that refactor. Payment, Trustline and DEX write semantics already belong to `fresnica-client`; CLI and TUI remain presentation adapters over that boundary.
 
@@ -31,13 +31,13 @@ The current CLI already covers the main Classic wallet path:
 - Anchor discovery, SEP-10, deposit/withdraw/status/customer flows;
 - backup/restore and explicit reveal.
 
-The Rust TUI already covers wallet selection, balances/history, Send, Trustline and SDEX market/offer flows. Its README lagged behind this implementation and is corrected in this audit branch.
+The Rust TUI already covers wallet selection, balances/history, Send, Trustline and SDEX market/offer flows. Its README lagged behind this implementation and is corrected in this branch.
 
 ## Gap matrix
 
 | Area | Shared evidence today | Terminal state | Classification | Priority |
 | --- | --- | --- | --- | --- |
-| Asset Discovery / Catalog | Defined Capability; mature RefPython cache-first catalog + reusable asset picker | Exact `CODE:GISSUER` must normally be typed manually | Shared Rust capability gap + product surface gap | **P0** |
+| Asset Discovery / Catalog | Defined Capability; mature RefPython cache-first catalog + picker; Rust client implementation merged | CLI discovery implemented; TUI picker under validation | Product surface gap | **P0 — active** |
 | Classic ledger authorization visibility | Rust client plans exact per-transaction authorization and coordinates local Ed25519 multisig | Submission can use local signer records, but review does not explain required/satisfied signer conditions | Product/API review gap | **P1** |
 | Soroban invoke | RefPython simulation/review/submit semantics proven; Rust client has RPC/Soroban lifecycle | No CLI/TUI product surface | Candidate product-flow gap | **P1, after input/review contract is proven** |
 | History / Activity | RefPython has richer grouped Activity semantics; catalog keeps maturity Defined | Terminal exposes provider-shaped recent history | Candidate semantics | P2 |
@@ -48,21 +48,19 @@ The Rust TUI already covers wallet selection, balances/history, Send, Trustline 
 
 ## P0 — Asset Discovery / Catalog
 
-This is the clearest next bounded product milestone.
-
-Current friction is structural: Send, Trustline and DEX operate on exact asset identity but Terminal mostly expects the user to already know and type `CODE:GISSUER`. RefPython has already demonstrated a safer product pattern:
+Current friction is structural: Send, Trustline and DEX operate on exact asset identity but Terminal historically expected the user to already know and type `CODE:GISSUER`. RefPython demonstrated the safer product shape:
 
 ```text
 cached exact identities
         +
 optional remote catalog metadata
         +
-search / selection
+selection
         +
 always-available manual exact identity
 ```
 
-The shared Capability already fixes the important invariants:
+The shared Capability fixes these invariants:
 
 1. exact identity remains `XLM` or `CODE:GISSUER`;
 2. code/name/domain never replaces issuer identity;
@@ -70,27 +68,58 @@ The shared Capability already fixes the important invariants:
 4. remote provider failure must not block cached/manual selection;
 5. discovery/catalog data is distinct from product recommendation/ranking.
 
-What is missing is the reusable Rust implementation. Because both Rust CLI and TUI need the same cache/fallback/identity semantics, this belongs in `reference/rust-client`, not a Terminal-local service.
+### Shared Rust foundation — complete
 
-### Proposed first slice
+Upstream PR #155 implemented the first independent Rust Asset Discovery boundary and squash-merged as:
 
-Upstream `fresnica-client`:
+`Fresnica/fresnica@5f5dc1715fd5a449f538afb6a643100075341732`
 
-- add an `AssetCatalogEntry` model preserving exact `AssetId` identity plus optional metadata/provenance;
-- add a cache-first catalog service rooted under the existing Fresnica home;
-- mainnet may refresh from one bounded public provider initially; provider choice remains implementation detail;
-- testnet/non-mainnet remains manual/cache/native without pretending mainnet recommendations apply;
-- corrupt cache fails explicitly, remote refresh failure falls back to valid cache;
-- do not encode recommendation policy into the shared service.
+Evidence:
 
-Terminal:
+- `AssetCatalogEntry` preserves exact `AssetId` identity plus optional domain/name/organization/source metadata;
+- `FresnicaClient::asset_catalog(limit, refresh)` provides network-scoped cache-first access;
+- XLM remains native identity and issued identities are revalidated through the existing `AssetId` parser;
+- mainnet refresh is bounded and provider choice remains an implementation detail;
+- provider failure or unusable remote results fall back to valid cache;
+- testnet/non-mainnet never imports mainnet recommendations;
+- corrupt cache fails explicitly instead of silently replacing identity data;
+- provider/cache results are de-duplicated by exact identity;
+- Required CI for PR #155 passed and post-merge `Main bundle #65` passed;
+- the squash commit is GitHub Verified.
 
-- CLI: add an explicit discovery/list surface useful for scripting and inspection; keep all existing exact-identity command forms working;
-- TUI: use one reusable asset-selection presentation for Trustline and SDEX selection first, then Send where appropriate;
-- always retain manual exact identity entry;
-- show enough issuer/domain/source information to avoid code-only ambiguity.
+No Core, SDK, Native/binding or new application-Flow authority was added.
 
-The first implementation should not copy every RefPython provider or cache-schema detail merely for parity. Independent Rust evidence is more useful if it implements the agreed invariants with a small surface.
+### Terminal CLI surface — implemented and branch-validated
+
+Terminal now pins the exact merged upstream SHA and adds:
+
+```text
+fresnica asset discover [--limit N] [--cached] [--json]
+```
+
+Compatibility rules:
+
+- historical top-level `assets` remains the alias for `balance`;
+- all Send/Trustline/DEX/Anchor exact `CODE:GISSUER` inputs continue to work unchanged;
+- discovery output always exposes exact identity; optional metadata is secondary;
+- `--cached` prevents remote refresh;
+- JSON output exposes network, refresh state and catalog entries.
+
+The CLI patch passed boundary validation, workspace tests, workspace clippy with `-D warnings`, CLI/TUI release builds and diff-check before its product commit was pushed.
+
+### Terminal TUI surface — validating
+
+The Rust TUI implementation remains presentation-only and consumes the same shared catalog. The intended first slice is:
+
+- `/` on a focused asset/base/counter field opens a picker from local cache immediately;
+- `r` explicitly refreshes the bounded catalog;
+- Up/Down or `j/k` selects and Enter applies the full exact identity;
+- Esc closes the picker and preserves the manually typed field value;
+- Trustline selection excludes XLM because native assets do not have trustlines;
+- Send, Trustline, market Base/Counter and offer Base/Counter reuse the same TUI picker state;
+- manual exact identity entry remains available at all times.
+
+This follows RefPython's cache-first UX evidence without introducing a background-worker abstraction solely for parity. Search is deliberately deferred from the first Rust TUI slice; the catalog is bounded to 50 and manual exact entry remains authoritative.
 
 ## P1 — Ledger authorization visibility
 
@@ -109,11 +138,11 @@ This needs careful upstream API design because signer/ledger state can change be
 
 ## P1 — Soroban invoke
 
-The technical substrate is substantial: RefPython proved simulation/assembly/review/authorization/submission and `fresnica-client` now exposes the Rust RPC/Soroban lifecycle. Terminal should nevertheless not freeze an arbitrary CLI syntax for raw `ScVal` arguments merely because the lower layer exists.
+The technical substrate is substantial: RefPython proved simulation/assembly/review/authorization/submission and `fresnica-client` exposes the Rust RPC/Soroban lifecycle. Terminal should nevertheless not freeze an arbitrary CLI syntax for raw `ScVal` arguments merely because the lower layer exists.
 
 Before implementation, prove a stable product input/review shape for common contract argument types or an explicit expert XDR mode. Reintroducing direct `stellar-xdr` parsing into the CLI would reverse the v0.1.1 boundary cleanup unless the responsibility is deliberately placed in the shared Rust client.
 
-## Explicit non-goals for the next milestone
+## Explicit non-goals for P0
 
 - no second Payment/Trustline/DEX Flow layer;
 - no generic Dapp transport/session framework;
@@ -121,10 +150,16 @@ Before implementation, prove a stable product input/review shape for common cont
 - no hardware HID code in Core or generic Rust capability semantics;
 - no code-only asset identity;
 - no removal of exact/manual asset entry;
-- no broad Activity DTO promotion as a side effect of asset discovery.
+- no broad Activity DTO promotion as a side effect of asset discovery;
+- no recommendation/ranking engine disguised as the catalog;
+- no TUI async framework solely to mimic RefPython background refresh.
 
-## Next bounded milestone
+## Current completion gate
 
-**Asset Discovery foundation:** implement the smallest reusable cache-first Rust catalog in `Fresnica/fresnica`, validate it independently, then update the Terminal exact source pin and expose the capability without changing existing manual command compatibility.
+Asset Discovery P0 is complete only when:
 
-Use a dedicated upstream branch/PR first. Only after that upstream commit is merged should Terminal pin it and implement CLI/TUI presentation.
+1. the final cache-first TUI picker passes focused tests, workspace clippy/tests and both release builds;
+2. temporary probe/verifier files are absent from the Terminal product branch;
+3. the exact branch diff is reviewed against `main@8136ab0cc6090cc3bb611e77f0cf3f434c77c3db`;
+4. formal Terminal PR CI and Release validation pass on the exact final head;
+5. the final squash commit on `main` is GitHub Verified and post-merge CI passes.
