@@ -23,7 +23,7 @@ jobs:
           new=bad39935ce173b449c714150c24a63a1391ee4e7
           expected=3540332bb530f2c358d07a32558c6267e152b07a
           count="$(grep -o "$old" Cargo.lock | wc -l)"
-          test "$count" -eq 3
+          test "$count" -eq 6
           sed -i "s/$old/$new/g" Cargo.lock
           test "$(git hash-object Cargo.lock)" = "$expected"
           git rm .github/workflows/tmp-network-profile-lock-refresh.yml
