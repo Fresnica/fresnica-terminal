@@ -1,0 +1,33 @@
+name: Smoke macOS Cross-Built Windows Binaries
+
+on:
+  push:
+    branches: [ci/windows-cross-smoke-macos]
+    paths:
+      - ".github/workflows/windows-cross-smoke-macos.yml"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cross-macos-v3
+          path: artifacts/macos
+          github-token: ${{ github.token }}
+          repository: Fresnica/fresnica-terminal
+          run-id: 34003676546
+      - name: Run macOS cross-built Windows binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "artifacts/macos/fresnica.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "artifacts/macos/fresnica.exe" info
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "artifacts/macos/fresnica-tui.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
