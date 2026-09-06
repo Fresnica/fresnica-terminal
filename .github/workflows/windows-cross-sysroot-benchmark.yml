@@ -1,5 +1,4 @@
-# Warm-cache rerun probe. Cache keys intentionally depend on inputs, not this workflow revision.
-name: Windows Cross Sysroot Benchmark
+name: Windows Cross Cache Benchmark
 
 on:
   push:
@@ -17,19 +16,7 @@ env:
 
 jobs:
   cross:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            host: ubuntu-cross-clang
-            out: ubuntu
-            xwin_cache: ~/.cache/cargo-xwin
-          - os: macos-latest
-            host: macos-cross-clang
-            out: macos
-            xwin_cache: ~/Library/Caches/cargo-xwin
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -52,18 +39,20 @@ jobs:
         id: xwin-sysroot
         uses: actions/cache@v4
         with:
-          path: ${{ matrix.xwin_cache }}
+          path: ~/.cache/cargo-xwin
           key: xwin-sysroot-${{ runner.os }}-${{ runner.arch }}-cargo-xwin-0.23.1
-      - name: Restore Windows target cache
-        id: windows-target
+      - name: Restore cross-build target cache
+        id: build-targets
         uses: actions/cache@v4
         with:
-          path: target/${{ env.TARGET }}
-          key: windows-target-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'FRESNICA_REV') }}
+          path: |
+            target/release
+            target/${{ env.TARGET }}
+          key: windows-target-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'FRESNICA_REV') }}
           restore-keys: |
+            windows-target-v2-${{ runner.os }}-${{ runner.arch }}-
             windows-target-${{ runner.os }}-${{ runner.arch }}-
-      - name: Prepare LLVM on Ubuntu
-        if: runner.os == 'Linux'
+      - name: Prepare LLVM
         shell: bash
         run: |
           set -euo pipefail
@@ -79,20 +68,6 @@ jobs:
           export PATH="$llvm_bindir:$PATH"
           command -v clang
           command -v lld-link
-      - name: Prepare LLVM on macOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          brew list --versions llvm >/dev/null 2>&1 || brew install llvm
-          brew list --versions lld >/dev/null 2>&1 || brew install lld
-          llvm_prefix="$(brew --prefix llvm)"
-          lld_prefix="$(brew --prefix lld)"
-          echo "$llvm_prefix/bin" >> "$GITHUB_PATH"
-          echo "$lld_prefix/bin" >> "$GITHUB_PATH"
-          export PATH="$llvm_prefix/bin:$lld_prefix/bin:$PATH"
-          command -v clang
-          command -v lld-link
       - name: Install cargo-xwin
         uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1
         with:
@@ -103,11 +78,9 @@ jobs:
       - name: Build Windows MSVC binaries
         shell: bash
         env:
-          HOST_NAME: ${{ matrix.host }}
-          OUT_NAME: ${{ matrix.out }}
           CARGO_SOURCE_CACHE_HIT: ${{ steps.cargo-sources.outputs.cache-hit }}
           XWIN_CACHE_HIT: ${{ steps.xwin-sysroot.outputs.cache-hit }}
-          TARGET_CACHE_HIT: ${{ steps.windows-target.outputs.cache-hit }}
+          TARGET_CACHE_HIT: ${{ steps.build-targets.outputs.cache-hit }}
         run: |
           set -euo pipefail
           start="$(cat .bench-start)"
@@ -115,16 +88,15 @@ jobs:
           cargo xwin build --release --locked --target "$TARGET" -p fresnica-cli --bin fresnica
           cargo xwin build --release --locked --target "$TARGET" -p fresnica-tui --bin fresnica-tui
           end="$(date +%s)"
-          mkdir -p "out/$OUT_NAME"
-          cp "target/$TARGET/release/fresnica.exe" "out/$OUT_NAME/"
-          cp "target/$TARGET/release/fresnica-tui.exe" "out/$OUT_NAME/"
-          python3 - "$start" "$build_start" "$end" "$HOST_NAME" "$OUT_NAME" <<'PY'
+          mkdir -p out/ubuntu
+          cp "target/$TARGET/release/fresnica.exe" out/ubuntu/
+          cp "target/$TARGET/release/fresnica-tui.exe" out/ubuntu/
+          python3 - "$start" "$build_start" "$end" <<'PY'
           import json, os, pathlib, sys
           start, build_start, end = map(int, sys.argv[1:4])
-          host, out_name = sys.argv[4:6]
-          root = pathlib.Path("out") / out_name
+          root = pathlib.Path("out/ubuntu")
           data = {
-              "host": host,
+              "host": "ubuntu-cross-clang",
               "setup_seconds": build_start - start,
               "build_seconds": end - build_start,
               "total_seconds": end - start,
@@ -139,8 +111,8 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-sysroot-${{ matrix.out }}
-          path: out/${{ matrix.out }}
+          name: windows-cache-benchmark-ubuntu
+          path: out/ubuntu
           if-no-files-found: error
 
   smoke:
@@ -149,46 +121,15 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: windows-sysroot-*
-          path: artifacts
-      - name: Run both cross-built variants
+          name: windows-cache-benchmark-ubuntu
+          path: artifacts/ubuntu
+      - name: Run cross-built binaries
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($variant in @("ubuntu", "macos")) {
-            $dir = "artifacts/windows-sysroot-$variant"
-            Write-Host "=== $variant ==="
-            & "$dir/fresnica.exe" --version
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & "$dir/fresnica.exe" --help | Select-Object -First 8
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & "$dir/fresnica-tui.exe" --version
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-  summary:
-    needs: [cross, smoke]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: windows-sysroot-*
-          path: artifacts
-      - name: Summarize
-        shell: bash
-        run: |
-          python3 <<'PY'
-          import json
-          from pathlib import Path
-          rows = []
-          for variant in ("ubuntu", "macos"):
-              p = Path("artifacts") / f"windows-sysroot-{variant}" / "benchmark.json"
-              rows.append(json.loads(p.read_text()))
-          print("host,setup_s,build_s,total_s,cargo_source_hit,xwin_hit,target_hit,cli_bytes,tui_bytes")
-          for row in rows:
-              print(
-                  f'{row["host"]},{row["setup_seconds"]},{row["build_seconds"]},{row["total_seconds"]},'
-                  f'{row["cargo_source_cache_hit"]},{row["xwin_cache_hit"]},{row["target_cache_hit"]},'
-                  f'{row["cli_bytes"]},{row["tui_bytes"]}'
-              )
-          PY
+          & "artifacts/ubuntu/fresnica.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "artifacts/ubuntu/fresnica.exe" --help | Select-Object -First 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "artifacts/ubuntu/fresnica-tui.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
