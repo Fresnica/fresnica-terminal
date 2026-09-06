@@ -14,7 +14,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use fresnica_client::{FresnicaClient, NetworkProfile};
+use fresnica_client::{FresnicaClient, NetworkProfile, WalletStorage};
 use zeroize::Zeroizing;
 
 const HELP: &str = r#"Fresnica native Rust CLI
@@ -49,9 +49,9 @@ Environment:
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
 
 Network commands:
-  account                       Show current Horizon account state
+  account                       Show current ledger account state
   balance                       Show current account balances and liabilities
-  history                       Show newest Horizon operations (default 20, max 200)
+  history                       Show newest account operations (default 20, max 200)
   asset                         Discover exact issued-asset identities and optional metadata
   send                          Review, sign through Fresnica SDK/Core, and submit a payment
   trust                         Add, change, or remove an issued-asset trustline
@@ -123,27 +123,43 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         return Ok(());
     }
 
-    diagnostics::stage("initialize Fresnica client");
+    diagnostics::stage(command_stage(&global.command));
+    match global.command[0].as_str() {
+        "info" | "contact" | "wallet" => run_local_command(&global),
+        "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
+        | "anchor" => run_network_command(&global),
+        other => Err(format!("unknown command: {other}\n\n{HELP}")),
+    }
+}
+
+fn run_local_command(global: &GlobalOptions) -> Result<(), String> {
+    diagnostics::stage("initialize local wallet storage");
+    let storage = WalletStorage::new(&global.home)?;
+    match global.command[0].as_str() {
+        "info" => wallet::command_info(&storage, &global.command[1..]),
+        "contact" => contacts::command_contact(&storage, &global.command[1..]),
+        "wallet" => wallet::command_wallet(&storage, &global.network, &global.command[1..]),
+        _ => unreachable!("local command was classified before dispatch"),
+    }
+}
+
+fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
+    diagnostics::stage("initialize Fresnica network client");
     let mut profile = NetworkProfile::for_network(&global.network)?;
     if let Some(horizon_url) = horizon_url_override(global.horizon_url.as_deref()) {
         profile = profile.with_horizon_url(&horizon_url)?;
     }
     let client = FresnicaClient::from_profile(&global.home, profile)?;
-    let storage = client.storage();
-    diagnostics::stage(command_stage(&global.command));
     match global.command[0].as_str() {
-        "info" => wallet::command_info(storage, &global.command[1..]),
         "account" => read_commands::command_account(&client, &global.command[1..]),
         "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
         "history" => read_commands::command_history(&client, &global.command[1..]),
         "asset" => asset_discovery::command_asset(&client, &global.command[1..]),
         "send" => send::command_send(&client, &global.command[1..]),
-        "contact" => contacts::command_contact(storage, &global.command[1..]),
         "trust" => trust::command_trust(&client, &global.command[1..]),
         "dex" => dex::command_dex(&client, &global.command[1..]),
         "anchor" => anchor::command_anchor(&client, &global.command[1..]),
-        "wallet" => wallet::command_wallet(storage, &global.network, &global.command[1..]),
-        other => Err(format!("unknown command: {other}\n\n{HELP}")),
+        _ => unreachable!("network command was classified before dispatch"),
     }
 }
 
