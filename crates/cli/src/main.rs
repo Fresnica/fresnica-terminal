@@ -1,4 +1,5 @@
 mod anchor;
+mod asset_discovery;
 mod contacts;
 mod dex;
 mod diagnostics;
@@ -23,6 +24,7 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] account [--wallet NAME] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] balance [--wallet NAME] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] history [--wallet NAME] [--limit N] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] asset discover [--limit N] [--cached] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] send AMOUNT ASSET to DESTINATION [--wallet NAME] [--memo TEXT] [-y]
   fresnica [--home PATH] contact COMMAND ...
   fresnica [--home PATH] [--network mainnet|testnet] trust add CODE:GISSUER [--limit VALUE] [--wallet NAME] [-y]
@@ -46,6 +48,7 @@ Network commands:
   account                       Show current Horizon account state
   balance                       Show current account balances and liabilities
   history                       Show newest Horizon operations (default 20, max 200)
+  asset                         Discover exact issued-asset identities and optional metadata
   send                          Review, sign through Fresnica SDK/Core, and submit a payment
   trust                         Add, change, or remove an issued-asset trustline
   dex                           Read and trade on the Stellar DEX
@@ -125,6 +128,7 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         "account" => read_commands::command_account(&client, &global.command[1..]),
         "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
         "history" => read_commands::command_history(&client, &global.command[1..]),
+        "asset" => asset_discovery::command_asset(&client, &global.command[1..]),
         "send" => send::command_send(&client, &global.command[1..]),
         "contact" => contacts::command_contact(storage, &global.command[1..]),
         "trust" => trust::command_trust(&client, &global.command[1..]),
@@ -197,6 +201,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("account") => "CLI command: account",
         Some("balance" | "assets") => "CLI command: balance",
         Some("history") => "CLI command: history",
+        Some("asset") => "CLI command: asset",
         Some("send") => "CLI command: send",
         Some("contact") => "CLI command: contact",
         Some("trust") => "CLI command: trust",

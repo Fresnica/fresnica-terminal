@@ -1,6 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fresnica_client::{BalanceSnapshot, FresnicaClient, HistorySnapshot, OpenOffer, WalletRecord};
+use fresnica_client::{
+    AssetCatalogEntry, BalanceSnapshot, FresnicaClient, HistorySnapshot, OpenOffer, WalletRecord,
+    MAX_ASSET_CATALOG_LIMIT,
+};
 use ratatui::crossterm::event::KeyCode;
 use serde_json::Value;
 use zeroize::Zeroize;
@@ -9,6 +12,65 @@ use super::state::{
     MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, PreparedWrite, SendForm,
     TrustlineForm, TrustlineFormAction,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AssetPickerTarget {
+    Send,
+    Trustline,
+    MarketBase,
+    MarketCounter,
+    OfferBase,
+    OfferCounter,
+}
+
+pub(super) struct AssetPickerState {
+    pub(super) entries: Vec<AssetCatalogEntry>,
+    pub(super) selected: usize,
+    target: AssetPickerTarget,
+}
+
+impl AssetPickerState {
+    pub(super) fn new(
+        entries: Vec<AssetCatalogEntry>,
+        target: AssetPickerTarget,
+        current: &str,
+    ) -> Self {
+        let entries = if target == AssetPickerTarget::Trustline {
+            entries
+                .into_iter()
+                .filter(|entry| !entry.is_native())
+                .collect()
+        } else {
+            entries
+        };
+        let selected = entries
+            .iter()
+            .position(|entry| entry.identity == current)
+            .unwrap_or(0);
+        Self {
+            entries,
+            selected,
+            target,
+        }
+    }
+
+    fn previous(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        self.selected = if self.selected == 0 {
+            self.entries.len() - 1
+        } else {
+            self.selected - 1
+        };
+    }
+
+    fn next(&mut self) {
+        if !self.entries.is_empty() {
+            self.selected = (self.selected + 1) % self.entries.len();
+        }
+    }
+}
 
 pub(super) struct App {
     pub(super) client: FresnicaClient,
@@ -19,6 +81,7 @@ pub(super) struct App {
     pub(super) offers: Vec<OpenOffer>,
     pub(super) status: String,
     pub(super) mode: Mode,
+    pub(super) asset_picker: Option<AssetPickerState>,
 }
 
 impl App {
@@ -64,6 +127,7 @@ impl App {
             offers: Vec::new(),
             status: String::new(),
             mode: Mode::Browse,
+            asset_picker: None,
         };
         app.refresh();
         Ok(app)
@@ -71,6 +135,76 @@ impl App {
 
     pub(super) fn selected_wallet(&self) -> &WalletRecord {
         &self.wallets[self.selected]
+    }
+
+    fn handle_asset_picker(&mut self, code: KeyCode) {
+        let mut chosen = None;
+        let mut cancelled = false;
+        let mut refresh_request = None;
+        if let Some(picker) = self.asset_picker.as_mut() {
+            match code {
+                KeyCode::Esc => cancelled = true,
+                KeyCode::Up | KeyCode::Char('k') => picker.previous(),
+                KeyCode::Down | KeyCode::Char('j') => picker.next(),
+                KeyCode::Char('r') => {
+                    let current = picker
+                        .entries
+                        .get(picker.selected)
+                        .map(|entry| entry.identity.clone())
+                        .unwrap_or_default();
+                    refresh_request = Some((picker.target, current));
+                }
+                KeyCode::Enter => {
+                    chosen = picker
+                        .entries
+                        .get(picker.selected)
+                        .map(|entry| (picker.target, entry.identity.clone()));
+                }
+                _ => {}
+            }
+        }
+        if let Some((target, current)) = refresh_request {
+            match self.client.asset_catalog(MAX_ASSET_CATALOG_LIMIT, true) {
+                Ok(snapshot) => {
+                    let refreshed = snapshot.refreshed;
+                    self.asset_picker =
+                        Some(AssetPickerState::new(snapshot.entries, target, &current));
+                    self.status = if refreshed {
+                        "Asset catalog refreshed".to_owned()
+                    } else {
+                        "Refresh unavailable; cached/manual assets remain".to_owned()
+                    };
+                }
+                Err(error) => self.status = error,
+            }
+            return;
+        }
+        if cancelled {
+            self.asset_picker = None;
+            self.status = "Asset selection cancelled; manual value kept".to_owned();
+        } else if let Some((target, identity)) = chosen {
+            self.asset_picker = None;
+            self.apply_asset_identity(target, &identity);
+            self.status = format!("Selected exact asset identity {identity}");
+        }
+    }
+
+    fn apply_asset_identity(&mut self, target: AssetPickerTarget, identity: &str) {
+        match (&mut self.mode, target) {
+            (Mode::Send(form), AssetPickerTarget::Send) => form.asset = identity.to_owned(),
+            (Mode::Trustline(form), AssetPickerTarget::Trustline) => {
+                form.asset = identity.to_owned()
+            }
+            (Mode::Market(form), AssetPickerTarget::MarketBase) => form.base = identity.to_owned(),
+            (Mode::Market(form), AssetPickerTarget::MarketCounter) => {
+                form.counter = identity.to_owned()
+            }
+            (Mode::Offer(form), AssetPickerTarget::OfferBase) => form.base = identity.to_owned(),
+            (Mode::Offer(form), AssetPickerTarget::OfferCounter) => {
+                form.counter = identity.to_owned()
+            }
+            _ => {}
+        }
     }
 
     fn refresh(&mut self) {
@@ -119,12 +253,18 @@ impl App {
     }
 
     pub(super) fn handle_key(&mut self, code: KeyCode) -> bool {
+        if self.asset_picker.is_some() {
+            self.handle_asset_picker(code);
+            return false;
+        }
+
         let wallet_name = self.selected_wallet().name.clone();
         let wallet_watch_only = self.selected_wallet().watch_only();
         let mut payment_request = None;
         let mut trustline_request = None;
         let mut offer_request = None;
         let mut market_request = None;
+        let mut asset_picker_request = None;
         let mut submit = false;
 
         match &mut self.mode {
@@ -168,6 +308,9 @@ impl App {
                 KeyCode::BackTab | KeyCode::Up => form.active = (form.active + 3) % 4,
                 KeyCode::Enter if form.active < 3 => form.active += 1,
                 KeyCode::Enter => payment_request = Some(form.request(&wallet_name)),
+                KeyCode::Char('/') if form.active == 1 => {
+                    asset_picker_request = Some((AssetPickerTarget::Send, form.asset.clone()))
+                }
                 KeyCode::Backspace => {
                     form.current_mut().pop();
                 }
@@ -196,6 +339,9 @@ impl App {
                 }
                 KeyCode::Enter if form.active == 1 => form.active = 2,
                 KeyCode::Enter => trustline_request = Some(form.request(&wallet_name)),
+                KeyCode::Char('/') if form.active == 1 => {
+                    asset_picker_request = Some((AssetPickerTarget::Trustline, form.asset.clone()))
+                }
                 KeyCode::Backspace => {
                     if let Some(value) = form.current_mut() {
                         value.pop();
@@ -244,6 +390,25 @@ impl App {
                     Ok(request) => offer_request = Some(request),
                     Err(error) => self.status = error,
                 },
+                KeyCode::Char('/') => {
+                    let target = match (form.action, form.active) {
+                        (OfferFormAction::Buy | OfferFormAction::Sell, 1)
+                        | (OfferFormAction::Update, 2) => Some(AssetPickerTarget::OfferBase),
+                        (OfferFormAction::Buy | OfferFormAction::Sell, 2)
+                        | (OfferFormAction::Update, 3) => Some(AssetPickerTarget::OfferCounter),
+                        _ => None,
+                    };
+                    if let Some(target) = target {
+                        let current = match target {
+                            AssetPickerTarget::OfferBase => form.base.clone(),
+                            AssetPickerTarget::OfferCounter => form.counter.clone(),
+                            _ => unreachable!(),
+                        };
+                        asset_picker_request = Some((target, current));
+                    } else if let Some(value) = form.current_mut() {
+                        value.push('/');
+                    }
+                }
                 KeyCode::Backspace => {
                     if let Some(value) = form.current_mut() {
                         value.pop();
@@ -265,6 +430,14 @@ impl App {
                 KeyCode::BackTab | KeyCode::Up => form.active = (form.active + 1) % 2,
                 KeyCode::Enter if form.active == 0 => form.active = 1,
                 KeyCode::Enter => market_request = Some(form.pair()),
+                KeyCode::Char('/') => {
+                    let (target, current) = if form.active == 0 {
+                        (AssetPickerTarget::MarketBase, form.base.clone())
+                    } else {
+                        (AssetPickerTarget::MarketCounter, form.counter.clone())
+                    };
+                    asset_picker_request = Some((target, current));
+                }
                 KeyCode::Backspace => {
                     form.current_mut().pop();
                 }
@@ -376,6 +549,18 @@ impl App {
                 KeyCode::Char(character) => passcode.push(character),
                 _ => {}
             },
+        }
+
+        if let Some((target, current)) = asset_picker_request {
+            match self.client.asset_catalog(MAX_ASSET_CATALOG_LIMIT, false) {
+                Ok(snapshot) => {
+                    self.asset_picker =
+                        Some(AssetPickerState::new(snapshot.entries, target, &current));
+                    self.status =
+                        "Cached asset catalog · r refresh · Esc keeps manual entry".to_owned();
+                }
+                Err(error) => self.status = error,
+            }
         }
 
         if let Some(request) = payment_request {

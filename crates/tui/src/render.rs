@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table};
 use ratatui::Frame;
 use serde_json::Value;
 
-use super::app::App;
+use super::app::{App, AssetPickerState};
 use super::state::{
     MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, SendForm, TrustlineForm,
     TrustlineFormAction,
@@ -59,6 +59,9 @@ impl App {
             Mode::TrustlineReview(prepared) => self.render_trustline_review(frame, prepared),
             Mode::OfferReview(prepared) => self.render_offer_review(frame, prepared),
             Mode::Passcode { passcode, .. } => self.render_passcode(frame, passcode),
+        }
+        if let Some(picker) = &self.asset_picker {
+            self.render_asset_picker(frame, picker);
         }
     }
 
@@ -169,18 +172,21 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let help = match &self.mode {
+        let help = if self.asset_picker.is_some() {
+            "Up/Down or j/k select   r refresh   Enter choose exact identity   Esc keep manual value"
+        } else {
+            match &self.mode {
             Mode::Browse => {
                 "q quit   r refresh   [ / ] switch wallet   s send   t manage assets   d DEX"
             }
-            Mode::Send(_) => "type value   Tab/Up/Down field   Enter next/prepare   Esc cancel",
+            Mode::Send(_) => "type value   / choose asset   Tab/Up/Down field   Enter next/prepare   Esc cancel",
             Mode::Trustline(_) => {
-                "action: Left/Right or a/l/x   Tab field   Enter next/prepare   Esc cancel"
+                "action: Left/Right or a/l/x   / choose asset   Tab field   Enter next/prepare   Esc cancel"
             }
             Mode::Offer(_) => {
-                "action: Left/Right or b/s/e/x   Tab field   Space toggles trustline   Enter next/prepare"
+                "action: Left/Right or b/s/e/x   / choose asset   Tab field   Space toggles trustline   Enter next/prepare"
             }
-            Mode::Market(_) => "type asset   Tab/Up/Down field   Enter next/open   Esc cancel",
+            Mode::Market(_) => "type asset   / choose asset   Tab/Up/Down field   Enter next/open   Esc cancel",
             Mode::MarketView(_) => {
                 "r refresh   w swap pair   b buy   s sell   e edit   x cancel   Esc back"
             }
@@ -188,6 +194,7 @@ impl App {
                 "y/Enter sign   n/Esc cancel"
             }
             Mode::Passcode { .. } => "Enter submit   Backspace edit   Esc cancel",
+            }
         };
         let body = format!("{}\n{help}", self.status);
         frame.render_widget(Paragraph::new(body).block(Block::bordered()), area);
@@ -214,7 +221,7 @@ impl App {
             })
             .chain(std::iter::once(Line::from("")))
             .chain(std::iter::once(Line::from(
-                "Destination may be a G address or a saved contact name.",
+                "Asset may be typed exactly or chosen with /. Destination may be a G address or contact.",
             )))
             .collect::<Vec<_>>();
         frame.render_widget(Clear, area);
@@ -251,7 +258,7 @@ impl App {
             })
             .chain(std::iter::once(Line::from("")))
             .chain(std::iter::once(Line::from(
-                "Asset format: CODE:GISSUER. Add may leave limit empty for the default.",
+                "Asset: / chooses catalog; manual CODE:GISSUER remains available. Add may leave limit empty.",
             )))
             .collect::<Vec<_>>();
         frame.render_widget(Clear, area);
@@ -303,7 +310,7 @@ impl App {
             })
             .chain(std::iter::once(Line::from("")))
             .chain(std::iter::once(Line::from(
-                "Action: b buy, s sell, e edit, x cancel. Price is counter per base.",
+                "Action: b buy, s sell, e edit, x cancel. / chooses base/counter asset. Price is counter per base.",
             )))
             .collect::<Vec<_>>();
         frame.render_widget(Clear, area);
@@ -332,7 +339,7 @@ impl App {
             })
             .chain(std::iter::once(Line::from("")))
             .chain(std::iter::once(Line::from(
-                "Assets are XLM or full CODE:GISSUER identities. Price is counter per base.",
+                "Assets are exact XLM or CODE:GISSUER; / opens catalog. Price is counter per base.",
             )))
             .collect::<Vec<_>>();
         frame.render_widget(Clear, area);
@@ -587,6 +594,49 @@ impl App {
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines).block(Block::bordered().title("Review SDEX offer")),
+            area,
+        );
+    }
+
+    fn render_asset_picker(&self, frame: &mut Frame, picker: &AssetPickerState) {
+        let area = popup_area(frame.area());
+        let visible = usize::from(area.height.saturating_sub(4) / 2).max(1);
+        let max_start = picker.entries.len().saturating_sub(visible);
+        let start = picker.selected.saturating_sub(visible / 2).min(max_start);
+        let end = (start + visible).min(picker.entries.len());
+        let mut lines = Vec::new();
+        for (index, entry) in picker.entries[start..end].iter().enumerate() {
+            let absolute = start + index;
+            let marker = if absolute == picker.selected {
+                ">"
+            } else {
+                " "
+            };
+            let identity = Line::from(format!("{marker} {}", entry.identity));
+            lines.push(if absolute == picker.selected {
+                identity.style(Style::new().add_modifier(Modifier::BOLD))
+            } else {
+                identity
+            });
+            let mut metadata = Vec::new();
+            if let Some(domain) = &entry.domain {
+                metadata.push(domain.as_str());
+            }
+            if let Some(name) = &entry.name {
+                metadata.push(name.as_str());
+            }
+            if let Some(organization) = &entry.organization {
+                metadata.push(organization.as_str());
+            }
+            metadata.push(entry.source.as_str());
+            lines.push(Line::from(format!("  {}", metadata.join(" · "))));
+        }
+        if picker.entries.is_empty() {
+            lines.push(Line::from("No catalog entries; Esc keeps manual entry."));
+        }
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(Block::bordered().title("Select exact asset identity")),
             area,
         );
     }
