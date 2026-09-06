@@ -1,5 +1,5 @@
 use fresnica_client::{
-    balance_asset_label, operation_summary, AccountState, FresnicaClient, LedgerSignerKind,
+    operation_summary, AccountState, AssetBalance, BalanceAsset, FresnicaClient, LedgerSignerKind,
 };
 use serde_json::{json, Value};
 
@@ -77,13 +77,18 @@ fn signer_kind_label(kind: &LedgerSignerKind) -> &'static str {
 
 pub fn command_balance(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let options = parse_output_options(arguments, "fresnica balance [--wallet NAME] [--json]")?;
-    crate::diagnostics::stage("balance: fetch Horizon state");
+    crate::diagnostics::stage("balance: fetch ledger balances");
     let snapshot = client.balances(options.wallet.as_deref())?;
 
     if options.json {
+        let balances = snapshot
+            .balances
+            .iter()
+            .map(balance_json)
+            .collect::<Vec<_>>();
         println!(
             "{}",
-            serde_json::to_string_pretty(&snapshot.balances)
+            serde_json::to_string_pretty(&balances)
                 .map_err(|error| format!("unable to encode balance data: {error}"))?
         );
         return Ok(());
@@ -100,13 +105,42 @@ pub fn command_balance(client: &FresnicaClient, arguments: &[String]) -> Result<
     for balance in &snapshot.balances {
         println!(
             "{:<72} {:>16} {:>16} {:>16}",
-            balance_asset_label(balance),
-            text(balance, "balance").unwrap_or("0"),
-            text(balance, "selling_liabilities").unwrap_or("0"),
-            text(balance, "buying_liabilities").unwrap_or("0"),
+            balance.asset.identity(),
+            balance.balance,
+            balance.selling_liabilities,
+            balance.buying_liabilities,
         );
     }
     Ok(())
+}
+
+fn balance_json(balance: &AssetBalance) -> Value {
+    json!({
+        "asset": balance_asset_json(&balance.asset),
+        "balance": balance.balance.as_str(),
+        "selling_liabilities": balance.selling_liabilities.as_str(),
+        "buying_liabilities": balance.buying_liabilities.as_str(),
+    })
+}
+
+fn balance_asset_json(asset: &BalanceAsset) -> Value {
+    match asset {
+        BalanceAsset::Native => json!({
+            "kind": "native",
+            "identity": "XLM",
+        }),
+        BalanceAsset::Issued { code, issuer } => json!({
+            "kind": "issued",
+            "identity": asset.identity(),
+            "code": code,
+            "issuer": issuer,
+        }),
+        BalanceAsset::LiquidityPoolShare { liquidity_pool_id } => json!({
+            "kind": "liquidity_pool_share",
+            "identity": asset.identity(),
+            "liquidity_pool_id": liquidity_pool_id,
+        }),
+    }
 }
 
 pub fn command_history(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
@@ -305,5 +339,26 @@ mod tests {
             signer_kind_label(&LedgerSignerKind::Ed25519SignedPayload),
             "ed25519_signed_payload"
         );
+    }
+
+    #[test]
+    fn balance_json_is_provider_neutral_and_typed() {
+        let balance = AssetBalance {
+            asset: BalanceAsset::Issued {
+                code: "USD".to_owned(),
+                issuer: "GISSUER".to_owned(),
+            },
+            balance: "7".to_owned(),
+            selling_liabilities: "1.25".to_owned(),
+            buying_liabilities: "0.5".to_owned(),
+        };
+
+        let value = balance_json(&balance);
+
+        assert_eq!(value["asset"]["kind"], json!("issued"));
+        assert_eq!(value["asset"]["identity"], json!("USD:GISSUER"));
+        assert_eq!(value["asset"]["code"], json!("USD"));
+        assert_eq!(value["balance"], json!("7"));
+        assert_eq!(value["selling_liabilities"], json!("1.25"));
     }
 }
