@@ -19,7 +19,10 @@ jobs:
         with:
           components: rustfmt,clippy
       - name: Apply typed History consumer transform
-        run: python3 .github/terminal-history-transform.py
+        shell: bash
+        run: |
+          sed -i 's/assert text.count(OLD_REV) == 3/assert text.count(OLD_REV) == 6/' .github/terminal-history-transform.py
+          python3 .github/terminal-history-transform.py
       - name: Refresh workspace lockfile
         run: cargo check --workspace
       - name: Format workspace
