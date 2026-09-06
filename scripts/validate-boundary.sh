@@ -44,6 +44,11 @@ if grep -RInE 'HorizonGateway|RpcGateway|MAINNET_HORIZON_URL|TESTNET_HORIZON_URL
   exit 1
 fi
 
+if grep -RInE 'exchange_anchor_sep10_challenge|prepare_anchor_sep10_challenge|sep10_authorization_plan|satisfied_ed25519_conditions|sign_needed_local_ed25519' crates/*/src; then
+  echo "Terminal products must consume Client-owned SEP-10 authentication orchestration." >&2
+  exit 1
+fi
+
 if grep -RInE 'https://horizon(-testnet)?\.stellar\.org' crates/*/src; then
   echo "Terminal products must not hardcode shared Horizon defaults; provide overrides through NetworkProfile." >&2
   exit 1

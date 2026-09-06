@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
@@ -7,20 +7,17 @@ use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
 use crate::send::review_and_submit_payment;
-use crate::transaction_flow::{network_passphrase, parse_transaction_xdr};
 use fresnica_client::{
     anchor_status_requires_sep10, anchor_transaction_text as transaction_text,
     anchor_transfer_requires_sep10,
     anchor_withdrawal_payment_from_transaction as withdrawal_payment_from_transaction,
-    exchange_anchor_sep10_challenge, fetch_anchor_transaction, get_anchor_customer,
-    prepare_anchor_sep10_challenge, put_anchor_customer, satisfied_ed25519_conditions,
+    fetch_anchor_transaction, get_anchor_customer, put_anchor_customer,
     select_anchor_status_protocol as select_status_protocol,
-    select_anchor_transfer_protocol as select_transfer_protocol, sep10_authorization_plan,
-    sign_needed_local_ed25519, start_anchor_sep24_transfer, start_anchor_sep6_transfer,
-    AnchorAsset as IssuedAsset, AnchorCapabilities, AnchorCustomerFile, AnchorCustomerQuery,
-    AnchorCustomerSnapshot, AnchorCustomerUpdate, AnchorProtocol,
+    select_anchor_transfer_protocol as select_transfer_protocol, start_anchor_sep24_transfer,
+    start_anchor_sep6_transfer, AnchorAsset as IssuedAsset, AnchorCapabilities, AnchorCustomerFile,
+    AnchorCustomerQuery, AnchorCustomerSnapshot, AnchorCustomerUpdate, AnchorProtocol,
     AnchorSep24InteractiveResult as Sep24InteractiveResult, AnchorTransferKind, FresnicaClient,
-    LedgerSignerCondition, LedgerSignerKind, WalletRecord,
+    WalletRecord,
 };
 
 pub fn command_anchor(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
@@ -791,38 +788,15 @@ fn parse_transfer_field(value: &str) -> Result<(String, String), String> {
 fn authenticate_anchor_sep10(
     client: &FresnicaClient,
     record: &WalletRecord,
-    network: &str,
+    _network: &str,
     home_domain: &str,
     capabilities: &AnchorCapabilities,
 ) -> Result<Zeroizing<String>, String> {
-    crate::diagnostics::stage("anchor SEP-10: fetch account authorization state");
-    let ledger_account = client.ledger_account(&record.address)?;
-    let authorization = sep10_authorization_plan(ledger_account.as_ref(), &record.address)?;
-    crate::diagnostics::stage("anchor SEP-10: request and validate challenge");
-    let challenge =
-        prepare_anchor_sep10_challenge(network, &record.address, home_domain, capabilities)?;
-    let mut envelope = parse_transaction_xdr(challenge.transaction_xdr())?;
-    let mut satisfied =
-        satisfied_ed25519_conditions(&authorization, &envelope, network_passphrase(network)?)?;
-    satisfied.remove(&LedgerSignerCondition {
-        kind: LedgerSignerKind::Ed25519PublicKey,
-        key: challenge.server_signing_key().to_owned(),
-    });
-    let excluded = BTreeSet::from([challenge.server_signing_key().to_owned()]);
-    crate::diagnostics::stage("anchor SEP-10: sign required local conditions");
-    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-    sign_needed_local_ed25519(
-        client.storage(),
-        &authorization,
-        &satisfied,
-        &excluded,
-        1,
-        network,
-        &mut envelope,
-        passcode.as_str(),
-    )?;
-    crate::diagnostics::stage("anchor SEP-10: exchange signed challenge");
-    exchange_anchor_sep10_challenge(network, &challenge, &authorization, &envelope)
+    crate::diagnostics::stage("anchor SEP-10: authenticate");
+    client.authenticate_anchor_sep10(record, home_domain, capabilities, || {
+        crate::diagnostics::stage("anchor SEP-10: sign required local conditions");
+        crate::prompt_hidden("Fresnica passphrase: ")
+    })
 }
 
 fn render_sep24_result(
