@@ -44,3 +44,10 @@ replace(
     '''    #[test]\n    fn asset_picker_applies_full_issuer_identity() {''',
     '''    #[test]\n    fn trustline_picker_excludes_native_asset() {\n        let picker = AssetPickerState::new(\n            vec![\n                catalog_entry("XLM"),\n                catalog_entry("USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),\n            ],\n            AssetPickerTarget::Trustline,\n            "XLM",\n        );\n        assert_eq!(picker.entries.len(), 1);\n        assert!(!picker.entries[0].is_native());\n    }\n\n    #[test]\n    fn asset_picker_applies_full_issuer_identity() {''',
 )
+
+replace(
+    "crates/tui/src/main.rs",
+    "align cache-first status assertion",
+    '        assert!(app.status.contains("exact asset identity"));\n',
+    '        assert!(app.status.contains("Cached asset catalog"));\n',
+)
