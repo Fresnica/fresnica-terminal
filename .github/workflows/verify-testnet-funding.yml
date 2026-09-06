@@ -1,0 +1,48 @@
+name: Verify terminal testnet funding
+
+on:
+  pull_request:
+    branches:
+      - refactor/terminal-history-read-model
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.head_ref == 'verify/terminal-testnet-funding'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Refresh and check workspace
+        run: cargo check --workspace
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Validate architecture boundary
+        run: bash scripts/validate-boundary.sh
+      - name: Validate Fresnica pin
+        run: |
+          grep -q 'f94bf77988800a1fa8124e018c00fb946c113ee4' Cargo.lock
+          if grep -q '65a9da804ca16849e320d24365e6e839e62cf5d8' Cargo.lock; then
+            echo 'old Fresnica pin remains in Cargo.lock' >&2
+            exit 1
+          fi
+      - name: Commit generated lockfile
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo 'Cargo.lock already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.lock
+          git commit -m 'chore(verify): refresh testnet funding lockfile'
+          git push origin HEAD:${{ github.head_ref }}
