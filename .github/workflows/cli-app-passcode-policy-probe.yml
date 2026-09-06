@@ -1,0 +1,63 @@
+name: CLI App Passcode Policy Probe
+
+on:
+  push:
+    branches:
+      - verify/cli-app-passcode-policy
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+      - name: Apply app-passcode policy transform
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_rev='38fd73edb4d685fc3433ca157ccdccc4596b85c1'
+          new_rev='5cebbf4d28b001eece8e4a3b3bc8e70a342d0e60'
+          sed -i "s/${old_rev}/${new_rev}/g" Cargo.toml FRESNICA_REV Cargo.lock
+          perl -0pi -e '
+            s/if !record\.watch_only\(\) && has_app_passcode\(storage\)\? \{/if !record.watch_only() && wallet_ops::has_app_passcode(storage)? {/g;
+            s/if has_app_passcode\(storage\)\? \{/if wallet_ops::has_app_passcode(storage)? {/g;
+            s/    verify_app_passcode\(storage, &passcode\)\?;/    wallet_ops::validate_app_passcode(storage, &passcode)?;/g;
+            s/\nfn signing_records\(storage: &WalletStorage\) -> Result<Vec<WalletRecord>, String> \{.*?\n\}\n\nfn prompt_app_passcode/\nfn prompt_app_passcode/s;
+          ' crates/cli/src/wallet.rs
+      - name: Format Rust
+        run: cargo fmt --all
+      - name: Prove CLI no longer owns store-wide passcode scanning
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg -n '^fn (signing_records|has_app_passcode|verify_app_passcode)\b' crates/cli/src/wallet.rs; then
+            echo 'CLI-local app-passcode policy helper remains' >&2
+            exit 1
+          fi
+          rg -n 'wallet_ops::has_app_passcode|wallet_ops::validate_app_passcode' crates/cli/src/wallet.rs
+      - name: Validate Terminal boundary
+        run: bash scripts/validate-boundary.sh
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-targets --locked
+      - name: Build release binaries
+        run: |
+          cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - name: Commit generated verifier state
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/cli-app-passcode-policy-probe.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "verify: materialize CLI app passcode policy"
+          git push origin HEAD:verify/cli-app-passcode-policy
