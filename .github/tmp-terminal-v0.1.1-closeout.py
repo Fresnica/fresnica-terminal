@@ -17,11 +17,13 @@ def replace_section(path: str, start_marker: str, end_marker: str | None, replac
     start = text.index(start_marker)
     if end_marker is None:
         end = len(text)
+        suffix = "\n"
     else:
         if text.count(end_marker) != 1:
             raise SystemExit(f"expected exactly one end marker in {path}: {end_marker!r}")
         end = text.index(end_marker, start)
-    target.write_text(text[:start] + replacement.rstrip() + "\n\n" + text[end:].lstrip("\n"))
+        suffix = "\n\n" + text[end:].lstrip("\n")
+    target.write_text(text[:start] + replacement.rstrip() + suffix)
 
 
 refactor = "docs/terminal-shared-foundation-refactor.md"
@@ -99,11 +101,7 @@ This audit is now a closed record for the v0.1.1 hardening milestone. Future Ter
 """,
 )
 
-expected = [
-    "docs/terminal-flow-audit.md",
-    "docs/terminal-shared-foundation-refactor.md",
-]
-for path in expected:
+for path in (refactor, audit):
     text = Path(path).read_text()
     if "final integration pending" in text:
         raise SystemExit(f"stale pending marker remains in {path}")
