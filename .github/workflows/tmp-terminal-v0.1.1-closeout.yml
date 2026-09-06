@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - docs/terminal-v0.1.1-closeout
+    paths:
+      - .github/tmp-terminal-v0.1.1-closeout.py
+      - .github/workflows/tmp-terminal-v0.1.1-closeout.yml
 
 permissions:
   contents: write
