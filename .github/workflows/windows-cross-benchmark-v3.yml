@@ -1,0 +1,205 @@
+name: Windows Cross Compile Benchmark v3
+
+on:
+  push:
+    branches: [ci/windows-cross-compile-benchmark-v3]
+    paths:
+      - ".github/workflows/windows-cross-benchmark-v3.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-cross:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      XWIN_ARCH: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Start benchmark clock
+        shell: bash
+        run: date +%s > .bench-start
+      - name: Ensure LLVM toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y clang lld llvm
+          if command -v llvm-config-18 >/dev/null; then
+            llvm_config="$(command -v llvm-config-18)"
+          else
+            llvm_config="$(command -v llvm-config)"
+          fi
+          llvm_bindir="$($llvm_config --bindir)"
+          export PATH="$llvm_bindir:$PATH"
+          echo "$llvm_bindir" >> "$GITHUB_PATH"
+          command -v clang-cl
+          command -v lld-link
+          command -v llvm-rc
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1
+        with:
+          tool: cargo-xwin@0.23.1
+      - name: Prime Windows SDK cache
+        shell: bash
+        run: cargo xwin cache xwin
+      - name: Build Windows MSVC binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(cat .bench-start)"
+          build_start="$(date +%s)"
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-cli --bin fresnica
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-tui --bin fresnica-tui
+          end="$(date +%s)"
+          mkdir -p out/ubuntu
+          cp "target/$TARGET/release/fresnica.exe" out/ubuntu/
+          cp "target/$TARGET/release/fresnica-tui.exe" out/ubuntu/
+          python3 - "$start" "$build_start" "$end" <<'PY'
+          import json, pathlib, sys
+          start, build_start, end = map(int, sys.argv[1:])
+          root = pathlib.Path("out/ubuntu")
+          data = {
+              "host": "ubuntu-cross",
+              "setup_seconds": build_start - start,
+              "build_seconds": end - build_start,
+              "total_seconds": end - start,
+              "cli_bytes": (root / "fresnica.exe").stat().st_size,
+              "tui_bytes": (root / "fresnica-tui.exe").stat().st_size,
+          }
+          (root / "benchmark.json").write_text(json.dumps(data, indent=2) + "\n")
+          print(json.dumps(data, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cross-ubuntu-v3
+          path: out/ubuntu
+          if-no-files-found: error
+
+  macos-cross:
+    runs-on: macos-latest
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      XWIN_ARCH: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Start benchmark clock
+        shell: bash
+        run: date +%s > .bench-start
+      - name: Ensure Homebrew LLVM and LLD
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew list --versions llvm >/dev/null 2>&1 || brew install llvm
+          brew list --versions lld >/dev/null 2>&1 || brew install lld
+          llvm_prefix="$(brew --prefix llvm)"
+          lld_prefix="$(brew --prefix lld)"
+          export PATH="$llvm_prefix/bin:$lld_prefix/bin:$PATH"
+          echo "$llvm_prefix/bin" >> "$GITHUB_PATH"
+          echo "$lld_prefix/bin" >> "$GITHUB_PATH"
+          command -v clang-cl
+          command -v lld-link
+          command -v llvm-rc
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1
+        with:
+          tool: cargo-xwin@0.23.1
+      - name: Prime Windows SDK cache
+        shell: bash
+        run: cargo xwin cache xwin
+      - name: Build Windows MSVC binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(cat .bench-start)"
+          build_start="$(date +%s)"
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-cli --bin fresnica
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-tui --bin fresnica-tui
+          end="$(date +%s)"
+          mkdir -p out/macos
+          cp "target/$TARGET/release/fresnica.exe" out/macos/
+          cp "target/$TARGET/release/fresnica-tui.exe" out/macos/
+          python3 - "$start" "$build_start" "$end" <<'PY'
+          import json, pathlib, sys
+          start, build_start, end = map(int, sys.argv[1:])
+          root = pathlib.Path("out/macos")
+          data = {
+              "host": "macos-cross",
+              "setup_seconds": build_start - start,
+              "build_seconds": end - build_start,
+              "total_seconds": end - start,
+              "cli_bytes": (root / "fresnica.exe").stat().st_size,
+              "tui_bytes": (root / "fresnica-tui.exe").stat().st_size,
+          }
+          (root / "benchmark.json").write_text(json.dumps(data, indent=2) + "\n")
+          print(json.dumps(data, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cross-macos-v3
+          path: out/macos
+          if-no-files-found: error
+
+  windows-smoke:
+    needs: [ubuntu-cross, macos-cross]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cross-ubuntu-v3
+          path: artifacts/ubuntu
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cross-macos-v3
+          path: artifacts/macos
+      - name: Run cross-built Windows binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($variant in @("ubuntu", "macos")) {
+            Write-Host "=== $variant ==="
+            & "artifacts/$variant/fresnica.exe" --version
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & "artifacts/$variant/fresnica.exe" info
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & "artifacts/$variant/fresnica-tui.exe" --version
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+  summary:
+    needs: [ubuntu-cross, macos-cross, windows-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cross-ubuntu-v3
+          path: artifacts/ubuntu
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cross-macos-v3
+          path: artifacts/macos
+      - name: Compare cross-build results
+        shell: bash
+        run: |
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads((Path("artifacts") / v / "benchmark.json").read_text()) for v in ("ubuntu", "macos")]
+          print("host,setup_s,build_s,total_s,cli_bytes,tui_bytes")
+          for row in rows:
+              print(f'{row["host"]},{row["setup_seconds"]},{row["build_seconds"]},{row["total_seconds"]},{row["cli_bytes"]},{row["tui_bytes"]}')
+          with open("summary.md", "w") as out:
+              out.write("| Host | Setup s | Build s | Total s | CLI bytes | TUI bytes |\n")
+              out.write("|---|---:|---:|---:|---:|---:|\n")
+              for row in rows:
+                  out.write(f'| {row["host"]} | {row["setup_seconds"]} | {row["build_seconds"]} | {row["total_seconds"]} | {row["cli_bytes"]} | {row["tui_bytes"]} |\n')
+          PY
+          cat summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
