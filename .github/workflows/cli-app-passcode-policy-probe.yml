@@ -36,11 +36,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if rg -n '^fn (signing_records|has_app_passcode|verify_app_passcode)\b' crates/cli/src/wallet.rs; then
+          if grep -nE '^fn (signing_records|has_app_passcode|verify_app_passcode)\b' crates/cli/src/wallet.rs; then
             echo 'CLI-local app-passcode policy helper remains' >&2
             exit 1
           fi
-          rg -n 'wallet_ops::has_app_passcode|wallet_ops::validate_app_passcode' crates/cli/src/wallet.rs
+          grep -nE 'wallet_ops::(has_app_passcode|validate_app_passcode)' crates/cli/src/wallet.rs
       - name: Validate Terminal boundary
         run: bash scripts/validate-boundary.sh
       - name: Clippy
