@@ -34,7 +34,7 @@ jobs:
           grep -n 'Vec<HistoryOperation>' crates/tui/src/app.rs
           grep -n 'history_operation_summary' crates/cli/src/read_commands.rs crates/tui/src/render.rs
           grep -n 'history_operation_json' crates/cli/src/read_commands.rs
-          if grep -R -n 'operation_summary' crates/cli crates/tui crates/presentation; then
+          if grep -R -n -w 'operation_summary' crates/cli crates/tui crates/presentation; then
             echo 'provider-specific operation_summary still consumed by Terminal' >&2
             exit 1
           fi
