@@ -1,6 +1,8 @@
 use fresnica_client::{
-    operation_summary, AccountState, AssetBalance, BalanceAsset, FresnicaClient, LedgerSignerKind,
+    AccountState, AssetBalance, BalanceAsset, FresnicaClient, HistoryAsset, HistoryOperation,
+    HistoryOperationKind, HistoryTrustAsset, LedgerSignerKind,
 };
+use fresnica_terminal_presentation::history_operation_summary;
 use serde_json::{json, Value};
 
 pub fn command_account(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
@@ -145,13 +147,18 @@ fn balance_asset_json(asset: &BalanceAsset) -> Value {
 
 pub fn command_history(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let options = parse_history_options(arguments)?;
-    crate::diagnostics::stage("history: fetch Horizon operations");
+    crate::diagnostics::stage("history: fetch account activity");
     let snapshot = client.history(options.wallet.as_deref(), options.limit)?;
 
     if options.json {
+        let operations = snapshot
+            .operations
+            .iter()
+            .map(history_operation_json)
+            .collect::<Vec<_>>();
         println!(
             "{}",
-            serde_json::to_string_pretty(&snapshot.operations)
+            serde_json::to_string_pretty(&operations)
                 .map_err(|error| format!("unable to encode history data: {error}"))?
         );
         return Ok(());
@@ -166,16 +173,125 @@ pub fn command_history(client: &FresnicaClient, arguments: &[String]) -> Result<
         return Ok(());
     }
     for operation in &snapshot.operations {
-        let created_at = text(operation, "created_at").unwrap_or("?");
-        let operation_type = text(operation, "type").unwrap_or("unknown");
+        let created_at = operation.created_at.as_deref().unwrap_or("?");
         println!(
             "{:<20} {:<28} {}",
             created_at,
-            operation_type,
-            operation_summary(operation, &snapshot.wallet.address)
+            operation.operation_type(),
+            history_operation_summary(operation, &snapshot.wallet.address)
         );
     }
     Ok(())
+}
+
+fn history_operation_json(operation: &HistoryOperation) -> Value {
+    json!({
+        "operation_id": operation.operation_id.as_deref(),
+        "paging_token": operation.paging_token.as_deref(),
+        "transaction_hash": operation.transaction_hash.as_deref(),
+        "created_at": operation.created_at.as_deref(),
+        "source_account": operation.source_account.as_deref(),
+        "type": operation.operation_type(),
+        "details": history_operation_details_json(&operation.kind),
+    })
+}
+
+fn history_operation_details_json(kind: &HistoryOperationKind) -> Value {
+    match kind {
+        HistoryOperationKind::Payment {
+            from,
+            to,
+            amount,
+            asset,
+        } => json!({
+            "from": from.as_deref(),
+            "to": to.as_deref(),
+            "amount": amount.as_deref(),
+            "asset": asset.as_ref().map(history_asset_json),
+        }),
+        HistoryOperationKind::CreateAccount {
+            funder,
+            account,
+            starting_balance,
+        } => json!({
+            "funder": funder.as_deref(),
+            "account": account.as_deref(),
+            "starting_balance": starting_balance.as_deref(),
+        }),
+        HistoryOperationKind::ManageSellOffer {
+            offer_id,
+            amount,
+            selling_asset,
+            buying_asset,
+            price,
+        }
+        | HistoryOperationKind::CreatePassiveSellOffer {
+            offer_id,
+            amount,
+            selling_asset,
+            buying_asset,
+            price,
+        }
+        | HistoryOperationKind::ManageBuyOffer {
+            offer_id,
+            amount,
+            selling_asset,
+            buying_asset,
+            price,
+        } => json!({
+            "offer_id": offer_id.as_deref(),
+            "amount": amount.as_deref(),
+            "selling_asset": selling_asset.as_ref().map(history_asset_json),
+            "buying_asset": buying_asset.as_ref().map(history_asset_json),
+            "price": price.as_deref(),
+        }),
+        HistoryOperationKind::ChangeTrust { asset, limit } => json!({
+            "asset": history_trust_asset_json(asset),
+            "limit": limit.as_deref(),
+        }),
+        HistoryOperationKind::AccountMerge { into } => json!({
+            "into": into.as_deref(),
+        }),
+        HistoryOperationKind::ManageData { name } => json!({
+            "name": name.as_deref(),
+        }),
+        HistoryOperationKind::BumpSequence { bump_to } => json!({
+            "bump_to": bump_to.as_deref(),
+        }),
+        HistoryOperationKind::InvokeHostFunction
+        | HistoryOperationKind::LiquidityPoolDeposit
+        | HistoryOperationKind::LiquidityPoolWithdraw
+        | HistoryOperationKind::SetOptions
+        | HistoryOperationKind::Other { .. } => json!({}),
+    }
+}
+
+fn history_asset_json(asset: &HistoryAsset) -> Value {
+    match asset {
+        HistoryAsset::Native => json!({
+            "kind": "native",
+            "identity": "XLM",
+        }),
+        HistoryAsset::Issued { code, issuer } => json!({
+            "kind": "issued",
+            "identity": asset.identity(),
+            "code": code,
+            "issuer": issuer,
+        }),
+    }
+}
+
+fn history_trust_asset_json(asset: &HistoryTrustAsset) -> Value {
+    match asset {
+        HistoryTrustAsset::Classic(asset) => history_asset_json(asset),
+        HistoryTrustAsset::LiquidityPool { liquidity_pool_id } => json!({
+            "kind": "liquidity_pool_share",
+            "liquidity_pool_id": liquidity_pool_id,
+        }),
+        HistoryTrustAsset::Unknown => json!({
+            "kind": "unknown",
+        }),
+    }
 }
 
 struct OutputOptions {
@@ -258,10 +374,6 @@ fn parse_history_options(arguments: &[String]) -> Result<HistoryOptions, String>
         json,
         limit,
     })
-}
-
-fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
 }
 
 #[cfg(test)]
@@ -360,5 +472,33 @@ mod tests {
         assert_eq!(value["asset"]["code"], json!("USD"));
         assert_eq!(value["balance"], json!("7"));
         assert_eq!(value["selling_liabilities"], json!("1.25"));
+    }
+
+    #[test]
+    fn history_json_is_provider_neutral_and_keeps_full_asset_identity() {
+        let operation = HistoryOperation {
+            operation_id: Some("101".to_owned()),
+            paging_token: Some("101".to_owned()),
+            transaction_hash: Some("abc123".to_owned()),
+            created_at: Some("2026-09-06T12:00:00Z".to_owned()),
+            source_account: Some("GSOURCE".to_owned()),
+            kind: HistoryOperationKind::Payment {
+                from: Some("GSOURCE".to_owned()),
+                to: Some("GDESTINATION".to_owned()),
+                amount: Some("1.2500000".to_owned()),
+                asset: Some(HistoryAsset::Issued {
+                    code: "USD".to_owned(),
+                    issuer: "GISSUER".to_owned(),
+                }),
+            },
+        };
+
+        let value = history_operation_json(&operation);
+        assert_eq!(value["type"], json!("payment"));
+        assert_eq!(value["operation_id"], json!("101"));
+        assert_eq!(value["details"]["asset"]["kind"], json!("issued"));
+        assert_eq!(value["details"]["asset"]["identity"], json!("USD:GISSUER"));
+        assert_eq!(value["details"]["asset"]["issuer"], json!("GISSUER"));
+        assert!(value.get("_links").is_none());
     }
 }

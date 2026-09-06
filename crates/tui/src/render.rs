@@ -1,14 +1,14 @@
 use fresnica_client::{
-    operation_summary, AuthorizationScope, AuthorizationThreshold, ClassicOperationKind,
-    LedgerAuthorizationSnapshot, LedgerSignerAvailability, LedgerSignerKind, OfferReviewDetails,
-    PreparedOffer, PreparedPayment, PreparedTrustline,
+    AuthorizationScope, AuthorizationThreshold, ClassicOperationKind, LedgerAuthorizationSnapshot,
+    LedgerSignerAvailability, LedgerSignerKind, OfferReviewDetails, PreparedOffer, PreparedPayment,
+    PreparedTrustline,
 };
+use fresnica_terminal_presentation::history_operation_summary;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table};
 use ratatui::Frame;
-use serde_json::Value;
 
 use super::app::{App, AssetPickerState};
 use super::state::{
@@ -153,11 +153,11 @@ impl App {
             self.operations
                 .iter()
                 .map(|operation| {
-                    let created_at = text(operation, "created_at").unwrap_or("?");
-                    let operation_type = text(operation, "type").unwrap_or("unknown");
+                    let created_at = operation.created_at.as_deref().unwrap_or("?");
                     ListItem::new(Line::from(format!(
-                        "{created_at}  {operation_type}  {}",
-                        operation_summary(operation, address)
+                        "{created_at}  {}  {}",
+                        operation.operation_type(),
+                        history_operation_summary(operation, address)
                     )))
                 })
                 .collect()
@@ -808,10 +808,6 @@ fn popup_area(area: Rect) -> Rect {
     ])
     .areas(vertical);
     popup
-}
-
-fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
 }
 
 #[cfg(test)]
