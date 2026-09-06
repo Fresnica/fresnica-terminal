@@ -1,11 +1,9 @@
 use std::io::{self, Write};
 
 use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
-use fresnica_sdk::{FresnicaSdk, SdkAccountKind};
-use serde_json::Map;
 use zeroize::Zeroizing;
 
-use crate::{diagnostics, expand_path, friendbot, prompt_hidden, validate_network, HELP};
+use crate::{diagnostics, expand_path, friendbot, prompt_hidden, HELP};
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     let wallet_name = match arguments {
@@ -168,24 +166,7 @@ fn wallet_import_watch(
     name: &str,
     address: &str,
 ) -> Result<(), String> {
-    validate_network(network)?;
-    if name.trim().is_empty() {
-        return Err("wallet name cannot be empty".to_owned());
-    }
-    let identity = FresnicaSdk::new()
-        .parse_account(address.to_owned())
-        .map_err(|_| "invalid Stellar G address".to_owned())?;
-    if identity.kind != SdkAccountKind::Classic {
-        return Err("watch-only wallet requires a Classic G address".to_owned());
-    }
-    let record = WalletRecord {
-        name: name.to_owned(),
-        address: identity.address,
-        wallet_type: "watch-only".to_owned(),
-        network: network.to_owned(),
-        secret: None,
-        metadata: Map::new(),
-    };
+    let record = wallet_ops::import_watch_record(name, network, address)?;
     save_new_record(storage, &record)?;
     println!("Added watch-only wallet \"{}\"", record.name);
     Ok(())
