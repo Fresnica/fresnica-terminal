@@ -1,8 +1,8 @@
 # Terminal Flow Conformance Audit
 
-Status: active evidence record — implementation hardening complete; final integration pending
+Status: complete evidence record — implementation merged and released as v0.1.1
 
-Branch: `refactor/terminal-shared-foundation`
+Milestone branch: `refactor/terminal-shared-foundation` (merged via PR #3)
 
 Baseline: `main@a742ef3130e455c9cbdbf42378d07f3e1f30153f`
 
@@ -186,10 +186,15 @@ The final structure therefore removes proven defects and separates presentation 
 11. Boundary, formatting, workspace tests, CLI/TUI release builds and RefPython CLI compatibility passed during staged implementation validation.
 12. Temporary validation workflow/script artifacts were removed from the final branch tree.
 
-## Final integration gates
+## Final integration evidence
 
-1. Review the exact final branch diff against `main@a742ef3130e455c9cbdbf42378d07f3e1f30153f`.
-2. Require clean formal PR `CI` and `Release Terminal` validation on the final head.
-3. Confirm the v0.1.0 release marker remains immutable and no temporary artifacts are present.
-4. Merge the completed branch once, verify the resulting `main` SHA and post-merge CI.
-5. Select the next Terminal patch/minor version from the actual compatibility impact, then publish and verify the release artifacts/checksums.
+All final gates were satisfied:
+
+1. The final refactor diff was reviewed against `main@a742ef3130e455c9cbdbf42378d07f3e1f30153f`; temporary verifier/workflow files were absent and the historical v0.1.0 marker remained byte-identical.
+2. PR #3 exact head `92f64e396b410d074d218dfec6ac5d58e8d410bb` passed `CI #33` and `Release Terminal #20`, then squash-merged as `main@fcf0e5b177283e2dfd0a07d1180f0fc7189ae2ec`; post-merge `CI #34` passed.
+3. The compatibility impact was patch-level. PR #4 prepared v0.1.1 with an exact four-file release diff and passed `CI #35` plus `Release Terminal #21` including Linux/macOS/Windows packaging.
+4. PR #4 squash-merged as `main@88fe7067062521789044a643b6816cc70f77aeaa`; independent post-merge `CI #36` passed.
+5. `Release Terminal #22` published prerelease `v0.1.1` targeted exactly at `88fe7067062521789044a643b6816cc70f77aeaa` with Linux x64, macOS arm64 and Windows x64 archives, release manifest and `SHA256SUMS`.
+6. GitHub Release metadata records SHA-256 digests `064cb346...` (Linux), `e0d8d609...` (macOS), `1d738259...` (Windows), `23f14b34...` (manifest) and `c4575d34...` (`SHA256SUMS`).
+
+This audit is now a closed record for the v0.1.1 hardening milestone. Future Terminal work should start from current `main`, current contracts and new repository evidence rather than extending this refactor plan mechanically.

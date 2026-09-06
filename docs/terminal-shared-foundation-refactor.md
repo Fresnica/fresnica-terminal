@@ -1,8 +1,8 @@
 # Terminal Shared Foundation Refactor
 
-Status: active — foundation, CLI and TUI hardening complete; final integration pending
+Status: complete — merged and released as Fresnica Terminal v0.1.1
 
-Branch: `refactor/terminal-shared-foundation`
+Milestone branch: `refactor/terminal-shared-foundation` (merged via PR #3)
 
 Baseline `main`: `a742ef3130e455c9cbdbf42378d07f3e1f30153f`
 
@@ -173,32 +173,28 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 Staged validation passed after the split: workspace clippy, all workspace tests, both release builds and `git diff --check`.
 
-### Phase 6 - Final integration and release — active
+### Phase 6 - Final integration and release — complete
 
-The refactor branch remains the development target through the final integration gate. PR #3 is kept as a draft CI surface until the exact final head is formally green.
+The completed implementation was finalized through the repository's normal merge and release gates:
 
-Before finalizing/merging:
+1. PR #3 (`refactor: establish Terminal shared capability foundation`) passed formal `CI #33` and `Release Terminal #20` on exact head `92f64e396b410d074d218dfec6ac5d58e8d410bb`, including RefPython compatibility and Linux/macOS/Windows package builds.
+2. PR #3 was squash-merged to `main` as `fcf0e5b177283e2dfd0a07d1180f0fc7189ae2ec`; post-merge `CI #34` passed.
+3. Compatibility impact was classified as patch-level: implementation hardening and bug fixes without public command-semantic breakage.
+4. Release PR #4 changed only the CLI/TUI package versions, their two `Cargo.lock` entries, and the new immutable `releases/terminal-v0.1.1.json` marker. Formal `CI #35` and `Release Terminal #21` passed, including all three platform packages.
+5. PR #4 was squash-merged to `main` as `88fe7067062521789044a643b6816cc70f77aeaa`; post-merge `CI #36` passed independently.
+6. `Release Terminal #22` passed validate, Linux/macOS/Windows packaging and publish, creating the `v0.1.1` prerelease targeted exactly at `88fe7067062521789044a643b6816cc70f77aeaa`.
 
-- review the exact branch diff against the recorded baseline;
-- run repository boundary validation;
-- formatter check;
-- workspace-wide clippy with warnings denied;
-- workspace tests with lockfile;
-- focused RefPython compatibility/conformance tests;
-- release builds for CLI and TUI;
-- verify no relay/probe/temp files remain;
-- verify documentation matches the final architecture;
-- verify the immutable v0.1.0 release marker remains unchanged.
+Published v0.1.1 asset digests recorded by GitHub Release metadata:
 
-Only after the full final head is green:
+```text
+fresnica-terminal-0.1.1-linux-x64.zip    064cb3469e4e5c4a7f008bcecf3aeeed18b17f88256e3d676ce10e89c4230743
+fresnica-terminal-0.1.1-macos-arm64.zip   e0d8d609d584030fb93fc38416b7674d2015e0b0506c089e3fbb38f3bcfdb82a
+fresnica-terminal-0.1.1-windows-x64.zip   1d7382592648be6950b016142b09e1927ba272f69a210ee9d18f6b379bd3417d
+fresnica-terminal-release-manifest.json   23f14b34a4a3ac7183c7f3a1d1e12564a797113488b47bc6a955e72203409c94
+SHA256SUMS                                 c4575d34812d7fbacdbaf048ee32adecc74546effee0985fa2e458d31cfcfac8
+```
 
-1. mark/finalize the PR from `refactor/terminal-shared-foundation` to `main`;
-2. merge according to repository convention;
-3. verify the resulting `main` SHA and post-merge CI;
-4. select the next Terminal version from the actual compatibility impact;
-5. publish and verify the new release artifacts/checksums.
-
-Do not use `main` as the working target before this completion gate.
+The release manifest was generated from the downloaded platform artifacts by the publish job and records version `0.1.1`, release commit `88fe7067062521789044a643b6816cc70f77aeaa`, and shared Fresnica source `9ba6f23cefe34e8d5940b311ec78f27eed982fe7`.
 
 ## Non-goals
 
@@ -219,9 +215,9 @@ First determine whether new repository evidence changes one of the decisions abo
 
 The source, tests, Fresnica contracts and verified CI remain the final truth; this document exists to preserve the agreed direction, not to override stronger evidence.
 
-## Definition of done
+## Definition of done — satisfied
 
-This milestone is complete when:
+All milestone conditions are satisfied:
 
 - CLI and TUI consume shared semantics from the correct owning layer rather than maintaining competing business implementations;
 - Terminal-local shared code exists only where evidence proves a real Terminal-specific common responsibility;
