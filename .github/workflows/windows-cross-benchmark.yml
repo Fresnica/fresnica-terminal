@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: windows-cross-compile-benchmark
+  cancel-in-progress: true
+
 jobs:
   ubuntu-cross:
     runs-on: ubuntu-latest
@@ -94,7 +98,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! brew --prefix llvm >/dev/null 2>&1; then
+          if ! brew list --versions llvm >/dev/null 2>&1; then
             brew install llvm
           fi
           llvm_prefix="$(brew --prefix llvm)"
