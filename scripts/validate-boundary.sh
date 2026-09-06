@@ -10,9 +10,18 @@ if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ "$(grep -F -c "rev = \"$rev\"" Cargo.toml)" -ne 2 ]]; then
-  echo "Both shared Fresnica workspace dependencies must be pinned to FRESNICA_REV." >&2
+client_rev="$(awk '/^\[workspace.dependencies.fresnica-client\]$/{in_section=1; next} /^\[/{in_section=0} in_section && /^rev = /{print; exit}' Cargo.toml)"
+if [[ "$client_rev" != "rev = \"$rev\"" ]]; then
+  echo "fresnica-client must be pinned to FRESNICA_REV." >&2
   exit 1
+fi
+
+if grep -Fqx '[workspace.dependencies.fresnica-sdk]' Cargo.toml; then
+  sdk_rev="$(awk '/^\[workspace.dependencies.fresnica-sdk\]$/{in_section=1; next} /^\[/{in_section=0} in_section && /^rev = /{print; exit}' Cargo.toml)"
+  if [[ "$sdk_rev" != "rev = \"$rev\"" ]]; then
+    echo "Direct fresnica-sdk workspace dependency must be pinned to FRESNICA_REV." >&2
+    exit 1
+  fi
 fi
 
 if grep -RInE 'fresnica-core|fresnica_core' Cargo.toml crates/*/Cargo.toml crates/*/src; then
