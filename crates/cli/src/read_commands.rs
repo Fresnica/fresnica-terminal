@@ -232,9 +232,7 @@ fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use fresnica_client::{
-        AccountThresholds, LedgerSignerCondition, WeightedLedgerSigner,
-    };
+    use fresnica_client::{AccountThresholds, LedgerSignerCondition, WeightedLedgerSigner};
 
     use super::*;
 
