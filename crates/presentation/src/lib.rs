@@ -110,10 +110,9 @@ pub fn history_operation_summary(operation: &HistoryOperation, account: &str) ->
             name.as_deref().unwrap_or("data entry")
         ),
         HistoryOperationKind::SetOptions => "Updated account settings".to_owned(),
-        HistoryOperationKind::BumpSequence { bump_to } => format!(
-            "Bumped sequence to {}",
-            bump_to.as_deref().unwrap_or("?")
-        ),
+        HistoryOperationKind::BumpSequence { bump_to } => {
+            format!("Bumped sequence to {}", bump_to.as_deref().unwrap_or("?"))
+        }
         HistoryOperationKind::Other { operation_type } => operation_type.replace('_', " "),
     }
 }
@@ -168,9 +167,7 @@ fn trust_asset_label(asset: &HistoryTrustAsset) -> String {
 }
 
 fn amount(value: Option<&str>) -> String {
-    value
-        .map(clean_decimal)
-        .unwrap_or_else(|| "?".to_owned())
+    value.map(clean_decimal).unwrap_or_else(|| "?".to_owned())
 }
 
 fn clean_decimal(value: &str) -> String {
@@ -243,8 +240,7 @@ mod tests {
         });
         assert_eq!(
             history_operation_summary(&op, "GACCOUNT"),
-            "Placed SELL 5 USD: GISSU?"
-                .replace("USD: GISSU?", "USD:GISSUE...567890 @ 2 XLM/USD:GISSUE...567890")
+            "Placed SELL 5 USD:GISSUE...567890 @ 2 XLM/USD:GISSUE...567890"
         );
     }
 
