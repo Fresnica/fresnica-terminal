@@ -7,13 +7,14 @@ native reference client without a process/FFI transport.
 ## Current scope
 
 The native client currently covers local wallet lifecycle and contacts, testnet
-Friendbot funding, read-only Horizon queries, reviewed payments, issued-asset
+Friendbot funding, read-only Horizon queries, cache-first asset discovery, reviewed payments, issued-asset
 trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anchor flows:
 
 - `info [--wallet NAME]`
 - `account [--wallet NAME] [--json]`
 - `balance [--wallet NAME] [--json]` (`assets` is an alias)
 - `history [--wallet NAME] [--limit N] [--json]`
+- `asset discover [--limit N] [--cached] [--json]`
 - `send AMOUNT ASSET to DESTINATION [--wallet NAME] [--memo TEXT] [-y]`
 - `contact list`
 - `contact add NAME G... [--memo TEXT]`
@@ -55,6 +56,14 @@ It reads and writes the same wallet record files, `.default` pointer,
 `contacts.json`, and `fresnica-wallet-backup` version-1 format as the Python
 reference client. The default application home is `FRESNICA_HOME` when set,
 otherwise `~/.fresnica`.
+
+Asset discovery preserves exact Stellar identity: `XLM` or `CODE:GISSUER` remains
+authoritative, while domain/name/organization/source are optional metadata only.
+`asset discover` refreshes the bounded mainnet catalog through the shared
+`fresnica-client` service and falls back to a valid network-scoped local cache;
+`--cached` suppresses remote refresh. Non-mainnet use never imports mainnet
+recommendations. Discovery does not replace any existing manual exact-identity
+input in Send, Trustline, SDEX, or Anchor commands.
 
 Create/import/reveal cryptography and account identity parsing go through
 `fresnica-sdk`; Core remains the cryptographic authority underneath the SDK.
@@ -126,7 +135,8 @@ use the same offer-level aggregation rule as the Python reference: only
 consecutive trades with the same identified user offer, pair, side, and exact
 rational price merge. Trades without a user offer ID, including non-orderbook
 activity, remain separate segments. The native client deliberately does not add a
-second cache implementation in this slice.
+second chain-data cache implementation in this slice; the asset catalog is a
+small public-metadata cache owned by the shared Asset Discovery capability.
 
 ## Diagnostics
 
@@ -167,6 +177,7 @@ target/release/fresnica --network testnet wallet testnet-fund
 target/release/fresnica account
 target/release/fresnica balance
 target/release/fresnica history --limit 20
+target/release/fresnica asset discover --limit 20
 target/release/fresnica contact add Alice G... --memo 12345
 target/release/fresnica send 1 XLM to Alice
 target/release/fresnica trust add USDC:G...
@@ -183,7 +194,7 @@ wallet record; use `--network testnet` for a testnet wallet.
 
 ## Deliberate non-goals of this slice
 
-Local chain-data caching and TUI presentation remain outside the CLI command surface.
+General chain-data caching and a product recommendation/ranking engine remain outside the CLI command surface.
 
 The native client does not expose a raw `sign-xdr` shortcut. Routine transaction
 signing stays behind client-side construction and review rather than creating a
