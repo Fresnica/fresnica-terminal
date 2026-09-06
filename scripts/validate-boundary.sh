@@ -30,4 +30,9 @@ if grep -RInE 'clients/rust-(cli|tui)|reference/rust-client|\.\./\.\./(core|sdk|
   exit 1
 fi
 
+if grep -RInE 'HorizonGateway|RpcGateway|MAINNET_HORIZON_URL|TESTNET_HORIZON_URL|TESTNET_RPC_URL|horizon_gateway|rpc_gateway' crates/*/src; then
+  echo "Terminal products must consume provider-neutral Fresnica service APIs, not Horizon/RPC gateway adapters or endpoint constants." >&2
+  exit 1
+fi
+
 echo "Fresnica terminal repository boundary: OK ($rev)"
