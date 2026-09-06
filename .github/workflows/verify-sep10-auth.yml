@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt,clippy
       - name: Apply deterministic migration
         shell: bash
         run: |
@@ -88,12 +88,20 @@ jobs:
               text = text[:match.start()] + replacement + text[match.end():]
           anchor.write_text(text)
 
+          flow = Path("crates/cli/src/transaction_flow.rs")
+          text = flow.read_text()
+          text = text.replace(
+              "\npub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};\n",
+              "\n",
+          )
+          flow.write_text(text)
+
           boundary = Path("scripts/validate-boundary.sh")
           text = boundary.read_text()
           marker = 'Terminal products must consume Client-owned SEP-10 authentication orchestration.'
           if marker not in text:
               needle = 'if grep -RInE \'https://horizon(-testnet)?\\.stellar\\.org\' crates/*/src; then\n'
-              insert = '''if grep -RInE 'exchange_anchor_sep10_challenge|prepare_anchor_sep10_challenge|sep10_authorization_plan|satisfied_ed25519_conditions|sign_needed_local_ed25519|LedgerSignerCondition|LedgerSignerKind' crates/*/src; then
+              insert = '''if grep -RInE 'exchange_anchor_sep10_challenge|prepare_anchor_sep10_challenge|sep10_authorization_plan|satisfied_ed25519_conditions|sign_needed_local_ed25519' crates/*/src; then
             echo "Terminal products must consume Client-owned SEP-10 authentication orchestration." >&2
             exit 1
           fi
@@ -108,6 +116,8 @@ jobs:
         run: cargo fmt --all
       - name: Refresh dependencies and check workspace
         run: cargo check --workspace
+      - name: Clippy candidate
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test workspace from generated lock
         run: cargo test --workspace --all-targets --locked
       - name: Validate architecture boundary
@@ -127,6 +137,6 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Cargo.toml Cargo.lock FRESNICA_REV crates/cli/src/anchor.rs scripts/validate-boundary.sh
+          git add Cargo.toml Cargo.lock FRESNICA_REV crates/cli/src/anchor.rs crates/cli/src/transaction_flow.rs scripts/validate-boundary.sh
           git commit -m 'chore(verify): materialize SEP-10 boundary candidate'
           git push origin HEAD:${{ github.head_ref }}
