@@ -1,11 +1,9 @@
 use std::io::{self, Write};
 
 use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
-use fresnica_sdk::{FresnicaSdk, SdkAccountKind};
-use serde_json::Map;
 use zeroize::Zeroizing;
 
-use crate::{diagnostics, expand_path, friendbot, prompt_hidden, validate_network, HELP};
+use crate::{diagnostics, expand_path, friendbot, prompt_hidden, HELP};
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     let wallet_name = match arguments {
@@ -168,24 +166,7 @@ fn wallet_import_watch(
     name: &str,
     address: &str,
 ) -> Result<(), String> {
-    validate_network(network)?;
-    if name.trim().is_empty() {
-        return Err("wallet name cannot be empty".to_owned());
-    }
-    let identity = FresnicaSdk::new()
-        .parse_account(address.to_owned())
-        .map_err(|_| "invalid Stellar G address".to_owned())?;
-    if identity.kind != SdkAccountKind::Classic {
-        return Err("watch-only wallet requires a Classic G address".to_owned());
-    }
-    let record = WalletRecord {
-        name: name.to_owned(),
-        address: identity.address,
-        wallet_type: "watch-only".to_owned(),
-        network: network.to_owned(),
-        secret: None,
-        metadata: Map::new(),
-    };
+    let record = wallet_ops::import_watch_record(name, network, address)?;
     save_new_record(storage, &record)?;
     println!("Added watch-only wallet \"{}\"", record.name);
     Ok(())
@@ -322,10 +303,9 @@ fn wallet_restore(storage: &WalletStorage, arguments: &[String]) -> Result<(), S
         }
         record.name = arguments[2].clone();
     }
-    if !record.watch_only() && has_app_passcode(storage)? {
+    if !record.watch_only() && wallet_ops::has_app_passcode(storage)? {
         let passcode = prompt_existing_app_passcode(storage)?;
-        wallet_ops::verify_passcode(&record, &passcode)
-            .map_err(|_| "backup does not use the current Fresnica passphrase".to_owned())?;
+        wallet_ops::validate_restore_signer_compatibility(&record, &passcode)?;
     }
     save_new_record(storage, &record)?;
     println!(
@@ -367,27 +347,8 @@ fn save_new_record(storage: &WalletStorage, record: &WalletRecord) -> Result<(),
     Ok(())
 }
 
-fn signing_records(storage: &WalletStorage) -> Result<Vec<WalletRecord>, String> {
-    Ok(storage
-        .list()?
-        .into_iter()
-        .filter(|record| !record.watch_only() && record.secret.is_some())
-        .collect())
-}
-
-fn has_app_passcode(storage: &WalletStorage) -> Result<bool, String> {
-    Ok(!signing_records(storage)?.is_empty())
-}
-
-fn verify_app_passcode(storage: &WalletStorage, passcode: &str) -> Result<(), String> {
-    for record in signing_records(storage)? {
-        wallet_ops::verify_passcode(&record, passcode)?;
-    }
-    Ok(())
-}
-
 fn prompt_app_passcode(storage: &WalletStorage) -> Result<Zeroizing<String>, String> {
-    if has_app_passcode(storage)? {
+    if wallet_ops::has_app_passcode(storage)? {
         prompt_existing_app_passcode(storage)
     } else {
         prompt_new_passcode()
@@ -399,7 +360,7 @@ fn prompt_existing_app_passcode(storage: &WalletStorage) -> Result<Zeroizing<Str
     if passcode.is_empty() {
         return Err("Fresnica passphrase cannot be empty".to_owned());
     }
-    verify_app_passcode(storage, &passcode)?;
+    wallet_ops::validate_app_passcode(storage, &passcode)?;
     Ok(passcode)
 }
 

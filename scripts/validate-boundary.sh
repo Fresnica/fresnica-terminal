@@ -10,9 +10,18 @@ if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-if [[ "$(grep -F -c "rev = \"$rev\"" Cargo.toml)" -ne 2 ]]; then
-  echo "Both shared Fresnica workspace dependencies must be pinned to FRESNICA_REV." >&2
+client_rev="$(awk '/^\[workspace.dependencies.fresnica-client\]$/{in_section=1; next} /^\[/{in_section=0} in_section && /^rev = /{print; exit}' Cargo.toml)"
+if [[ "$client_rev" != "rev = \"$rev\"" ]]; then
+  echo "fresnica-client must be pinned to FRESNICA_REV." >&2
   exit 1
+fi
+
+if grep -Fqx '[workspace.dependencies.fresnica-sdk]' Cargo.toml; then
+  sdk_rev="$(awk '/^\[workspace.dependencies.fresnica-sdk\]$/{in_section=1; next} /^\[/{in_section=0} in_section && /^rev = /{print; exit}' Cargo.toml)"
+  if [[ "$sdk_rev" != "rev = \"$rev\"" ]]; then
+    echo "Direct fresnica-sdk workspace dependency must be pinned to FRESNICA_REV." >&2
+    exit 1
+  fi
 fi
 
 if grep -RInE 'fresnica-core|fresnica_core' Cargo.toml crates/*/Cargo.toml crates/*/src; then
@@ -27,6 +36,16 @@ fi
 
 if grep -RInE 'clients/rust-(cli|tui)|reference/rust-client|\.\./\.\./(core|sdk|reference)' Cargo.toml crates/*/Cargo.toml crates/*/src; then
   echo "Terminal repository contains stale monorepo-relative paths." >&2
+  exit 1
+fi
+
+if grep -RInE 'HorizonGateway|RpcGateway|MAINNET_HORIZON_URL|TESTNET_HORIZON_URL|TESTNET_RPC_URL|horizon_gateway|rpc_gateway' crates/*/src; then
+  echo "Terminal products must consume provider-neutral Fresnica service APIs, not Horizon/RPC gateway adapters or endpoint constants." >&2
+  exit 1
+fi
+
+if grep -RInE 'https://horizon(-testnet)?\.stellar\.org' crates/*/src; then
+  echo "Terminal products must not hardcode shared Horizon defaults; provide overrides through NetworkProfile." >&2
   exit 1
 fi
 

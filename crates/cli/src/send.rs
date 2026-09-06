@@ -2,7 +2,7 @@ use fresnica_client::{
     FresnicaClient, PaymentMemo, PaymentRequest, PaymentReview, PreparedPayment, WalletRecord,
 };
 
-use crate::transaction_flow::confirm_submission;
+use crate::transaction_flow::{confirm_submission, render_authorization_review};
 
 pub fn command_send(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     crate::diagnostics::stage("payment: parse request");
@@ -137,6 +137,7 @@ fn render_review(review: &PaymentReview) {
     if let Some(memo) = &review.memo {
         println!("Memo:      {} ({})", memo.value, memo.memo_type);
     }
+    render_authorization_review(&review.ledger_authorization);
 }
 
 #[cfg(test)]

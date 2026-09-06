@@ -1,11 +1,7 @@
 [workspace]
-members = ["crates/cli", "crates/tui"]
+members = ["crates/cli", "crates/presentation", "crates/tui"]
 resolver = "2"
 
 [workspace.dependencies.fresnica-client]
 git = "https://github.com/Fresnica/fresnica.git"
-rev = "5f5dc1715fd5a449f538afb6a643100075341732"
-
-[workspace.dependencies.fresnica-sdk]
-git = "https://github.com/Fresnica/fresnica.git"
-rev = "5f5dc1715fd5a449f538afb6a643100075341732"
+rev = "65a9da804ca16849e320d24365e6e839e62cf5d8"

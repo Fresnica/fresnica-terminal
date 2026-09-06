@@ -1,11 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fresnica_client::{
-    AssetCatalogEntry, BalanceSnapshot, FresnicaClient, HistorySnapshot, OpenOffer, WalletRecord,
-    MAX_ASSET_CATALOG_LIMIT,
+    AssetBalance, AssetCatalogEntry, BalanceSnapshot, FresnicaClient, HistoryOperation,
+    HistorySnapshot, OpenOffer, WalletRecord, MAX_ASSET_CATALOG_LIMIT,
 };
 use ratatui::crossterm::event::KeyCode;
-use serde_json::Value;
 use zeroize::Zeroize;
 
 use super::state::{
@@ -76,8 +75,8 @@ pub(super) struct App {
     pub(super) client: FresnicaClient,
     pub(super) wallets: Vec<WalletRecord>,
     pub(super) selected: usize,
-    pub(super) balances: Vec<Value>,
-    pub(super) operations: Vec<Value>,
+    pub(super) balances: Vec<AssetBalance>,
+    pub(super) operations: Vec<HistoryOperation>,
     pub(super) offers: Vec<OpenOffer>,
     pub(super) status: String,
     pub(super) mode: Mode,
@@ -228,7 +227,7 @@ impl App {
         }
 
         self.status = if failures.is_empty() {
-            "Updated from Horizon".to_owned()
+            "Account data refreshed".to_owned()
         } else {
             failures.join(" · ")
         };
