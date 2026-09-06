@@ -1,0 +1,132 @@
+name: Verify terminal SEP-10 auth
+
+on:
+  pull_request:
+    branches:
+      - refactor/cli-testnet-funding-boundary
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.head_ref == 'verify/terminal-sep10-auth'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply deterministic migration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          upstream = "3e5288520b08455848e1fe93202b5ba74d92a065"
+
+          root = Path("Cargo.toml")
+          text = root.read_text()
+          text = text.replace("f94bf77988800a1fa8124e018c00fb946c113ee4", upstream)
+          root.write_text(text)
+          Path("FRESNICA_REV").write_text(upstream + "\n")
+
+          anchor = Path("crates/cli/src/anchor.rs")
+          text = anchor.read_text()
+          text = text.replace(
+              "use std::collections::{BTreeMap, BTreeSet};",
+              "use std::collections::BTreeMap;",
+          )
+          text = text.replace(
+              "use crate::transaction_flow::{network_passphrase, parse_transaction_xdr};\n",
+              "",
+          )
+          text = text.replace(
+              "    exchange_anchor_sep10_challenge, fetch_anchor_transaction, get_anchor_customer,\n"
+              "    prepare_anchor_sep10_challenge, put_anchor_customer, satisfied_ed25519_conditions,\n",
+              "    fetch_anchor_transaction, get_anchor_customer, put_anchor_customer,\n",
+          )
+          text = text.replace(
+              "    select_anchor_transfer_protocol as select_transfer_protocol, sep10_authorization_plan,\n"
+              "    sign_needed_local_ed25519, start_anchor_sep24_transfer, start_anchor_sep6_transfer,\n",
+              "    select_anchor_transfer_protocol as select_transfer_protocol, start_anchor_sep24_transfer,\n"
+              "    start_anchor_sep6_transfer,\n",
+          )
+          text = text.replace(
+              "    AnchorSep24InteractiveResult as Sep24InteractiveResult, AnchorTransferKind, FresnicaClient,\n"
+              "    LedgerSignerCondition, LedgerSignerKind, WalletRecord,\n",
+              "    AnchorSep24InteractiveResult as Sep24InteractiveResult, AnchorTransferKind, FresnicaClient,\n"
+              "    WalletRecord,\n",
+          )
+
+          replacement = '''fn authenticate_anchor_sep10(
+              client: &FresnicaClient,
+              record: &WalletRecord,
+              _network: &str,
+              home_domain: &str,
+              capabilities: &AnchorCapabilities,
+          ) -> Result<Zeroizing<String>, String> {
+              crate::diagnostics::stage("anchor SEP-10: authenticate");
+              client.authenticate_anchor_sep10(record, home_domain, capabilities, || {
+                  crate::diagnostics::stage("anchor SEP-10: sign required local conditions");
+                  crate::prompt_hidden("Fresnica passphrase: ")
+              })
+          }
+          '''
+          pattern = re.compile(
+              r"fn authenticate_anchor_sep10\(.*?\n\}\n(?=\nfn render_sep24_result)",
+              re.S,
+          )
+          match = pattern.search(text)
+          if not match:
+              raise SystemExit("unable to locate authenticate_anchor_sep10 helper")
+          if "client.authenticate_anchor_sep10" not in match.group(0):
+              text = text[:match.start()] + replacement + text[match.end():]
+          anchor.write_text(text)
+
+          boundary = Path("scripts/validate-boundary.sh")
+          text = boundary.read_text()
+          marker = 'Terminal products must consume Client-owned SEP-10 authentication orchestration.'
+          if marker not in text:
+              needle = 'if grep -RInE \'https://horizon(-testnet)?\\.stellar\\.org\' crates/*/src; then\n'
+              insert = '''if grep -RInE 'exchange_anchor_sep10_challenge|prepare_anchor_sep10_challenge|sep10_authorization_plan|satisfied_ed25519_conditions|sign_needed_local_ed25519|LedgerSignerCondition|LedgerSignerKind' crates/*/src; then
+            echo "Terminal products must consume Client-owned SEP-10 authentication orchestration." >&2
+            exit 1
+          fi
+
+          '''
+              if needle not in text:
+                  raise SystemExit("unable to locate boundary insertion point")
+              text = text.replace(needle, insert + needle)
+              boundary.write_text(text)
+          PY
+      - name: Format candidate
+        run: cargo fmt --all
+      - name: Refresh dependencies and check workspace
+        run: cargo check --workspace
+      - name: Test workspace from generated lock
+        run: cargo test --workspace --all-targets --locked
+      - name: Validate architecture boundary
+        run: bash scripts/validate-boundary.sh
+      - name: Validate exact upstream pin
+        run: |
+          grep -q '3e5288520b08455848e1fe93202b5ba74d92a065' Cargo.lock
+          if grep -q 'f94bf77988800a1fa8124e018c00fb946c113ee4' Cargo.lock; then
+            echo 'old Fresnica pin remains in Cargo.lock' >&2
+            exit 1
+          fi
+      - name: Commit verified candidate
+        run: |
+          if git diff --quiet; then
+            echo 'candidate already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock FRESNICA_REV crates/cli/src/anchor.rs scripts/validate-boundary.sh
+          git commit -m 'chore(verify): materialize SEP-10 boundary candidate'
+          git push origin HEAD:${{ github.head_ref }}
