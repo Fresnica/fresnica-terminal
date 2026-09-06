@@ -23,6 +23,7 @@ Keys:
   s           prepare a payment from the selected signing wallet
   t           manage issued-asset trustlines
   d           open the DEX market selector
+  /           choose an exact asset identity while an asset field is focused
 
 Write flow:
   form -> shared service preparation -> review -> Fresnica passphrase -> SDK/Core signing -> Horizon
@@ -158,9 +159,12 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use fresnica_client::{OfferRequest, OfferSide, TrustlineAction, WalletRecord};
+    use fresnica_client::{
+        AssetCatalogEntry, OfferRequest, OfferSide, TrustlineAction, WalletRecord,
+    };
     use ratatui::crossterm::event::KeyCode;
 
+    use super::app::{AssetPickerState, AssetPickerTarget};
     use super::render::compact_asset;
     use super::state::{
         MarketForm, Mode, OfferForm, OfferFormAction, SendForm, TrustlineForm, TrustlineFormAction,
@@ -344,9 +348,84 @@ mod tests {
                 offers: Vec::new(),
                 status: String::new(),
                 mode: Mode::Browse,
+                asset_picker: None,
             },
             home,
         )
+    }
+
+    fn catalog_entry(identity: &str) -> AssetCatalogEntry {
+        AssetCatalogEntry {
+            identity: identity.to_owned(),
+            domain: Some("example.org".to_owned()),
+            name: None,
+            organization: None,
+            source: "test".to_owned(),
+        }
+    }
+
+    #[test]
+    fn trustline_picker_excludes_native_asset() {
+        let picker = AssetPickerState::new(
+            vec![
+                catalog_entry("XLM"),
+                catalog_entry("USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"),
+            ],
+            AssetPickerTarget::Trustline,
+            "XLM",
+        );
+        assert_eq!(picker.entries.len(), 1);
+        assert!(!picker.entries[0].is_native());
+    }
+
+    #[test]
+    fn asset_picker_applies_full_issuer_identity() {
+        let (mut app, home) = local_app(false);
+        let mut form = TrustlineForm::new();
+        form.active = 1;
+        form.asset = "MANUAL:GOLD".to_owned();
+        app.mode = Mode::Trustline(form);
+        let identity = "USD:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+        app.asset_picker = Some(AssetPickerState::new(
+            vec![catalog_entry("XLM"), catalog_entry(identity)],
+            AssetPickerTarget::Trustline,
+            "",
+        ));
+        app.handle_key(KeyCode::Down);
+        app.handle_key(KeyCode::Enter);
+        assert!(app.asset_picker.is_none());
+        assert!(matches!(&app.mode, Mode::Trustline(form) if form.asset == identity));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn asset_picker_cancel_preserves_manual_identity() {
+        let (mut app, home) = local_app(false);
+        let mut form = MarketForm::new();
+        form.base = "USD:GMANUAL".to_owned();
+        app.mode = Mode::Market(form);
+        app.asset_picker = Some(AssetPickerState::new(
+            vec![catalog_entry("XLM")],
+            AssetPickerTarget::MarketBase,
+            "USD:GMANUAL",
+        ));
+        app.handle_key(KeyCode::Esc);
+        assert!(app.asset_picker.is_none());
+        assert!(matches!(&app.mode, Mode::Market(form) if form.base == "USD:GMANUAL"));
+        assert!(app.status.contains("manual value kept"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn send_asset_field_opens_cache_first_picker_without_horizon() {
+        let (mut app, home) = local_app(false);
+        app.handle_key(KeyCode::Char('s'));
+        app.handle_key(KeyCode::Enter);
+        assert!(matches!(&app.mode, Mode::Send(form) if form.active == 1));
+        app.handle_key(KeyCode::Char('/'));
+        assert!(app.asset_picker.is_some());
+        assert!(app.status.contains("Cached asset catalog"));
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
