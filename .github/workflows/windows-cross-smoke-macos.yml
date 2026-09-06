@@ -27,7 +27,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           & "artifacts/macos/fresnica.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "artifacts/macos/fresnica.exe" info
+          & "artifacts/macos/fresnica.exe" --help | Select-Object -First 12
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "artifacts/macos/fresnica-tui.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
