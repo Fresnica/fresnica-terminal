@@ -4,8 +4,8 @@ resolver = "2"
 
 [workspace.dependencies.fresnica-client]
 git = "https://github.com/Fresnica/fresnica.git"
-rev = "5f5dc1715fd5a449f538afb6a643100075341732"
+rev = "7ea101bce034e85ace3260ff044c983bd5d33cdb"
 
 [workspace.dependencies.fresnica-sdk]
 git = "https://github.com/Fresnica/fresnica.git"
-rev = "5f5dc1715fd5a449f538afb6a643100075341732"
+rev = "7ea101bce034e85ace3260ff044c983bd5d33cdb"

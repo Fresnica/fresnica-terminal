@@ -1,6 +1,6 @@
 use fresnica_client::{FresnicaClient, OfferRequest, OfferReview, OfferReviewDetails, OfferSide};
 
-use crate::transaction_flow::confirm_submission;
+use crate::transaction_flow::{confirm_submission, render_authorization_review};
 
 pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     crate::diagnostics::stage("DEX write: parse request");
@@ -189,6 +189,7 @@ fn render_offer_review(review: &OfferReview) {
     }
     println!("Fee:       {} XLM", review.fee_xlm);
     println!("Network:   {}", review.network);
+    render_authorization_review(&review.ledger_authorization);
 }
 
 fn usage() -> &'static str {

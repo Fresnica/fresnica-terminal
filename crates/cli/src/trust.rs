@@ -2,7 +2,7 @@ use fresnica_client::{
     FresnicaClient, PreparedTrustline, TrustlineAction, TrustlineRequest, TrustlineReview,
 };
 
-use crate::transaction_flow::confirm_submission;
+use crate::transaction_flow::{confirm_submission, render_authorization_review};
 
 pub fn command_trust(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     crate::diagnostics::stage("trustline: parse request");
@@ -57,6 +57,7 @@ fn render_review(review: &TrustlineReview) {
     }
     println!("Fee:       {} XLM", review.fee_xlm);
     println!("Network:   {}", review.network);
+    render_authorization_review(&review.ledger_authorization);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
