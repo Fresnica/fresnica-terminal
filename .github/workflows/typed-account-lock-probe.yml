@@ -1,0 +1,23 @@
+name: Typed Account Lock Probe
+
+on:
+  push:
+    branches: [verify/typed-account-lock]
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve updated Fresnica git pin
+        run: cargo check -p fresnica-cli
+      - name: Upload generated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: typed-account-cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error

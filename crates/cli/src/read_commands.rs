@@ -1,55 +1,78 @@
-use fresnica_client::{balance_asset_label, operation_summary, FresnicaClient};
-use serde_json::Value;
+use fresnica_client::{
+    balance_asset_label, operation_summary, AccountState, FresnicaClient, LedgerSignerKind,
+};
+use serde_json::{json, Value};
 
 pub fn command_account(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     let options = parse_output_options(arguments, "fresnica account [--wallet NAME] [--json]")?;
-    crate::diagnostics::stage("account: fetch Horizon state");
+    crate::diagnostics::stage("account: fetch ledger state");
     let snapshot = client.account(options.wallet.as_deref())?;
     if options.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&snapshot.account)
+            serde_json::to_string_pretty(&account_json(&snapshot.account))
                 .map_err(|error| format!("unable to encode account data: {error}"))?
         );
         return Ok(());
     }
 
-    let balances = snapshot
-        .account
-        .get("balances")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0);
     println!("Wallet:       {}", snapshot.wallet.name);
     println!("Address:      {}", snapshot.wallet.address);
     println!("Network:      {}", snapshot.wallet.network);
-    println!(
-        "Sequence:     {}",
-        display_value(snapshot.account.get("sequence"))
-    );
-    println!(
-        "Subentries:   {}",
-        display_value(snapshot.account.get("subentry_count"))
-    );
-    println!(
-        "Sponsoring:   {}",
-        display_value(snapshot.account.get("num_sponsoring"))
-    );
-    println!(
-        "Sponsored:    {}",
-        display_value(snapshot.account.get("num_sponsored"))
-    );
+    println!("Sequence:     {}", snapshot.account.sequence);
+    println!("Subentries:   {}", snapshot.account.subentry_count);
+    println!("Sponsoring:   {}", snapshot.account.num_sponsoring);
+    println!("Sponsored:    {}", snapshot.account.num_sponsored);
     println!(
         "Home domain:  {}",
-        snapshot
-            .account
-            .get("home_domain")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("-")
+        snapshot.account.home_domain.as_deref().unwrap_or("-")
     );
-    println!("Assets:       {balances}");
+    println!(
+        "Thresholds:   low {} / medium {} / high {}",
+        snapshot.account.thresholds.low,
+        snapshot.account.thresholds.medium,
+        snapshot.account.thresholds.high
+    );
+    println!("Signers:      {}", snapshot.account.signers.len());
     Ok(())
+}
+
+fn account_json(account: &AccountState) -> Value {
+    let signers = account
+        .signers
+        .iter()
+        .map(|signer| {
+            json!({
+                "kind": signer_kind_label(&signer.condition.kind),
+                "key": signer.condition.key.as_str(),
+                "weight": signer.weight,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "account_id": account.account_id.as_str(),
+        "sequence": account.sequence,
+        "subentry_count": account.subentry_count,
+        "num_sponsoring": account.num_sponsoring,
+        "num_sponsored": account.num_sponsored,
+        "home_domain": account.home_domain.as_deref(),
+        "thresholds": {
+            "low": account.thresholds.low,
+            "medium": account.thresholds.medium,
+            "high": account.thresholds.high,
+        },
+        "signers": signers,
+    })
+}
+
+fn signer_kind_label(kind: &LedgerSignerKind) -> &'static str {
+    match kind {
+        LedgerSignerKind::Ed25519PublicKey => "ed25519",
+        LedgerSignerKind::PreauthorizedTransaction => "preauth_tx",
+        LedgerSignerKind::HashX => "hash_x",
+        LedgerSignerKind::Ed25519SignedPayload => "ed25519_signed_payload",
+    }
 }
 
 pub fn command_balance(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
@@ -203,21 +226,16 @@ fn parse_history_options(arguments: &[String]) -> Result<HistoryOptions, String>
     })
 }
 
-fn display_value(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(value)) => value.clone(),
-        Some(Value::Number(value)) => value.to_string(),
-        Some(Value::Bool(value)) => value.to_string(),
-        _ => "-".to_owned(),
-    }
-}
-
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 
 #[cfg(test)]
 mod tests {
+    use fresnica_client::{
+        AccountThresholds, LedgerSignerCondition, WeightedLedgerSigner,
+    };
+
     use super::*;
 
     #[test]
@@ -239,5 +257,55 @@ mod tests {
         let options = parse_output_options(&args, "usage").unwrap();
         assert!(options.json);
         assert_eq!(options.wallet.as_deref(), Some("alpha"));
+    }
+
+    #[test]
+    fn account_json_is_provider_neutral_and_typed() {
+        let account = AccountState {
+            account_id: "GACCOUNT".to_owned(),
+            sequence: 42,
+            subentry_count: 7,
+            num_sponsoring: 2,
+            num_sponsored: 1,
+            home_domain: Some("example.com".to_owned()),
+            thresholds: AccountThresholds {
+                low: 1,
+                medium: 2,
+                high: 3,
+            },
+            signers: vec![WeightedLedgerSigner {
+                condition: LedgerSignerCondition {
+                    kind: LedgerSignerKind::Ed25519PublicKey,
+                    key: "GSIGNER".to_owned(),
+                },
+                weight: 2,
+            }],
+        };
+
+        let value = account_json(&account);
+
+        assert_eq!(value["account_id"], json!("GACCOUNT"));
+        assert_eq!(value["sequence"], json!(42));
+        assert_eq!(value["thresholds"]["medium"], json!(2));
+        assert_eq!(value["signers"][0]["kind"], json!("ed25519"));
+        assert_eq!(value["signers"][0]["weight"], json!(2));
+        assert!(value.get("balances").is_none());
+    }
+
+    #[test]
+    fn account_json_signer_kinds_follow_stellar_semantics() {
+        assert_eq!(
+            signer_kind_label(&LedgerSignerKind::Ed25519PublicKey),
+            "ed25519"
+        );
+        assert_eq!(
+            signer_kind_label(&LedgerSignerKind::PreauthorizedTransaction),
+            "preauth_tx"
+        );
+        assert_eq!(signer_kind_label(&LedgerSignerKind::HashX), "hash_x");
+        assert_eq!(
+            signer_kind_label(&LedgerSignerKind::Ed25519SignedPayload),
+            "ed25519_signed_payload"
+        );
     }
 }
