@@ -1,7 +1,7 @@
 use fresnica_client::{
-    balance_asset_label, operation_summary, AuthorizationScope, AuthorizationThreshold,
-    ClassicOperationKind, LedgerAuthorizationSnapshot, LedgerSignerAvailability, LedgerSignerKind,
-    OfferReviewDetails, PreparedOffer, PreparedPayment, PreparedTrustline,
+    operation_summary, AuthorizationScope, AuthorizationThreshold, ClassicOperationKind,
+    LedgerAuthorizationSnapshot, LedgerSignerAvailability, LedgerSignerKind, OfferReviewDetails,
+    PreparedOffer, PreparedPayment, PreparedTrustline,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -96,14 +96,10 @@ impl App {
             .style(Style::new().add_modifier(Modifier::BOLD));
         let rows = self.balances.iter().map(|balance| {
             Row::new([
-                balance_asset_label(balance),
-                text(balance, "balance").unwrap_or("0").to_owned(),
-                text(balance, "selling_liabilities")
-                    .unwrap_or("0")
-                    .to_owned(),
-                text(balance, "buying_liabilities")
-                    .unwrap_or("0")
-                    .to_owned(),
+                balance.asset.identity(),
+                balance.balance.clone(),
+                balance.selling_liabilities.clone(),
+                balance.buying_liabilities.clone(),
             ])
         });
         let table = Table::new(
