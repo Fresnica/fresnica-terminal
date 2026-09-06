@@ -56,7 +56,12 @@ jobs:
           PY
 
           expected=$'Cargo.lock\ncrates/cli/Cargo.toml\ncrates/tui/Cargo.toml\nreleases/terminal-v0.1.1.json'
-          actual="$(git diff --name-only -- Cargo.lock crates/cli/Cargo.toml crates/tui/Cargo.toml releases/terminal-v0.1.1.json | sort)"
+          actual="$(
+            {
+              git diff --name-only -- Cargo.lock crates/cli/Cargo.toml crates/tui/Cargo.toml
+              git ls-files --others --exclude-standard -- releases/terminal-v0.1.1.json
+            } | sort
+          )"
           test "$actual" = "$expected"
 
           lock_before="$(sha256sum Cargo.lock | awk '{print $1}')"
