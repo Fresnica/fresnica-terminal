@@ -148,12 +148,13 @@ small public-metadata cache owned by the shared Asset Discovery capability.
 ```sh
 fresnica --network testnet contract invoke C... -- --help
 fresnica --network testnet contract invoke C... -- transfer --help
+fresnica --network testnet contract invoke C... --json -- balance --id G...
 fresnica --network testnet contract invoke C... --wallet main -- transfer --from G... --to C... --amount 10000000
 ```
 
 The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. Dynamic help exposes official type examples where available.
 
-Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`; an actual `--json` invocation requires `-y` so stdout contains one JSON document rather than an interactive prompt.
+Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. Actual invocation first follows Stellar CLI's current default-send rule: if simulation contains no ledger write, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
 
 ## Diagnostics
 
@@ -213,7 +214,9 @@ wallet record; use `--network testnet` for a testnet wallet.
 
 ## Deliberate non-goals of this slice
 
-General chain-data caching and a product recommendation/ranking engine remain outside the CLI command surface. File-backed contract-input convenience flags, decoded return-value presentation, and automatic read-only invocation mode remain outside this first contract slice; Fresnica reuses the official Contract Spec value parser rather than reimplementing Stellar CLI's ABI type system.
+General chain-data caching and a product recommendation/ranking engine remain outside the CLI command surface.
+
+Read-only contract calls are simulation-only and expose the decoded return value. File-backed contract-input convenience flags remain outside this slice; values continue to use the official Contract Spec parser rather than a second Fresnica ABI syntax.
 
 The native client does not expose a raw `sign-xdr` shortcut. Routine transaction
 signing stays behind client-side construction and review rather than creating a
