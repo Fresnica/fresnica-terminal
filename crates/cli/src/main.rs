@@ -5,6 +5,7 @@ mod contract;
 mod dex;
 mod diagnostics;
 mod friendbot;
+mod message;
 mod read_commands;
 mod send;
 mod transaction_flow;
@@ -28,6 +29,8 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] asset discover [--limit N] [--cached] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] send AMOUNT ASSET to DESTINATION [--wallet NAME] [--memo TEXT] [-y]
   fresnica [--home PATH] contact COMMAND ...
+  fresnica [--home PATH] message sign TEXT [--wallet NAME] [-y] [--json]
+  fresnica [--home PATH] message verify G... SIGNATURE_BASE64 TEXT [--json]
   fresnica [--home PATH] [--network mainnet|testnet] trust add CODE:GISSUER [--limit VALUE] [--wallet NAME] [-y]
   fresnica [--home PATH] [--network mainnet|testnet] trust limit CODE:GISSUER LIMIT [--wallet NAME] [-y]
   fresnica [--home PATH] [--network mainnet|testnet] trust remove CODE:GISSUER [--wallet NAME] [-y]
@@ -71,6 +74,11 @@ Contact commands:
   list
   add NAME G... [--memo TEXT]
   remove NAME
+
+Message commands:
+  sign TEXT [--wallet NAME] [-y] [--json]
+  verify G... SIGNATURE_BASE64 TEXT [--json]
+  SEP-53 signs exact UTF-8 text and is network-independent.
 
 Wallet commands:
   list
@@ -134,7 +142,7 @@ fn run(global: GlobalOptions) -> Result<(), String> {
 
     diagnostics::stage(command_stage(&global.command));
     match global.command[0].as_str() {
-        "info" | "contact" | "wallet" => run_local_command(&global),
+        "info" | "contact" | "message" | "wallet" => run_local_command(&global),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
         | "contract" | "anchor" => run_network_command(&global),
         other => Err(format!("unknown command: {other}\n\n{HELP}")),
@@ -147,6 +155,7 @@ fn run_local_command(global: &GlobalOptions) -> Result<(), String> {
     match global.command[0].as_str() {
         "info" => wallet::command_info(&storage, &global.command[1..]),
         "contact" => contacts::command_contact(&storage, &global.command[1..]),
+        "message" => message::command_message(&storage, &global.command[1..]),
         "wallet" => wallet::command_wallet(&storage, &global.network, &global.command[1..]),
         _ => unreachable!("local command was classified before dispatch"),
     }
@@ -279,6 +288,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("asset") => "CLI command: asset",
         Some("send") => "CLI command: send",
         Some("contact") => "CLI command: contact",
+        Some("message") => "CLI command: message",
         Some("trust") => "CLI command: trust",
         Some("dex") => "CLI command: dex",
         Some("contract") => "CLI command: contract",

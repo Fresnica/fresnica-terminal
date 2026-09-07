@@ -11,6 +11,7 @@ name = "fresnica"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "=0.23.1"
 fresnica-client.workspace = true
 fresnica-terminal-presentation = { path = "../presentation" }
 rpassword = "=7.5.4"
