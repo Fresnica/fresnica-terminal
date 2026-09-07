@@ -2,7 +2,9 @@ use fresnica_client::{
     FresnicaClient, PaymentMemo, PaymentRequest, PaymentReview, PreparedPayment, WalletRecord,
 };
 
-use crate::transaction_flow::{confirm_submission, render_authorization_review};
+use crate::transaction_flow::{
+    confirm_submission, render_authorization_review, submit_with_classic_signers,
+};
 
 pub fn command_send(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     crate::diagnostics::stage("payment: parse request");
@@ -52,8 +54,9 @@ fn review_and_submit_prepared(
     }
 
     crate::diagnostics::stage("payment: sign and submit");
-    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-    let submission = client.submit_payment(prepared, passcode.as_str())?;
+    let submission = submit_with_classic_signers(client, |passcode, providers| {
+        client.submit_payment_with_providers(prepared, passcode, providers)
+    })?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {
         println!("Ledger:    {ledger}");

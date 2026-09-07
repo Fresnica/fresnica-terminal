@@ -2,7 +2,9 @@ use fresnica_client::{
     FresnicaClient, PreparedTrustline, TrustlineAction, TrustlineRequest, TrustlineReview,
 };
 
-use crate::transaction_flow::{confirm_submission, render_authorization_review};
+use crate::transaction_flow::{
+    confirm_submission, render_authorization_review, submit_with_classic_signers,
+};
 
 pub fn command_trust(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
     crate::diagnostics::stage("trustline: parse request");
@@ -25,8 +27,9 @@ fn review_and_submit(
     }
 
     crate::diagnostics::stage("trustline: sign and submit");
-    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-    let submission = client.submit_trustline(prepared, passcode.as_str())?;
+    let submission = submit_with_classic_signers(client, |passcode, providers| {
+        client.submit_trustline_with_providers(prepared, passcode, providers)
+    })?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {
         println!("Ledger:    {ledger}");

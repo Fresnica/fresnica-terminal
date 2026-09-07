@@ -1,7 +1,8 @@
 use std::io::{self, Write};
 
 use fresnica_client::{
-    AuthorizationScope, AuthorizationThreshold, ClassicOperationKind, LedgerAuthorizationSnapshot,
+    AuthorizationScope, AuthorizationThreshold, ClassicOperationKind,
+    ExternalEd25519SigningProvider, FresnicaClient, LedgerAuthorizationSnapshot,
     LedgerSignerAvailability, LedgerSignerKind,
 };
 
@@ -108,6 +109,23 @@ fn operation_kind_label(kind: ClassicOperationKind) -> &'static str {
         ClassicOperationKind::ManageData => "ManageData",
         ClassicOperationKind::InvokeHostFunction => "InvokeHostFunction",
         ClassicOperationKind::BumpSequence => "BumpSequence",
+    }
+}
+
+const LOCAL_PASSPHRASE_REQUIRED: &str =
+    "Fresnica passphrase is required for selected local software signers";
+
+pub fn submit_with_classic_signers<T>(
+    client: &FresnicaClient,
+    mut submit: impl FnMut(Option<&str>, &[ExternalEd25519SigningProvider]) -> Result<T, String>,
+) -> Result<T, String> {
+    let providers = crate::ledger::external_signing_providers(client)?;
+    match submit(None, &providers) {
+        Err(error) if error == LOCAL_PASSPHRASE_REQUIRED => {
+            let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
+            submit(Some(passcode.as_str()), &providers)
+        }
+        result => result,
     }
 }
 

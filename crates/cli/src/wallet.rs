@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
 use zeroize::Zeroizing;
 
-use crate::{diagnostics, expand_path, friendbot, prompt_hidden, HELP};
+use crate::{diagnostics, expand_path, friendbot, ledger, prompt_hidden, HELP};
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     let wallet_name = match arguments {
@@ -17,6 +17,9 @@ pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Res
     println!("Address:    {}", record.address);
     println!("Network:    {}", record.network);
     println!("Type:       {}", record.wallet_type);
+    if let Some(configuration) = ledger::configuration(&record)? {
+        println!("Signer:     Ledger m/44'/148'/{}'", configuration.hd_path);
+    }
     println!(
         "Protection: {}",
         if record.watch_only() {
@@ -64,6 +67,9 @@ pub(crate) fn command_wallet(
         "import-watch" if arguments.len() == 3 => {
             wallet_import_watch(storage, network, &arguments[1], &arguments[2])
         }
+        "import-ledger" => wallet_import_ledger(storage, network, &arguments[1..]),
+        "attach-ledger" => wallet_attach_ledger(storage, &arguments[1..]),
+        "detach-ledger" if arguments.len() == 2 => wallet_detach_ledger(storage, &arguments[1]),
         "attach-secret" if arguments.len() == 2 => wallet_attach_secret(storage, &arguments[1]),
         "attach-mnemonic" => wallet_attach_mnemonic(storage, &arguments[1..]),
         "detach-signer" if arguments.len() == 2 => wallet_detach_signer(storage, &arguments[1]),
@@ -93,9 +99,14 @@ fn wallet_list(storage: &WalletStorage) -> Result<(), String> {
         } else {
             " "
         };
+        let signer_type = if ledger::configuration(&record)?.is_some() {
+            "ledger"
+        } else {
+            record.wallet_type.as_str()
+        };
         println!(
             "{marker} {:<20} {:<7} {:<10} {}",
-            record.name, record.network, record.wallet_type, record.address
+            record.name, record.network, signer_type, record.address
         );
     }
     Ok(())
@@ -172,10 +183,70 @@ fn wallet_import_watch(
     Ok(())
 }
 
+fn wallet_import_ledger(
+    storage: &WalletStorage,
+    network: &str,
+    arguments: &[String],
+) -> Result<(), String> {
+    let (name, hd_path) = parse_ledger_options(arguments)?;
+    let address = ledger::public_key(hd_path)?;
+    let mut record = wallet_ops::import_watch_record(name, network, &address)?;
+    ledger::attach_configuration(&mut record, hd_path)?;
+    save_new_record(storage, &record)?;
+    println!(
+        "Imported Ledger signer \"{}\" [{}]",
+        record.name, record.network
+    );
+    println!("Address: {}", record.address);
+    println!("Path:    m/44'/148'/{hd_path}'");
+    Ok(())
+}
+
+fn wallet_attach_ledger(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
+    let (name, hd_path) = parse_ledger_options(arguments)?;
+    let mut record = storage.load(name)?;
+    if !record.watch_only() {
+        return Err("Ledger can only be attached to a watch-only wallet".to_owned());
+    }
+    if ledger::configuration(&record)?.is_some() {
+        return Err("wallet already has a Ledger signer configured".to_owned());
+    }
+    let address = ledger::public_key(hd_path)?;
+    if address != record.address {
+        return Err(format!(
+            "connected Ledger account at m/44'/148'/{hd_path}' is {address}, expected {}",
+            record.address
+        ));
+    }
+    ledger::attach_configuration(&mut record, hd_path)?;
+    storage.save(&record, true)?;
+    println!(
+        "Attached Ledger signer to watch-only wallet \"{}\"",
+        record.name
+    );
+    println!("Address: {}", record.address);
+    println!("Path:    m/44'/148'/{hd_path}'");
+    Ok(())
+}
+
+fn wallet_detach_ledger(storage: &WalletStorage, name: &str) -> Result<(), String> {
+    let mut record = storage.load(name)?;
+    if !ledger::detach_configuration(&mut record)? {
+        return Err("wallet has no Ledger signer configured".to_owned());
+    }
+    storage.save(&record, true)?;
+    println!("Detached Ledger signer from wallet \"{}\"", record.name);
+    println!("Address: {}", record.address);
+    Ok(())
+}
+
 fn wallet_attach_secret(storage: &WalletStorage, name: &str) -> Result<(), String> {
     let record = storage.load(name)?;
     if !record.watch_only() {
         return Err("wallet already has signing material".to_owned());
+    }
+    if ledger::configuration(&record)?.is_some() {
+        return Err("wallet already uses a Ledger signer; detach it before attaching software signing material".to_owned());
     }
     let secret = prompt_hidden("Stellar secret (S...): ")?;
     let passcode = prompt_app_passcode(storage)?;
@@ -194,6 +265,9 @@ fn wallet_attach_mnemonic(storage: &WalletStorage, arguments: &[String]) -> Resu
     let record = storage.load(name)?;
     if !record.watch_only() {
         return Err("wallet already has signing material".to_owned());
+    }
+    if ledger::configuration(&record)?.is_some() {
+        return Err("wallet already uses a Ledger signer; detach it before attaching software signing material".to_owned());
     }
     let mnemonic = prompt_hidden("Mnemonic phrase: ")?;
     let mnemonic_passphrase = prompt_hidden("BIP39 passphrase (optional; leave empty if none): ")?;
@@ -307,11 +381,25 @@ fn wallet_restore(storage: &WalletStorage, arguments: &[String]) -> Result<(), S
         let passcode = prompt_existing_app_passcode(storage)?;
         wallet_ops::validate_restore_signer_compatibility(&record, &passcode)?;
     }
+    let ledger_signer = ledger::configuration(&record)?;
     save_new_record(storage, &record)?;
-    println!(
-        "Restored wallet \"{}\" [{}]; unlock with the Fresnica passphrase",
-        record.name, record.network
-    );
+    if let Some(configuration) = ledger_signer {
+        println!(
+            "Restored Ledger wallet \"{}\" [{}]",
+            record.name, record.network
+        );
+        println!("Path: m/44'/148'/{}'", configuration.hd_path);
+    } else if record.watch_only() {
+        println!(
+            "Restored watch-only wallet \"{}\" [{}]",
+            record.name, record.network
+        );
+    } else {
+        println!(
+            "Restored wallet \"{}\" [{}]; unlock with the Fresnica passphrase",
+            record.name, record.network
+        );
+    }
     Ok(())
 }
 
@@ -362,6 +450,27 @@ fn prompt_existing_app_passcode(storage: &WalletStorage) -> Result<Zeroizing<Str
     }
     wallet_ops::validate_app_passcode(storage, &passcode)?;
     Ok(passcode)
+}
+
+fn parse_ledger_options(arguments: &[String]) -> Result<(&str, u32), String> {
+    const USAGE: &str = "usage: fresnica wallet import-ledger NAME [--hd-path N]
+       fresnica wallet attach-ledger NAME [--hd-path N]";
+    let name = arguments.first().ok_or_else(|| USAGE.to_owned())?;
+    let mut hd_path = 0u32;
+    let mut cursor = 1;
+    while cursor < arguments.len() {
+        if arguments[cursor] != "--hd-path" {
+            return Err(USAGE.to_owned());
+        }
+        cursor += 1;
+        hd_path = arguments
+            .get(cursor)
+            .ok_or_else(|| USAGE.to_owned())?
+            .parse()
+            .map_err(|_| "--hd-path requires an unsigned account index".to_owned())?;
+        cursor += 1;
+    }
+    Ok((name, hd_path))
 }
 
 struct MnemonicOptions {

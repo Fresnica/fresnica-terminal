@@ -105,6 +105,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
+      - name: Install Linux HID build prerequisite
+        run: sudo apt-get update -qq && sudo apt-get install -y libudev-dev
       - name: Restore Cargo source cache
         uses: actions/cache@v4
         with:
@@ -186,6 +188,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - name: Install Linux HID build prerequisite
+        if: matrix.asset_os == 'linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y libudev-dev
       - name: Restore Cargo source cache
         uses: actions/cache@v4
         with:
