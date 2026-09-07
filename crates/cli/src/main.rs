@@ -5,6 +5,7 @@ mod contract;
 mod dex;
 mod diagnostics;
 mod friendbot;
+mod ledger;
 mod read_commands;
 mod send;
 mod transaction_flow;
@@ -79,6 +80,9 @@ Wallet commands:
   import-secret NAME
   import-mnemonic NAME [--index N] [--language LANGUAGE]
   import-watch NAME G...
+  import-ledger NAME [--hd-path N]  Import connected Ledger account as watch-only signer
+  attach-ledger NAME [--hd-path N]  Bind connected Ledger signer to matching watch-only G address
+  detach-ledger NAME                Remove Ledger provider metadata and keep the G address
   attach-secret NAME             Add matching S... signing material to watch-only wallet
   attach-mnemonic NAME [--index N] [--language LANGUAGE]
   detach-signer NAME             Remove local signing material and keep the G address

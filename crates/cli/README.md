@@ -44,6 +44,9 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `wallet import-secret NAME`
 - `wallet import-mnemonic NAME`
 - `wallet import-watch NAME G...`
+- `wallet import-ledger NAME [--hd-path N]`
+- `wallet attach-ledger NAME [--hd-path N]`
+- `wallet detach-ledger NAME`
 - `wallet attach-secret NAME`
 - `wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]`
 - `wallet detach-signer NAME`
@@ -74,11 +77,21 @@ Secret, mnemonic, BIP39-passphrase, and Fresnica-passphrase prompts are read fro
 the controlling terminal with input hidden; they are not accepted as command-line
 arguments.
 
-A watch-only Classic account can later attach a secret or mnemonic signer without
-changing wallet identity. The CLI passes the existing G address as the SDK
-`expected_signer_public_key`; mismatched material is rejected before the wallet
-record changes. `wallet detach-signer` removes only local protected signing
-material after passphrase verification and keeps the same account as watch-only.
+A watch-only Classic account can later attach a secret, mnemonic, or Ledger signer without
+changing wallet identity. Software signer attachment passes the existing G address as the SDK
+`expected_signer_public_key`; mismatched material is rejected before the wallet record changes.
+`wallet import-ledger` / `attach-ledger` read the public key from the connected Stellar Ledger
+app at `m/44'/148'/N'` (default `N=0`) and persist only public provider metadata in the existing
+wallet record. `wallet detach-ledger` removes only that metadata. `wallet detach-signer` removes
+only local protected software signing material after passphrase verification.
+
+Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
+Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
+signature application remain in `fresnica-client` / SDK / Core; Terminal reuses SDF's
+`stellar-ledger` HID/APDU implementation only for device public-key lookup and clear-signing. A
+connected device is re-checked against the recorded public key before every signature. Mixed
+software + Ledger multisig preflights the Fresnica passphrase before any device signing request.
+Soroban authorization, SEP-10, SEP-53 and generic Dapp sessions are not part of this Ledger slice.
 
 Contacts are client-local public metadata. Contact names are resolved before
 payment construction, an explicit `--memo` takes precedence over a contact's
