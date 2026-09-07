@@ -1,0 +1,51 @@
+name: Temporary SEP-53 stateless materializer
+
+on:
+  push:
+    branches:
+      - tmp/sep53-stateless-materialize
+    paths:
+      - .github/workflows/tmp-sep53-stateless.yml
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply exact local patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          main = Path("crates/cli/src/main.rs")
+          text = main.read_text()
+          old = '''fn run_local_command(global: &GlobalOptions) -> Result<(), String> {\n    diagnostics::stage("initialize local wallet storage");'''
+          new = '''fn run_local_command(global: &GlobalOptions) -> Result<(), String> {\n    if global.command[0] == "message"\n        && global.command.get(1).map(String::as_str) == Some("verify")\n    {\n        return message::command_verify(&global.command[2..]);\n    }\n\n    diagnostics::stage("initialize local wallet storage");'''
+          if text.count(old) != 1:
+              raise SystemExit(f"main replacement count = {text.count(old)}")
+          main.write_text(text.replace(old, new))
+
+          message = Path("crates/cli/src/message.rs")
+          text = message.read_text()
+          old = "fn command_verify(arguments: &[String]) -> Result<(), String> {"
+          new = "pub fn command_verify(arguments: &[String]) -> Result<(), String> {"
+          if text.count(old) != 1:
+              raise SystemExit(f"message replacement count = {text.count(old)}")
+          message.write_text(text.replace(old, new))
+      - name: Verify exact locally formatted bytes
+        run: |
+          set -euo pipefail
+          test "$(sha256sum crates/cli/src/main.rs | cut -d' ' -f1)" = "0738f7859fb04a42f7b12606c3499f9e887a982f99de7a352f8204742f0505bd"
+          test "$(sha256sum crates/cli/src/message.rs | cut -d' ' -f1)" = "55577380c1c9fb8790c63830617509a3a111d817f5da8c74fea82ea4034d20ab"
+          git diff --check
+      - name: Stage exact product blobs
+        run: |
+          set -euo pipefail
+          git config user.name "Fresnica CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/cli/src/main.rs crates/cli/src/message.rs
+          git commit -m "chore: stage stateless SEP-53 product bytes"
+          git push origin HEAD:tmp/sep53-stateless-materialize
