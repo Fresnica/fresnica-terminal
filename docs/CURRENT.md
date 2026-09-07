@@ -1,18 +1,20 @@
 # Fresnica Terminal Current State
 
-Status: **architecture-convergence milestone implemented and validated; stacked Draft PRs remain unmerged and no release is planned yet**.
+Status: **architecture convergence remains validated; the first contract-spec-driven Soroban Invoke product slice is implemented on Draft PRs and remains unmerged/unreleased**.
 
-Last verified: 2026-09-06.
+Last verified: 2026-09-07.
 
 ## Source of truth
 
 - Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
-- Current Terminal product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`.
+- Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
 - Terminal Rust source pin: `Fresnica/fresnica@65a9da804ca16849e320d24365e6e839e62cf5d8`, the validated History implementation commit from upstream #167.
 - Upstream #167 current head: `a63fc62a6289fc3b4696556eb436c9a0147feb96`. Its only change after the Terminal pin is the carried-forward `docs/capabilities/network.md` Rust-runtime scope correction; Rust source is unchanged.
 - Upstream cumulative integration candidate: Draft PR #169, head `f01f6607bcd1cbf5e28de800ce215187bf23091f`, one commit directly on upstream `main`, with a tree byte-identical to #167 current top.
+- Upstream Soroban capability Draft PR #171: `670f39dc6833af350059d5ad0280a3651dacf66d`; Required CI #102 / run `34074383876` passed after replacing the Fresnica-owned ABI value parser with official `soroban-spec-tools`.
+- Terminal Soroban product Draft PR #25 code-gate head: `dcbb38971bd384ba21ab1866738576d9443e1577`; CI #75 / run `34071815102` passed boundary, format, Clippy, workspace tests, CLI/TUI release builds, and RefPython compatibility.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts.
 
@@ -75,6 +77,29 @@ The current Terminal stack is intentionally linear and unmerged:
 
 The corresponding upstream Fresnica Rust-client work is a stacked Draft line through #167. One parent-layer drift was found during closeout: #157 received a documentation-only Network runtime-scope correction after #159 had already forked. That exact correction was carried to #167 top as `a63fc62a6289fc3b4696556eb436c9a0147feb96`; Required CI #92 passed. No other parent-head drift was found in #159 -> #167.
 
+## Soroban Contract Invoke P1
+
+The first Soroban product slice is now implemented as a separate Draft milestone rather than an architecture-cleanup continuation. The initial ordered `TYPE:VALUE` proposal was discarded after comparison with Stellar CLI's fully-typed contract model. The deployed contract specification is now the source of truth.
+
+The resulting boundary is:
+
+```text
+on-chain Contract Spec / Stellar RPC
+        |
+        v
+fresnica-client
+  ContractInterface + named input validation + ScVal conversion
+        |
+        v
+Terminal
+  Fresnica options -- FUNCTION --named value
+  dynamic help + review + confirmation + machine JSON
+```
+
+Upstream #171 resolves Stellar Asset Contract, Wasm, and CAP-85 external-reference specifications through the official Stellar RPC/spec crates and exposes provider-neutral function/parameter metadata. ABI value parsing, complex types, option omission, sanitized ABI names, examples, and normalized JSON conversion are delegated to official `soroban-spec-tools`; Fresnica no longer maintains a parallel `ScSpecTypeDef -> ScVal` parser. Terminal #25 consumes those DTOs without importing XDR/spec parsing and retains only wallet selection, dynamic product help, simulation-backed review, confirmation, signing coordination, pending-safety, and output semantics.
+
+No TUI contract surface, SEP-53/Dapp transport, hardware signer work, Main merge, or release is part of this milestone.
+
 ## Validation at the current tops
 
 Terminal #19 exact head `85fba1612ba7709a8040a0d1a1afc1011cd00d08` has passed:
@@ -88,7 +113,11 @@ Upstream History implementation commit `65a9da804ca16849e320d24365e6e839e62cf5d8
 
 Upstream #167 current head `a63fc62a6289fc3b4696556eb436c9a0147feb96` passed Required CI #92 / run `34038000875` after the carried-forward architecture document correction.
 
-No merge or release is part of this milestone closeout.
+Upstream Soroban #171 exact head `670f39dc6833af350059d5ad0280a3651dacf66d` passed Required CI #102 / run `34074383876`, including compatibility, SDK boundary, rustfmt and Rust capability compile/tests with the official `soroban-spec-tools` dependency.
+
+Terminal Soroban #25 pre-official-parser head `9f5c50f6daefedddc86f6616c8432a9262c7b4d0` passed formal CI and Release packaging. The current official-parser repin is being rebuilt as the same one-commit child milestone; exact-head Terminal CI, cross-platform packaging, and a live Testnet native-SAC interface probe are the remaining gates before this slice is considered closed.
+
+No merge or release publication is part of this milestone closeout.
 
 ## Self-check conclusions
 
@@ -111,7 +140,6 @@ The architecture-convergence plan is **implemented**. Continuing to add refactor
 The following are separate product/capability decisions, not unfinished cleanup in this milestone:
 
 - richer transaction-grouped Activity, cache/cursors, spam classification and enrichment;
-- Soroban invoke product input/review UX;
 - generic Dapp/SEP-53 session transport;
 - external Ledger hardware integration;
 - Passkey / smart-account product paths;
@@ -124,14 +152,13 @@ Do **not** merge the long stacked Draft PRs one by one as the primary integratio
 
 Preferred integration shape:
 
-1. preserve the stacked Draft PRs as evidence;
-2. create one cumulative upstream integration commit directly on current upstream `main` using the validated #167 top tree — Draft PR #169 does this;
-3. run formal CI on that cumulative upstream candidate;
-4. create one cumulative Terminal integration commit directly on current Terminal `main` using the validated #19 product tree plus this `CURRENT.md` closeout record;
-5. keep the Terminal Rust source pin at the already validated `65a9da8...` during integration review because upstream `65a9da8... -> a63fc62...` changes documentation only;
-6. after the upstream integration candidate is actually merged, repin Terminal once to the final upstream merged commit and rerun Terminal gates;
-7. only then decide merge and release timing.
+1. preserve the original stacked Draft PRs as architecture evidence;
+2. keep cumulative architecture candidates #169 (upstream) and #21 (Terminal) as the pre-Soroban integration baseline;
+3. keep Soroban #171 and #25 as bounded child Draft milestones until the integration decision;
+4. if upstream #169/#171 are integrated, repin the Terminal cumulative candidate once to the final upstream revision rather than churning dependency SHAs through intermediate Draft heads;
+5. rerun exact-head Terminal gates after that final repin;
+6. only then decide Main merge and release timing.
 
 This avoids both stacked ancestry drift and pointless dependency-SHA churn during review.
 
-Until that decision is made, do not publish a new Terminal release, start Soroban merely because the lower-level capability exists, or broaden the presentation crate without concrete duplicate responsibility that has the same presentation requirements.
+Until that decision is made, do not merge the Soroban Drafts into Main or publish a new Terminal release. Preserve #171/#25 as bounded evidence, and do not broaden the presentation/shared layers without concrete duplicate responsibility.
