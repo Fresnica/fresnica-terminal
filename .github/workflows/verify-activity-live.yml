@@ -1,0 +1,107 @@
+name: Verify Activity live
+
+on:
+  push:
+    branches:
+      - verify/terminal-activity-20260907
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-sources-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-sources-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build exact Terminal head
+        run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - name: Find active public Testnet participant
+        id: account
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import urllib.parse
+          import urllib.request
+
+          base = 'https://horizon-testnet.stellar.org'
+          with urllib.request.urlopen(base + '/transactions?order=desc&limit=30', timeout=20) as response:
+              recent = json.load(response)['_embedded']['records']
+          seen = set()
+          for tx in recent:
+              account = tx.get('source_account')
+              if not account or account in seen:
+                  continue
+              seen.add(account)
+              path = '/accounts/' + urllib.parse.quote(account, safe='') + '/transactions?order=desc&limit=2'
+              try:
+                  with urllib.request.urlopen(base + path, timeout=20) as response:
+                      records = json.load(response)['_embedded']['records']
+              except Exception:
+                  continue
+              if len(records) >= 2:
+                  print('address=' + account)
+                  break
+          else:
+              raise SystemExit('no recent account with at least two participant transactions')
+          PY
+      - name: Verify grouped JSON cursor paging
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$PWD/target/release/fresnica"
+          HOME_DIR="$RUNNER_TEMP/fresnica-activity-home"
+          mkdir -p "$HOME_DIR"
+          "$BIN" --home "$HOME_DIR" --network testnet wallet import-watch probe '${{ steps.account.outputs.address }}'
+          "$BIN" --home "$HOME_DIR" --network testnet activity --wallet probe --limit 1 --json > /tmp/page1.json
+          python3 - <<'PY' > /tmp/cursor.txt
+          import json
+          data = json.load(open('/tmp/page1.json', encoding='utf-8'))
+          assert data['wallet']['network'] == 'testnet', data
+          assert len(data['transactions']) == 1, data
+          tx = data['transactions'][0]
+          assert tx['operations'], tx
+          assert all(op['transaction_hash'] == tx['transaction_hash'] for op in tx['operations']), tx
+          cursor = data['next_cursor']
+          assert cursor, data
+          print(cursor)
+          PY
+          CURSOR="$(cat /tmp/cursor.txt)"
+          "$BIN" --home "$HOME_DIR" --network testnet activity --wallet probe --limit 1 --cursor "$CURSOR" --json > /tmp/page2.json
+          python3 - <<'PY'
+          import json
+          first = json.load(open('/tmp/page1.json', encoding='utf-8'))
+          second = json.load(open('/tmp/page2.json', encoding='utf-8'))
+          assert len(second['transactions']) == 1, second
+          a = first['transactions'][0]
+          b = second['transactions'][0]
+          assert a['transaction_hash'] != b['transaction_hash'], (a, b)
+          assert b['operations'], b
+          assert all(op['transaction_hash'] == b['transaction_hash'] for op in b['operations']), b
+          print(json.dumps({
+              'account': first['wallet']['address'],
+              'first_transaction': a['transaction_hash'],
+              'second_transaction': b['transaction_hash'],
+              'cursor': first['next_cursor'],
+          }, indent=2))
+          PY
+      - name: Verify human grouping
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="$PWD/target/release/fresnica"
+          HOME_DIR="$RUNNER_TEMP/fresnica-activity-home"
+          "$BIN" --home "$HOME_DIR" --network testnet activity --wallet probe --limit 1 > /tmp/activity.txt
+          cat /tmp/activity.txt
+          grep -F 'Wallet: probe [testnet]' /tmp/activity.txt
+          grep -E 'tx [0-9a-f]{12}  [0-9]+ operation' /tmp/activity.txt
