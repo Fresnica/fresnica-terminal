@@ -6,6 +6,7 @@ mod dex;
 mod diagnostics;
 mod friendbot;
 mod ledger;
+mod plugin;
 mod read_commands;
 mod send;
 mod transaction_flow;
@@ -52,6 +53,10 @@ Global options:
 Environment:
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
   FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
+
+External commands:
+  Unknown commands can dispatch to PATH executables named fresnica-*, stellar-*,
+  or legacy soroban-*. Built-in Fresnica commands always take precedence.
 
 Network commands:
   account                       Show current ledger account state
@@ -141,7 +146,12 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         "info" | "contact" | "wallet" => run_local_command(&global),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
         | "contract" | "anchor" => run_network_command(&global),
-        other => Err(format!("unknown command: {other}\n\n{HELP}")),
+        other => {
+            if let Some(status) = plugin::dispatch(&global.command)? {
+                process::exit(status.code().unwrap_or(1));
+            }
+            Err(format!("unknown command: {other}\n\n{HELP}"))
+        }
     }
 }
 

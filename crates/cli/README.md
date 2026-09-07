@@ -169,6 +169,13 @@ The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external
 
 Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. Actual invocation first follows Stellar CLI's current default-send rule: if simulation contains no ledger write, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
 
+## External CLI plugins
+
+Unknown top-level commands can be extended by executables already available on `PATH`. Fresnica tries the longest command chain first and, for each chain, resolves `fresnica-NAME`, then `stellar-NAME`, then the legacy `soroban-NAME` form. This intentionally follows Stellar CLI's external-command model while giving Fresnica-specific plugins first priority. Built-in Fresnica commands always win and cannot be shadowed by a plugin.
+
+For example, `fresnica saint account G...` may resolve `fresnica-saint` or an existing `stellar-saint`, while `fresnica tools inspect G...` prefers a matching `fresnica-tools-inspect` / `stellar-tools-inspect` before falling back to a shorter `*-tools` executable. Arguments after the matched command chain are forwarded unchanged, the plugin inherits standard input/output/error, and Fresnica exits with the plugin's exit code. Plugin-specific options should follow the plugin command, matching normal Stellar CLI plugin usage.
+
+This process boundary is capability isolation, not an OS sandbox. Plugins run with the invoking user's operating-system permissions and can independently access resources that account can access. Fresnica does not pass decrypted wallet state, secrets, mnemonics, Fresnica passphrases, unlock keys, or signer-provider handles to plugins, and this first slice provides no transaction-signing bridge. Hardware devices remain Signer Providers coordinated by Fresnica; external CLI plugins are a separate extension mechanism.
 ## Diagnostics
 
 `-v` / `--verbose` prints safe execution stages and reports the last stage reached on failure.
