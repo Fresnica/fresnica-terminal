@@ -1,0 +1,30 @@
+name: Temporary Classic repin lock materializer
+on:
+  push:
+    branches:
+      - verify/classic-repin-20260907
+    paths:
+      - .github/workflows/tmp-classic-repin-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verify/classic-repin-20260907
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refresh only Fresnica git dependency identity
+        run: cargo update -p fresnica-client
+      - name: Verify locked workspace compiles
+        run: cargo check --workspace --locked
+      - name: Commit canonical lock
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Cargo.lock
+          git commit -m "chore: materialize Classic client lock"
+          git push origin HEAD:verify/classic-repin-20260907
