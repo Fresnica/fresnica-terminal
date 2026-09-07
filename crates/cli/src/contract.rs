@@ -1,6 +1,7 @@
 use fresnica_client::{
-    ContractArgumentInput, ContractFunction, ContractInterface, ContractInvokeRequest,
-    ContractInvokeReview, FresnicaClient, TransactionSubmission,
+    ContractArgumentInput, ContractFunction, ContractInterface, ContractInvokePreparation,
+    ContractInvokeRequest, ContractInvokeReview, ContractReadResult, FresnicaClient,
+    TransactionSubmission,
 };
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
@@ -16,10 +17,10 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         .build()
         .map_err(|error| format!("unable to initialize Soroban runtime: {error}"))?;
 
-    crate::diagnostics::stage("contract: load deployed interface");
-    let interface = runtime.block_on(client.contract_interface(&options.contract_id))?;
     match &options.action {
         InvokeAction::InterfaceHelp => {
+            crate::diagnostics::stage("contract: load deployed interface");
+            let interface = runtime.block_on(client.contract_interface(&options.contract_id))?;
             if options.json {
                 print_json(&interface_json(&interface))?;
             } else {
@@ -28,6 +29,8 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
             return Ok(());
         }
         InvokeAction::FunctionHelp { function_name } => {
+            crate::diagnostics::stage("contract: load deployed interface");
+            let interface = runtime.block_on(client.contract_interface(&options.contract_id))?;
             let function = interface.function(function_name).ok_or_else(|| {
                 format!(
                     "contract {} has no function {function_name:?}",
@@ -52,10 +55,30 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         unreachable!("help actions returned before invocation")
     };
 
-    crate::diagnostics::stage("contract: prepare and simulate invoke");
+    crate::diagnostics::stage("contract: simulate invoke");
     let mut invoke = ContractInvokeRequest::new(options.contract_id, function_name, arguments);
     invoke.wallet = options.wallet;
-    let mut prepared = runtime.block_on(client.prepare_contract_invoke(invoke))?;
+    let outcome = runtime.block_on(client.prepare_contract_invoke_outcome(invoke))?;
+
+    let ContractInvokePreparation::Transaction(mut prepared) = outcome else {
+        let ContractInvokePreparation::ReadOnly(result) = outcome else {
+            unreachable!("contract invoke preparation has only read-only or transaction outcomes")
+        };
+        crate::diagnostics::stage("contract: return read-only simulation");
+        if options.json {
+            print_json(&read_only_json(&result))?;
+        } else {
+            render_read_only(&result);
+        }
+        return Ok(());
+    };
+
+    if options.json && !options.yes {
+        return Err(
+            "write contract invoke --json requires -y so stdout remains one machine-readable JSON document"
+                .to_owned(),
+        );
+    }
 
     crate::diagnostics::stage("contract: review simulated transaction");
     if !options.json {
@@ -146,9 +169,6 @@ impl InvokeOptions {
         }
         let dynamic = &arguments[index + 1..];
         let action = parse_dynamic(dynamic)?;
-        if json && !yes && matches!(action, InvokeAction::Invoke { .. }) {
-            return Err("contract invoke --json requires -y so stdout remains one machine-readable JSON document".to_owned());
-        }
         Ok(Self {
             contract_id,
             wallet,
@@ -280,6 +300,30 @@ fn render_function_help(contract_id: &str, function: &ContractFunction) {
     }
 }
 
+fn render_read_only(result: &ContractReadResult) {
+    println!("Read-only contract result");
+    println!("Contract:   {}", result.contract_id);
+    println!("Function:   {}", result.function_name);
+    println!("Network:    {}", result.network);
+    for argument in &result.arguments {
+        println!(
+            "  --{:<14} {:<16} {}",
+            argument.name,
+            argument.value_type,
+            compact_json(&argument.value)
+        );
+    }
+    if result.arguments.is_empty() {
+        println!("Arguments:  none");
+    }
+    match &result.output {
+        Some(output) => println!("Result:     {}", compact_json(output)),
+        None => println!("Result:     null"),
+    }
+    println!("Simulation: ledger {}", result.simulation_ledger);
+    println!("Submitted:  no");
+}
+
 fn render_review(review: &ContractInvokeReview) {
     println!("Review contract invocation");
     println!("Wallet:     {}", review.wallet_name);
@@ -357,6 +401,19 @@ fn function_json(function: &ContractFunction) -> Value {
     })
 }
 
+fn read_only_json(result: &ContractReadResult) -> Value {
+    json!({
+        "kind": "read_only",
+        "contract_id": result.contract_id.as_str(),
+        "function": result.function_name.as_str(),
+        "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
+        "result": result.output.clone(),
+        "simulation_ledger": result.simulation_ledger,
+        "network": result.network.as_str(),
+        "submission": Value::Null,
+    })
+}
+
 fn review_json(review: &ContractInvokeReview) -> Value {
     json!({
         "wallet": review.wallet_name.as_str(),
@@ -383,6 +440,7 @@ fn review_json(review: &ContractInvokeReview) -> Value {
 
 fn submission_json(review: &ContractInvokeReview, submission: &TransactionSubmission) -> Value {
     json!({
+        "kind": "transaction",
         "review": review_json(review),
         "submission": {
             "hash": submission.hash.as_str(),
@@ -470,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn machine_invocation_requires_explicit_noninteractive_confirmation() {
+    fn machine_invocation_defers_confirmation_until_simulation_classifies_write() {
         let args = [
             "invoke",
             CONTRACT,
@@ -481,9 +539,10 @@ mod tests {
             "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
         ]
         .map(str::to_owned);
-        assert!(InvokeOptions::parse(&args)
-            .unwrap_err()
-            .contains("--json requires -y"));
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert!(options.json);
+        assert!(!options.yes);
+        assert!(matches!(options.action, InvokeAction::Invoke { .. }));
     }
 
     #[test]

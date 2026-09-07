@@ -1,6 +1,6 @@
 # Fresnica Terminal Current State
 
-Status: **architecture convergence remains validated; the first contract-spec-driven Soroban Invoke product slice is implemented on Draft PRs and remains unmerged/unreleased**.
+Status: **architecture convergence remains validated; Contract-Spec-driven Soroban Invoke plus automatic read-only simulation are implemented on Draft PRs and remain unmerged/unreleased**.
 
 Last verified: 2026-09-07.
 
@@ -14,7 +14,9 @@ Last verified: 2026-09-07.
 - Upstream #167 current head: `a63fc62a6289fc3b4696556eb436c9a0147feb96`. Its only change after the Terminal pin is the carried-forward `docs/capabilities/network.md` Rust-runtime scope correction; Rust source is unchanged.
 - Upstream cumulative integration candidate: Draft PR #169, head `f01f6607bcd1cbf5e28de800ce215187bf23091f`, one commit directly on upstream `main`, with a tree byte-identical to #167 current top.
 - Upstream Soroban capability Draft PR #171: `670f39dc6833af350059d5ad0280a3651dacf66d`; Required CI #102 / run `34074383876` passed after replacing the Fresnica-owned ABI value parser with official `soroban-spec-tools`.
-- Terminal Soroban product Draft PR #25 code-gate head: `dcbb38971bd384ba21ab1866738576d9443e1577`; CI #75 / run `34071815102` passed boundary, format, Clippy, workspace tests, CLI/TUI release builds, and RefPython compatibility.
+- Terminal Soroban product Draft PR #25 final product head: `2bdf19dbea3b9b976fa2883a7cf26bbd366fff79`; CI #81 / run `34074999863`, Release Terminal #58 / run `34074999766`, and live Testnet native-SAC interface probe `34075404068` passed.
+- Upstream read-only child Draft PR #172: `a4b0bd4eaa1a47e5f8cb8107ca264bffac6d444b`; Required CI #103 / run `34077833532` passed.
+- Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts.
 
@@ -79,7 +81,7 @@ The corresponding upstream Fresnica Rust-client work is a stacked Draft line thr
 
 ## Soroban Contract Invoke P1
 
-The first Soroban product slice is now implemented as a separate Draft milestone rather than an architecture-cleanup continuation. The initial ordered `TYPE:VALUE` proposal was discarded after comparison with Stellar CLI's fully-typed contract model. The deployed contract specification is now the source of truth.
+The Soroban product work is implemented as bounded Draft milestones rather than an architecture-cleanup continuation. The initial ordered `TYPE:VALUE` proposal was discarded after comparison with Stellar CLI's fully-typed contract model. The deployed contract specification is the source of truth, and the second slice follows Stellar CLI's current default-send simulation behavior rather than inventing a Fresnica-specific view command.
 
 The resulting boundary is:
 
@@ -98,6 +100,8 @@ Terminal
 
 Upstream #171 resolves Stellar Asset Contract, Wasm, and CAP-85 external-reference specifications through the official Stellar RPC/spec crates and exposes provider-neutral function/parameter metadata. ABI value parsing, complex types, option omission, sanitized ABI names, examples, and normalized JSON conversion are delegated to official `soroban-spec-tools`; Fresnica no longer maintains a parallel `ScSpecTypeDef -> ScVal` parser. Terminal #25 consumes those DTOs without importing XDR/spec parsing and retains only wallet selection, dynamic product help, simulation-backed review, confirmation, signing coordination, pending-safety, and output semantics.
 
+Upstream #172 adds the same default send decision used by current Stellar CLI: preliminary simulation sends only when it observes a read-write footprint, a published contract event, or authorization. Otherwise it returns `ContractReadResult` decoded through the same Contract Spec without resolving a wallet, sequence, passphrase, fee, pending record, or submission. Terminal #26 consumes that shared outcome, permits machine read-only calls without `-y`, and still requires `-y` after a write outcome is known. It also removes a real duplicate network operation from #25: actual invocation no longer fetches the Contract Spec once for an unused interface and again during preparation; interface discovery is now help-only.
+
 No TUI contract surface, SEP-53/Dapp transport, hardware signer work, Main merge, or release is part of this milestone.
 
 ## Validation at the current tops
@@ -115,7 +119,9 @@ Upstream #167 current head `a63fc62a6289fc3b4696556eb436c9a0147feb96` passed Req
 
 Upstream Soroban #171 exact head `670f39dc6833af350059d5ad0280a3651dacf66d` passed Required CI #102 / run `34074383876`, including compatibility, SDK boundary, rustfmt and Rust capability compile/tests with the official `soroban-spec-tools` dependency.
 
-Terminal Soroban #25 pre-official-parser head `9f5c50f6daefedddc86f6616c8432a9262c7b4d0` passed formal CI and Release packaging. The current official-parser repin is being rebuilt as the same one-commit child milestone; exact-head Terminal CI, cross-platform packaging, and a live Testnet native-SAC interface probe are the remaining gates before this slice is considered closed.
+Terminal Soroban #25 exact head `2bdf19dbea3b9b976fa2883a7cf26bbd366fff79` passed CI #81 / run `34074999863`, Release Terminal #58 / run `34074999766` across Linux x64, macOS arm64 and Windows x64 with Windows binary smoke, and live Testnet native-SAC interface probe `34075404068`; publish correctly skipped.
+
+Upstream read-only #172 exact head `a4b0bd4eaa1a47e5f8cb8107ca264bffac6d444b` passed Required CI #103 / run `34077833532`. Terminal #26 code-gate head `826eef6995943d06e20b011f98af426debeda5c1` passed focused CLI tests and live Testnet run `34078192917`, which used a brand-new empty HOME with no Fresnica wallet and returned native-SAC `balance` as `kind=read_only`, decoded a non-null result, kept `submission=null`, rendered `Submitted: no`, and never prompted for a Fresnica passphrase. Final docs-synchronized exact-head CI and Release Terminal are the closing gates.
 
 No merge or release publication is part of this milestone closeout.
 
@@ -126,6 +132,11 @@ The current top tree was re-audited after #19 against the shared-foundation plac
 - Account, Balance and History no longer require Terminal to interpret provider-shaped read records.
 - DEX order book, offers, pair trades, account fills and candles consume typed `fresnica-client` snapshots/models; Terminal owns parsing and rendering only.
 - Anchor still contains substantial CLI-only orchestration and JSON input handling. This is an acknowledged exception, not a newly discovered ownership regression: there is still no second Terminal Anchor consumer or stronger shared contract evidence that justifies extracting another layer.
+- Official-reuse audit: the Fresnica-owned primitive Soroban ABI parser, manual ContractInstance decode, deprecated Wasm helper path, and Terminal's duplicate invoke-time Contract Spec fetch have been removed.
+- Official-reuse audit: `rs-stellar-rpc-client` already supplies `send_transaction` and polling, but its high-level error path does not preserve Fresnica's safety-critical distinction between explicit rejection and an uncertain submission that may already have been accepted. Keep Fresnica pending/reconciliation policy until the official client exposes enough structured transport/submission state.
+- Official-reuse audit: community `soroban-client` / `stellar-baselib` overlaps Classic Payment/ChangeTrust/offer construction, but adopting it wholesale would also import a second keypair/signing/crypto and transaction ownership layer. Current direct SDF `stellar-xdr` construction remains the smaller boundary; use the community SDK as a possible conformance oracle, not a runtime replacement, unless its ownership/error model changes.
+- Official-reuse audit: the official Wallet SDK covers SEP-1/10/6/12/24/38 but currently has no Rust implementation. Terminal Anchor therefore remains an interactive product state machine over Client-owned protocol validation; extract only when a second Rust product proves the shared orchestration.
+- Low-priority cleanup: Terminal Friendbot still hard-codes the public Testnet endpoint even though Stellar RPC `getNetwork` exposes `friendbotUrl`; move endpoint discovery behind Client when Friendbot is next touched.
 - The History `1..=200` limit is enforced by `FresnicaClient::history()` itself. Terminal's matching argument guard is user-facing validation rather than a provider-ownership leak. A test name still mentions Horizon page size; that wording alone does not justify a code PR.
 - CLI and TUI authorization rendering intentionally differ in full-key versus compact-key presentation. Do not generalize the new History presentation crate into a universal formatter merely for symmetry.
 - The cumulative Terminal diff from `main` to #19 is purely ahead, contains only expected product/document/formal-boundary files and no disposable verifier artifacts.
@@ -154,11 +165,11 @@ Preferred integration shape:
 
 1. preserve the original stacked Draft PRs as architecture evidence;
 2. keep cumulative architecture candidates #169 (upstream) and #21 (Terminal) as the pre-Soroban integration baseline;
-3. keep Soroban #171 and #25 as bounded child Draft milestones until the integration decision;
-4. if upstream #169/#171 are integrated, repin the Terminal cumulative candidate once to the final upstream revision rather than churning dependency SHAs through intermediate Draft heads;
+3. keep Soroban #171/#172 and Terminal #25/#26 as bounded child Draft milestones until the integration decision;
+4. if upstream #169/#171/#172 are integrated, repin the Terminal cumulative candidate once to the final upstream revision rather than churning dependency SHAs through intermediate Draft heads;
 5. rerun exact-head Terminal gates after that final repin;
 6. only then decide Main merge and release timing.
 
 This avoids both stacked ancestry drift and pointless dependency-SHA churn during review.
 
-Until that decision is made, do not merge the Soroban Drafts into Main or publish a new Terminal release. Preserve #171/#25 as bounded evidence, and do not broaden the presentation/shared layers without concrete duplicate responsibility.
+Until that decision is made, do not merge the Soroban Drafts into Main or publish a new Terminal release. Preserve #171/#172 and #25/#26 as bounded evidence, and do not broaden the presentation/shared layers without concrete duplicate responsibility.
