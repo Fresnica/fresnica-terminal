@@ -1,6 +1,7 @@
 mod anchor;
 mod asset_discovery;
 mod contacts;
+mod contract;
 mod dex;
 mod diagnostics;
 mod friendbot;
@@ -32,6 +33,7 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] trust remove CODE:GISSUER [--wallet NAME] [-y]
   fresnica [--home PATH] [--network mainnet|testnet] dex orderbook SELLING BUYING [--json]
   fresnica [--home PATH] [--network mainnet|testnet] dex offers [--wallet NAME] [--limit N] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...
   fresnica [--network mainnet|testnet] anchor discover CODE:GISSUER [--json]
   fresnica [--home PATH] [--network mainnet|testnet] anchor auth CODE:GISSUER [--wallet NAME]
   fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
@@ -44,9 +46,11 @@ Global options:
   -v, --verbose                Show safe execution stages and failure context
   -vv                          Also show CLI version, network, and pinned Fresnica source
   --horizon-url URL            Override the Horizon endpoint for this invocation
+  --rpc-url URL                Override the Stellar RPC endpoint for this invocation
 
 Environment:
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
+  FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
 
 Network commands:
   account                       Show current ledger account state
@@ -56,7 +60,12 @@ Network commands:
   send                          Review, sign through Fresnica SDK/Core, and submit a payment
   trust                         Add, change, or remove an issued-asset trustline
   dex                           Read and trade on the Stellar DEX
+  contract                      Invoke deployed contracts through their on-chain interface
   anchor                        Discover anchor capabilities and start SEP-24/SEP-6 transfers
+
+Contract invocation:
+  Fresnica options come before `--`; the function and named arguments after `--`
+  are resolved from the deployed contract specification.
 
 Contact commands:
   list
@@ -127,7 +136,7 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
-        | "anchor" => run_network_command(&global),
+        | "contract" | "anchor" => run_network_command(&global),
         other => Err(format!("unknown command: {other}\n\n{HELP}")),
     }
 }
@@ -149,6 +158,9 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
     if let Some(horizon_url) = horizon_url_override(global.horizon_url.as_deref()) {
         profile = profile.with_horizon_url(&horizon_url)?;
     }
+    if let Some(rpc_url) = rpc_url_override(global.rpc_url.as_deref()) {
+        profile = profile.with_rpc_url(&rpc_url)?;
+    }
     let client = FresnicaClient::from_profile(&global.home, profile)?;
     match global.command[0].as_str() {
         "account" => read_commands::command_account(&client, &global.command[1..]),
@@ -158,6 +170,7 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
         "send" => send::command_send(&client, &global.command[1..]),
         "trust" => trust::command_trust(&client, &global.command[1..]),
         "dex" => dex::command_dex(&client, &global.command[1..]),
+        "contract" => contract::command_contract(&client, &global.command[1..]),
         "anchor" => anchor::command_anchor(&client, &global.command[1..]),
         _ => unreachable!("network command was classified before dispatch"),
     }
@@ -167,6 +180,7 @@ struct GlobalOptions {
     home: PathBuf,
     network: String,
     horizon_url: Option<String>,
+    rpc_url: Option<String>,
     verbosity: u8,
     command: Vec<String>,
 }
@@ -176,6 +190,7 @@ impl GlobalOptions {
         let mut home = None;
         let mut network = "mainnet".to_owned();
         let mut horizon_url = None;
+        let mut rpc_url = None;
         let mut verbosity = 0u8;
         let mut index = 0;
         while index < arguments.len() {
@@ -215,6 +230,16 @@ impl GlobalOptions {
                     );
                     index += 1;
                 }
+                "--rpc-url" => {
+                    index += 1;
+                    rpc_url = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| "--rpc-url requires a URL".to_owned())?
+                            .to_owned(),
+                    );
+                    index += 1;
+                }
                 _ => break,
             }
         }
@@ -226,6 +251,7 @@ impl GlobalOptions {
             home,
             network,
             horizon_url,
+            rpc_url,
             verbosity,
             command: arguments[index..].to_vec(),
         })
@@ -236,6 +262,12 @@ fn horizon_url_override(cli_value: Option<&str>) -> Option<String> {
     cli_value
         .map(str::to_owned)
         .or_else(|| env::var("FRESNICA_HORIZON_URL").ok())
+}
+
+fn rpc_url_override(cli_value: Option<&str>) -> Option<String> {
+    cli_value
+        .map(str::to_owned)
+        .or_else(|| env::var("FRESNICA_RPC_URL").ok())
 }
 
 fn command_stage(command: &[String]) -> &'static str {
@@ -249,6 +281,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("contact") => "CLI command: contact",
         Some("trust") => "CLI command: trust",
         Some("dex") => "CLI command: dex",
+        Some("contract") => "CLI command: contract",
         Some("anchor") => "CLI command: anchor",
         Some("wallet") => "CLI command: wallet",
         _ => "CLI command dispatch",
@@ -308,6 +341,8 @@ mod tests {
             "testnet",
             "--horizon-url",
             "https://stellar.example/horizon",
+            "--rpc-url",
+            "https://stellar.example/rpc",
             "--verbose",
             "account",
         ]
@@ -318,6 +353,10 @@ mod tests {
         assert_eq!(
             global.horizon_url.as_deref(),
             Some("https://stellar.example/horizon")
+        );
+        assert_eq!(
+            global.rpc_url.as_deref(),
+            Some("https://stellar.example/rpc")
         );
         assert_eq!(global.command, ["account"]);
     }

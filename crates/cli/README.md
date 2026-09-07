@@ -7,8 +7,8 @@ native reference client without a process/FFI transport.
 ## Current scope
 
 The native client currently covers local wallet lifecycle and contacts, testnet
-Friendbot funding, read-only Horizon queries, cache-first asset discovery, reviewed payments, issued-asset
-trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anchor flows:
+Friendbot funding, read-only ledger queries, cache-first asset discovery, reviewed payments, issued-asset
+trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-driven Soroban invocation, and Stellar anchor flows:
 
 - `info [--wallet NAME]`
 - `account [--wallet NAME] [--json]`
@@ -31,6 +31,7 @@ trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anc
 - `dex trades BASE COUNTER [--limit N] [--json]`
 - `dex fills [--wallet NAME] [--limit N] [--json]`
 - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
+- `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
 - `anchor discover CODE:GISSUER [--json]`
 - `anchor auth CODE:GISSUER [--wallet NAME]`
 - `anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
@@ -57,7 +58,7 @@ It reads and writes the same wallet record files, `.default` pointer,
 reference client. The default application home is `FRESNICA_HOME` when set,
 otherwise `~/.fresnica`.
 
-The selected Stellar network and the current Horizon service are separate runtime concerns. By default the shared `fresnica-client` profile uses Fresnica's mainnet/testnet Horizon endpoint. Set `FRESNICA_HORIZON_URL` for a shell/session default or pass global `--horizon-url URL` for one invocation; the command-line value wins. The override changes only the provider endpoint, never the selected Stellar network identity or signing passphrase.
+The selected Stellar network and provider endpoints are separate runtime concerns. By default the shared `fresnica-client` profile uses Fresnica's mainnet/testnet Horizon endpoint; Testnet also has the shared Stellar RPC default while Mainnet contract invocation requires an explicit RPC endpoint until Fresnica intentionally adopts a stable default. Set `FRESNICA_HORIZON_URL` / `--horizon-url URL` for Horizon and `FRESNICA_RPC_URL` / `--rpc-url URL` for Stellar RPC; command-line values win. Provider overrides never change the selected Stellar network identity or signing passphrase.
 
 Asset discovery preserves exact Stellar identity: `XLM` or `CODE:GISSUER` remains
 authoritative, while domain/name/organization/source are optional metadata only.
@@ -88,10 +89,10 @@ Friendbot is a testnet-only client utility. It funds the selected testnet addres
 directly through `friendbot.stellar.org` with a 15-second request timeout and does
 not require signing material, so watch-only testnet wallets are valid targets.
 
-Account state, balances, recent operations, SDEX reads, transaction preparation
-and Horizon submission are client responsibilities. Reusable Rust application
+Account state, balances, recent operations, SDEX reads, transaction preparation,
+and provider submission are client responsibilities. Reusable Rust application
 semantics live in `fresnica-client`, which consumes the resolved network profile and
-current Horizon endpoint; none of that HTTP or product policy is moved into `fresnica-core`.
+Horizon/RPC endpoints; none of that HTTP/RPC or product policy is moved into `fresnica-core`.
 
 Reviewed write commands present operation-specific review and ask for
 confirmation before requesting the Fresnica passphrase. Payment preparation, its
@@ -139,6 +140,20 @@ rational price merge. Trades without a user offer ID, including non-orderbook
 activity, remain separate segments. The native client deliberately does not add a
 second chain-data cache implementation in this slice; the asset catalog is a
 small public-metadata cache owned by the shared Asset Discovery capability.
+
+## Contract invocation
+
+`contract invoke` follows Stellar CLI's fully-typed contract model: the deployed on-chain contract specification is the source of truth for functions, parameter names, types, and documentation. Fresnica options stay before `--`; the function and contract-specific named arguments follow it.
+
+```sh
+fresnica --network testnet contract invoke C... -- --help
+fresnica --network testnet contract invoke C... -- transfer --help
+fresnica --network testnet contract invoke C... --wallet main -- transfer --from G... --to C... --amount 10000000
+```
+
+The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. Dynamic help exposes official type examples where available.
+
+Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`; an actual `--json` invocation requires `-y` so stdout contains one JSON document rather than an interactive prompt.
 
 ## Diagnostics
 
@@ -189,15 +204,16 @@ target/release/fresnica dex buy XRP:G... XLM 100 0.325 --allow-trustline
 target/release/fresnica dex trades XRP:G... XLM --limit 20
 target/release/fresnica dex fills
 target/release/fresnica dex candles XRP:G... XLM --resolution 1h
+target/release/fresnica --network testnet contract invoke C... -- --help
 ```
 
-A wallet record is bound to its configured Stellar network. Network commands
-fail before contacting Horizon if the invocation network does not match the
+A wallet record is bound to its configured Stellar network. Wallet-backed network commands
+fail before contacting the required provider if the invocation network does not match the
 wallet record; use `--network testnet` for a testnet wallet.
 
 ## Deliberate non-goals of this slice
 
-General chain-data caching and a product recommendation/ranking engine remain outside the CLI command surface.
+General chain-data caching and a product recommendation/ranking engine remain outside the CLI command surface. File-backed contract-input convenience flags, decoded return-value presentation, and automatic read-only invocation mode remain outside this first contract slice; Fresnica reuses the official Contract Spec value parser rather than reimplementing Stellar CLI's ABI type system.
 
 The native client does not expose a raw `sign-xdr` shortcut. Routine transaction
 signing stays behind client-side construction and review rather than creating a
