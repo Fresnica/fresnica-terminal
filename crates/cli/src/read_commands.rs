@@ -184,7 +184,7 @@ pub fn command_history(client: &FresnicaClient, arguments: &[String]) -> Result<
     Ok(())
 }
 
-fn history_operation_json(operation: &HistoryOperation) -> Value {
+pub(crate) fn history_operation_json(operation: &HistoryOperation) -> Value {
     json!({
         "operation_id": operation.operation_id.as_deref(),
         "paging_token": operation.paging_token.as_deref(),

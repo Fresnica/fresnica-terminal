@@ -1,3 +1,4 @@
+mod activity;
 mod anchor;
 mod asset_discovery;
 mod contacts;
@@ -25,6 +26,7 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] account [--wallet NAME] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] balance [--wallet NAME] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] history [--wallet NAME] [--limit N] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] activity [--wallet NAME] [--limit N] [--cursor TOKEN] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] asset discover [--limit N] [--cached] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] send AMOUNT ASSET to DESTINATION [--wallet NAME] [--memo TEXT] [-y]
   fresnica [--home PATH] contact COMMAND ...
@@ -56,6 +58,7 @@ Network commands:
   account                       Show current ledger account state
   balance                       Show current account balances and liabilities
   history                       Show newest account operations (default 20, max 200)
+  activity                      Show complete transactions with stable cursor paging
   asset                         Discover exact issued-asset identities and optional metadata
   send                          Review, sign through Fresnica SDK/Core, and submit a payment
   trust                         Add, change, or remove an issued-asset trustline
@@ -135,8 +138,8 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     diagnostics::stage(command_stage(&global.command));
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
-        "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
-        | "contract" | "anchor" => run_network_command(&global),
+        "account" | "balance" | "assets" | "history" | "activity" | "asset" | "send" | "trust"
+        | "dex" | "contract" | "anchor" => run_network_command(&global),
         other => Err(format!("unknown command: {other}\n\n{HELP}")),
     }
 }
@@ -166,6 +169,7 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
         "account" => read_commands::command_account(&client, &global.command[1..]),
         "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
         "history" => read_commands::command_history(&client, &global.command[1..]),
+        "activity" => activity::command_activity(&client, &global.command[1..]),
         "asset" => asset_discovery::command_asset(&client, &global.command[1..]),
         "send" => send::command_send(&client, &global.command[1..]),
         "trust" => trust::command_trust(&client, &global.command[1..]),
@@ -276,6 +280,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("account") => "CLI command: account",
         Some("balance" | "assets") => "CLI command: balance",
         Some("history") => "CLI command: history",
+        Some("activity") => "CLI command: activity",
         Some("asset") => "CLI command: asset",
         Some("send") => "CLI command: send",
         Some("contact") => "CLI command: contact",
