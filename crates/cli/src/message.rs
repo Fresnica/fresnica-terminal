@@ -60,7 +60,7 @@ fn command_sign(storage: &WalletStorage, arguments: &[String]) -> Result<(), Str
     Ok(())
 }
 
-fn command_verify(arguments: &[String]) -> Result<(), String> {
+pub fn command_verify(arguments: &[String]) -> Result<(), String> {
     crate::diagnostics::stage("message: verify SEP-53 signature");
     let request = VerifyRequest::parse(arguments)?;
     let signature = STANDARD

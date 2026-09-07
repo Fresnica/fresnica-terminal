@@ -150,6 +150,11 @@ fn run(global: GlobalOptions) -> Result<(), String> {
 }
 
 fn run_local_command(global: &GlobalOptions) -> Result<(), String> {
+    if global.command[0] == "message" && global.command.get(1).map(String::as_str) == Some("verify")
+    {
+        return message::command_verify(&global.command[2..]);
+    }
+
     diagnostics::stage("initialize local wallet storage");
     let storage = WalletStorage::new(&global.home)?;
     match global.command[0].as_str() {
