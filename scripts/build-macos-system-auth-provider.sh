@@ -8,6 +8,8 @@ fi
 
 upstream="${1:?usage: build-macos-system-auth-provider.sh UPSTREAM_DIR OUTPUT_DIR}"
 output="${2:?usage: build-macos-system-auth-provider.sh UPSTREAM_DIR OUTPUT_DIR}"
+mkdir -p "$output"
+output="$(cd "$output" && pwd)"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$output/xcode-project"
 build_root="$output/build"
