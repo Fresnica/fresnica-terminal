@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const PREFIXES: [&str; 3] = ["fresnica-", "stellar-", "soroban-"];
-const NATIVE_PREFIXES: [&str; 1] = ["fresnica-"];
+const RESERVED_NATIVE_EXECUTABLES: [&str; 1] = ["fresnica-tui"];
 
 pub struct NativeHostContext<'a> {
     pub home: &'a Path,
@@ -41,18 +41,6 @@ pub fn command_plugin(args: &[String]) -> Result<(), String> {
 
 pub fn dispatch(args: &[String], context: &NativeHostContext<'_>) -> Result<Option<i32>, String> {
     let Some(invocation) = find_plugin(args, env::var_os("PATH").as_deref()) else {
-        return Ok(None);
-    };
-    run_invocation(invocation, context).map(Some)
-}
-
-pub fn dispatch_native(
-    args: &[String],
-    context: &NativeHostContext<'_>,
-) -> Result<Option<i32>, String> {
-    let Some(invocation) =
-        find_plugin_with_prefixes(args, env::var_os("PATH").as_deref(), &NATIVE_PREFIXES)
-    else {
         return Ok(None);
     };
     run_invocation(invocation, context).map(Some)
@@ -113,7 +101,11 @@ fn find_plugin_with_prefixes(
     for len in (1..=command_len).rev() {
         let command_name = args[..len].join("-");
         for prefix in prefixes {
-            if let Some(executable) = find_executable(&format!("{prefix}{command_name}"), path) {
+            let executable_name = format!("{prefix}{command_name}");
+            if RESERVED_NATIVE_EXECUTABLES.contains(&executable_name.as_str()) {
+                continue;
+            }
+            if let Some(executable) = find_executable(&executable_name, path) {
                 return Some(PluginInvocation {
                     executable,
                     args: args[len..].to_vec(),
@@ -147,6 +139,9 @@ fn list_plugins(path: Option<&OsStr>) -> Vec<String> {
             let Some(file_name) = plugin_file_name(file_name) else {
                 continue;
             };
+            if RESERVED_NATIVE_EXECUTABLES.contains(&file_name) {
+                continue;
+            }
             for prefix in PREFIXES {
                 if let Some(name) = file_name.strip_prefix(prefix) {
                     if !name.is_empty() {
@@ -336,6 +331,19 @@ mod tests {
             Some(test_executable_name("soroban-hello").as_str())
         );
         assert_eq!(invocation.args, ["world"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn companion_tui_binary_is_not_a_plugin() {
+        let root = temporary_directory("companion-tui");
+        create_test_plugin(&root, "fresnica-anchor");
+        create_test_plugin(&root, "fresnica-tui");
+        let path = env::join_paths([&root]).unwrap();
+
+        assert_eq!(list_plugins(Some(&path)), vec!["anchor"]);
+        let args = ["tui"].map(str::to_owned);
+        assert!(find_plugin(&args, Some(&path)).is_none());
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -128,6 +128,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - run: cargo build --release --locked -p fresnica-anchor-plugin --bin fresnica-anchor
       - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
       - uses: actions/checkout@v4
         with:
@@ -259,6 +260,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-anchor-plugin --bin fresnica-anchor
           cargo build --release --locked -p fresnica-tui --bin fresnica-tui
       - name: Build Windows MSVC binaries
         if: matrix.cross_windows
@@ -270,6 +272,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo xwin build --release --locked --target "$TARGET" -p fresnica-cli --bin fresnica
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-anchor-plugin --bin fresnica-anchor
           cargo xwin build --release --locked --target "$TARGET" -p fresnica-tui --bin fresnica-tui
       - name: Package binaries
         shell: bash
@@ -277,6 +280,7 @@ jobs:
           set -euo pipefail
           mkdir -p package dist
           cp "${{ matrix.binary_dir }}/fresnica${{ matrix.extension }}" package/
+          cp "${{ matrix.binary_dir }}/fresnica-anchor${{ matrix.extension }}" package/
           cp "${{ matrix.binary_dir }}/fresnica-tui${{ matrix.extension }}" package/
           cp README.md package/README.md
           cp crates/cli/README.md package/CLI-README.md
@@ -305,6 +309,9 @@ jobs:
           & "package/fresnica.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "package/fresnica.exe" --help | Select-Object -First 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:Path = "$(Resolve-Path package);$env:Path"
+          & "package/fresnica.exe" plugin ls
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "package/fresnica-tui.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

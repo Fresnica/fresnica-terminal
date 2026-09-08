@@ -1,4 +1,3 @@
-mod anchor;
 mod anchor_auth;
 mod asset_discovery;
 mod contacts;
@@ -38,12 +37,12 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] dex orderbook SELLING BUYING [--json]
   fresnica [--home PATH] [--network mainnet|testnet] dex offers [--wallet NAME] [--limit N] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...
-  fresnica [--network mainnet|testnet] anchor discover CODE:GISSUER [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor auth CODE:GISSUER [--wallet NAME]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
+  fresnica [--network mainnet|testnet] anchor discover CODE:GISSUER --home-domain DOMAIN [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID --home-domain DOMAIN [--wallet NAME] [--protocol sep24|sep6] [--pay] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...
   fresnica plugin ls
 
@@ -66,7 +65,7 @@ Network commands:
   trust                         Add, change, or remove an issued-asset trustline
   dex                           Read and trade on the Stellar DEX
   contract                      Invoke deployed contracts through their on-chain interface
-  anchor                        Discover anchor capabilities and start SEP-24/SEP-6 transfers
+  anchor                        Native plugin for Anchor SEP flows; wallet authorization remains Fresnica-hosted
 
 Plugin commands:
   plugin ls                     List PATH-discovered Fresnica/Stellar CLI plugins
@@ -150,16 +149,11 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         horizon_url: global.horizon_url.as_deref(),
         rpc_url: global.rpc_url.as_deref(),
     };
-    if global.command[0] == "anchor" {
-        if let Some(exit_code) = plugin::dispatch_native(&global.command, &plugin_context)? {
-            process::exit(exit_code);
-        }
-    }
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
         "plugin" => plugin::command_plugin(&global.command[1..]),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
-        | "contract" | "anchor" | "__plugin-host" => run_network_command(&global),
+        | "contract" | "__plugin-host" => run_network_command(&global),
         other => match plugin::dispatch(&global.command, &plugin_context)? {
             Some(exit_code) => process::exit(exit_code),
             None => Err(format!("unknown command: {other}\n\n{HELP}")),
@@ -197,7 +191,6 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
         "trust" => trust::command_trust(&client, &global.command[1..]),
         "dex" => dex::command_dex(&client, &global.command[1..]),
         "contract" => contract::command_contract(&client, &global.command[1..]),
-        "anchor" => anchor::command_anchor(&client, &global.command[1..]),
         "__plugin-host" => plugin_host::command(&client, &global.network, &global.command[1..]),
         _ => unreachable!("network command was classified before dispatch"),
     }

@@ -30,6 +30,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - run: cargo build --release --locked -p fresnica-anchor-plugin --bin fresnica-anchor
       - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
 
   python-compatibility:

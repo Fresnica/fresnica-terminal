@@ -32,12 +32,12 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `dex fills [--wallet NAME] [--limit N] [--json]`
 - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
 - `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
-- `anchor discover CODE:GISSUER [--json]`
-- `anchor auth CODE:GISSUER [--wallet NAME]`
-- `anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
-- `anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
-- `anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]`
-- `anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]`
+- `anchor discover CODE:GISSUER --home-domain DOMAIN [--json]`
+- `anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]`
+- `anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]`
+- `anchor withdraw CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]`
+- `anchor status CODE:GISSUER ID --home-domain DOMAIN [--wallet NAME] [--protocol sep24|sep6] [--pay] [--json]`
+- `anchor customer CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]`
 - `wallet list`
 - `wallet use NAME`
 - `wallet create NAME`
@@ -185,7 +185,7 @@ Installed plugins supported by the current dispatcher can be inspected with:
 fresnica plugin ls
 ```
 
-Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. The experimental `fresnica-anchor` consumer now proves one bounded native host re-entry model: public wallet/network context plus an Anchor-specific SEP-10 authentication capability. Fresnica still owns authorization, software/Ledger signer selection and signature verification; the plugin receives only the resulting short-lived Anchor token, never a generic signing capability. See [`docs/anchor-plugin-spike.md`](../../docs/anchor-plugin-spike.md).
+Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. The `fresnica-anchor` consumer proves bounded semantic host re-entry: public wallet/network context, issued-asset receive preflight, Anchor-specific SEP-10 authentication, and an interactive-only withdrawal payment proposal. Fresnica owns receive validation, authorization, software/Ledger signer selection, transaction review and signature verification. The plugin receives only the resulting short-lived Anchor token and never gets generic signing authority. See [`docs/anchor-plugin-spike.md`](../../docs/anchor-plugin-spike.md).
 
 Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee here is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
 
@@ -208,12 +208,13 @@ Default failures stay concise and point to `-v` for additional context.
 
 ## Anchor protocol boundary
 
-The implemented CLI anchor surface covers capability discovery, SEP-10 authentication, SEP-24/SEP-6 transfer flows, transfer status/payment handoff, and SEP-12 customer status/update. Reusable protocol/HTTP/application semantics remain in `fresnica-client`; CLI owns terminal argument parsing, hidden input, rendering, confirmation, and local file selection.
+Anchor is no longer a CLI built-in. The bundled `fresnica-anchor` native plugin covers capability discovery, SEP-10 authentication, SEP-24/SEP-6 transfer flows, transfer status, interactive withdrawal payment handoff, and SEP-12 customer status/update. Reusable protocol/HTTP/application semantics remain in `fresnica-client`; the plugin owns Anchor command grammar/rendering while the Fresnica host owns wallet context, receive preflight, hidden input, review, signer selection and submission.
 
 ## Build
 
 ```sh
 cargo build --release -p fresnica-cli --bin fresnica
+cargo build --release -p fresnica-anchor-plugin --bin fresnica-anchor
 ```
 
 The executable is then:
