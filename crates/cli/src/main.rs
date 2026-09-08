@@ -11,6 +11,10 @@ mod plugin_host;
 mod read_commands;
 mod send;
 mod system_auth;
+#[cfg(target_os = "macos")]
+mod system_auth_macos;
+#[cfg(any(target_os = "macos", test))]
+mod system_auth_process;
 mod transaction_flow;
 mod trust;
 mod wallet;
@@ -94,6 +98,9 @@ Wallet commands:
   detach-ledger NAME                Remove Ledger provider metadata and keep the G address
   attach-secret NAME             Add matching S... signing material to watch-only wallet
   attach-mnemonic NAME [--index N] [--language LANGUAGE]
+  system-auth enable NAME         Enable one-shot OS authentication for routine software signing
+  system-auth disable NAME        Remove this device's System Auth enrollment
+  system-auth status NAME         Show this device's enrollment state without authenticating
   detach-signer NAME             Remove local signing material and keep the G address
   testnet-fund [--wallet NAME]   Fund a testnet wallet with Friendbot
   fund [--wallet NAME]           Alias for testnet-fund

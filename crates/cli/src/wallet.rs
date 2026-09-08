@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
 use zeroize::Zeroizing;
 
-use crate::{diagnostics, expand_path, friendbot, ledger, prompt_hidden, HELP};
+use crate::{diagnostics, expand_path, friendbot, ledger, prompt_hidden, system_auth, HELP};
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     let wallet_name = match arguments {
@@ -73,6 +73,7 @@ pub(crate) fn command_wallet(
         "attach-secret" if arguments.len() == 2 => wallet_attach_secret(storage, &arguments[1]),
         "attach-mnemonic" => wallet_attach_mnemonic(storage, &arguments[1..]),
         "detach-signer" if arguments.len() == 2 => wallet_detach_signer(storage, &arguments[1]),
+        "system-auth" => system_auth::command(storage, &arguments[1..]),
         "testnet-fund" | "fund" => friendbot::command_fund(storage, network, &arguments[1..]),
         "reveal" if arguments.len() <= 2 => {
             wallet_reveal(storage, arguments.get(1).map(String::as_str))

@@ -1,12 +1,17 @@
 use std::io::{self, IsTerminal};
 use std::sync::Arc;
 
-use fresnica_client::{system_auth_slot, FresnicaClient, SystemAuthSlot, SystemAuthUnlockProvider};
+use fresnica_client::{
+    prepare_system_auth_enrollment, system_auth_slot, verify_passcode, FresnicaClient,
+    SystemAuthRelease, SystemAuthSlot, SystemAuthUnlockProvider, WalletStorage,
+};
 
 pub(crate) trait SystemAuthBackend: Send + Sync {
     fn available(&self) -> bool;
     fn has(&self, slot: &SystemAuthSlot) -> Result<bool, String>;
-    fn release(&self, slot: &SystemAuthSlot) -> Result<Vec<u8>, String>;
+    fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
+    fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease;
+    fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
 
 struct UnavailableSystemAuthBackend;
@@ -20,19 +25,136 @@ impl SystemAuthBackend for UnavailableSystemAuthBackend {
         Ok(false)
     }
 
-    fn release(&self, _slot: &SystemAuthSlot) -> Result<Vec<u8>, String> {
-        Err("system authentication is unavailable on this client".to_owned())
+    fn enroll(&self, _slot: &SystemAuthSlot, _unlock_key: &[u8]) -> Result<(), String> {
+        Err("system authentication is unavailable on this platform".to_owned())
     }
+
+    fn release(&self, _slot: &SystemAuthSlot) -> SystemAuthRelease {
+        SystemAuthRelease::PassphraseRequired
+    }
+
+    fn delete(&self, _slot: &SystemAuthSlot) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn default_backend() -> Arc<dyn SystemAuthBackend> {
+    crate::system_auth_macos::backend()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_backend() -> Arc<dyn SystemAuthBackend> {
+    Arc::new(UnavailableSystemAuthBackend)
+}
+
+pub(crate) fn command(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
+    match arguments {
+        [command, name] if command == "enable" => enable(storage, name, default_backend()),
+        [command, name] if command == "disable" => disable(storage, name, default_backend()),
+        [command, name] if command == "status" => status(storage, name, default_backend()),
+        _ => Err("usage: fresnica wallet system-auth enable|disable|status NAME".to_owned()),
+    }
+}
+
+fn enable(
+    storage: &WalletStorage,
+    name: &str,
+    backend: Arc<dyn SystemAuthBackend>,
+) -> Result<(), String> {
+    if !backend.available() {
+        return Err("system authentication is unavailable on this platform".to_owned());
+    }
+    let record = storage.load(name)?;
+    let slot = system_auth_slot(&record)?;
+    if backend.has(&slot)? {
+        return Err(format!(
+            "system authentication is already enabled for wallet \"{}\"",
+            record.name
+        ));
+    }
+    let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
+    enable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
+    println!(
+        "System authentication enabled for wallet \"{}\" on this device.",
+        record.name
+    );
+    Ok(())
+}
+
+fn enable_with_passphrase(
+    record: &fresnica_client::WalletRecord,
+    backend: &dyn SystemAuthBackend,
+    passphrase: &str,
+) -> Result<(), String> {
+    let enrollment = prepare_system_auth_enrollment(record, passphrase)?;
+    backend.enroll(&enrollment.slot, enrollment.unlock_key())
+}
+
+fn disable(
+    storage: &WalletStorage,
+    name: &str,
+    backend: Arc<dyn SystemAuthBackend>,
+) -> Result<(), String> {
+    if !backend.available() {
+        return Err("system authentication is unavailable on this platform".to_owned());
+    }
+    let record = storage.load(name)?;
+    let slot = system_auth_slot(&record)?;
+    if !backend.has(&slot)? {
+        return Err(format!(
+            "system authentication is not enabled for wallet \"{}\"",
+            record.name
+        ));
+    }
+    let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
+    disable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
+    println!(
+        "System authentication disabled for wallet \"{}\" on this device.",
+        record.name
+    );
+    Ok(())
+}
+
+fn disable_with_passphrase(
+    record: &fresnica_client::WalletRecord,
+    backend: &dyn SystemAuthBackend,
+    passphrase: &str,
+) -> Result<(), String> {
+    verify_passcode(record, passphrase)?;
+    backend.delete(&system_auth_slot(record)?)
+}
+
+fn status(
+    storage: &WalletStorage,
+    name: &str,
+    backend: Arc<dyn SystemAuthBackend>,
+) -> Result<(), String> {
+    let record = storage.load(name)?;
+    if record.watch_only() || record.secret.is_none() {
+        println!("System authentication: not applicable (no software signer)");
+        return Ok(());
+    }
+    if !backend.available() {
+        println!("System authentication: unavailable on this platform");
+        return Ok(());
+    }
+    let slot = system_auth_slot(&record)?;
+    println!(
+        "System authentication: {}",
+        if backend.has(&slot)? {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    Ok(())
 }
 
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
-    providers_for_backend(
-        client,
-        Arc::new(UnavailableSystemAuthBackend),
-        io::stdin().is_terminal(),
-    )
+    providers_for_backend(client, default_backend(), io::stdin().is_terminal())
 }
 
 pub(crate) fn providers_for_backend(
@@ -59,7 +181,7 @@ pub(crate) fn providers_for_backend(
             &record.address,
             move |requested_slot| {
                 if requested_slot != &expected_slot {
-                    return Err(
+                    return SystemAuthRelease::Failed(
                         "system-auth enrollment is stale for the current signer envelope"
                             .to_owned(),
                     );
@@ -76,7 +198,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use fresnica_client::{prepare_system_auth_enrollment, wallet as wallet_ops, NetworkProfile};
+    use fresnica_client::{wallet as wallet_ops, NetworkProfile};
 
     use super::*;
 
@@ -89,7 +211,7 @@ mod tests {
     }
 
     impl FakeBackend {
-        fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) {
+        fn enroll_value(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) {
             self.values
                 .lock()
                 .unwrap()
@@ -106,13 +228,21 @@ mod tests {
             Ok(self.values.lock().unwrap().contains_key(&slot.storage_id()))
         }
 
-        fn release(&self, slot: &SystemAuthSlot) -> Result<Vec<u8>, String> {
-            self.values
-                .lock()
-                .unwrap()
-                .get(&slot.storage_id())
-                .cloned()
-                .ok_or_else(|| "not enrolled".to_owned())
+        fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String> {
+            self.enroll_value(slot, unlock_key);
+            Ok(())
+        }
+
+        fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
+            match self.values.lock().unwrap().get(&slot.storage_id()).cloned() {
+                Some(value) => SystemAuthRelease::UnlockKey(value),
+                None => SystemAuthRelease::PassphraseRequired,
+            }
+        }
+
+        fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String> {
+            self.values.lock().unwrap().remove(&slot.storage_id());
+            Ok(())
         }
     }
 
@@ -137,7 +267,7 @@ mod tests {
         client.storage().save(&record, false).unwrap();
         let enrollment = prepare_system_auth_enrollment(&record, PASSCODE).unwrap();
         let backend = Arc::new(FakeBackend::default());
-        backend.enroll(&enrollment.slot, enrollment.unlock_key());
+        backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
         let providers = providers_for_backend(&client, backend, true).unwrap();
         assert_eq!(providers.len(), 1);
@@ -153,11 +283,34 @@ mod tests {
         client.storage().save(&record, false).unwrap();
         let enrollment = prepare_system_auth_enrollment(&record, PASSCODE).unwrap();
         let backend = Arc::new(FakeBackend::default());
-        backend.enroll(&enrollment.slot, enrollment.unlock_key());
+        backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
         assert!(providers_for_backend(&client, backend, false)
             .unwrap()
             .is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn enrollment_and_removal_require_the_fresh_fresnica_passphrase() {
+        let (client, root) = client();
+        let record =
+            wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
+        client.storage().save(&record, false).unwrap();
+        let backend = Arc::new(FakeBackend::default());
+        let slot = system_auth_slot(&record).unwrap();
+
+        assert!(enable_with_passphrase(&record, backend.as_ref(), "wrong passphrase").is_err());
+        assert!(!backend.has(&slot).unwrap());
+
+        enable_with_passphrase(&record, backend.as_ref(), PASSCODE).unwrap();
+        assert!(backend.has(&slot).unwrap());
+
+        assert!(disable_with_passphrase(&record, backend.as_ref(), "wrong passphrase").is_err());
+        assert!(backend.has(&slot).unwrap());
+
+        disable_with_passphrase(&record, backend.as_ref(), PASSCODE).unwrap();
+        assert!(!backend.has(&slot).unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -168,7 +321,7 @@ mod tests {
             wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
         let enrollment = prepare_system_auth_enrollment(&record, PASSCODE).unwrap();
         let backend = Arc::new(FakeBackend::default());
-        backend.enroll(&enrollment.slot, enrollment.unlock_key());
+        backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
         let changed = wallet_ops::import_secret_record(
             "wallet",
             "testnet",

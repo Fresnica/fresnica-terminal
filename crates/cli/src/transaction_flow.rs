@@ -4,6 +4,7 @@ use fresnica_client::{
     AuthorizationScope, AuthorizationThreshold, ClassicOperationKind,
     ExternalEd25519SigningProvider, FresnicaClient, LedgerAuthorizationSnapshot,
     LedgerSignerAvailability, LedgerSignerKind, SystemAuthUnlockProvider,
+    LOCAL_SOFTWARE_PASSPHRASE_REQUIRED,
 };
 use zeroize::Zeroizing;
 
@@ -113,8 +114,18 @@ fn operation_kind_label(kind: ClassicOperationKind) -> &'static str {
     }
 }
 
-const LOCAL_PASSPHRASE_REQUIRED: &str =
-    "Fresnica passphrase is required for selected local software signers";
+pub fn with_software_signer_authorization<T>(
+    client: &FresnicaClient,
+    mut authorize: impl FnMut(Option<&str>, &[SystemAuthUnlockProvider]) -> Result<T, String>,
+) -> Result<T, String> {
+    let system_auth_providers = crate::system_auth::one_shot_providers(client)?;
+    submit_with_authorization_sources(
+        &system_auth_providers,
+        &[],
+        || crate::prompt_hidden("Fresnica passphrase: "),
+        |passphrase, system_auth, _| authorize(passphrase, system_auth),
+    )
+}
 
 pub fn submit_with_classic_signers<T>(
     client: &FresnicaClient,
@@ -145,7 +156,7 @@ fn submit_with_authorization_sources<T>(
     ) -> Result<T, String>,
 ) -> Result<T, String> {
     match submit(None, system_auth_providers, external_providers) {
-        Err(error) if error == LOCAL_PASSPHRASE_REQUIRED => {
+        Err(error) if error == LOCAL_SOFTWARE_PASSPHRASE_REQUIRED => {
             let passphrase = prompt_passphrase()?;
             // A fresh passphrase is the higher-authority fallback. Do not also
             // invoke device System Auth for other selected software signers.
@@ -174,7 +185,7 @@ pub fn confirm_submission() -> Result<bool, String> {
 mod tests {
     use super::*;
     use fresnica_client::{
-        AccountAuthorizationSnapshot, AuthorizationUse, LedgerSignerCondition,
+        AccountAuthorizationSnapshot, AuthorizationUse, LedgerSignerCondition, SystemAuthRelease,
         WeightedLedgerSignerSnapshot,
     };
 
@@ -182,7 +193,8 @@ mod tests {
 
     #[test]
     fn passphrase_fallback_drops_system_auth_providers() {
-        let system = SystemAuthUnlockProvider::new(SIGNER, |_| Ok(vec![0u8; 32])).unwrap();
+        let system =
+            SystemAuthUnlockProvider::new(SIGNER, |_| SystemAuthRelease::Cancelled).unwrap();
         let mut attempts = 0usize;
         let result = submit_with_authorization_sources(
             &[system],
@@ -194,7 +206,7 @@ mod tests {
                 if attempts == 1 {
                     assert!(passphrase.is_none());
                     assert_eq!(system_auth.len(), 1);
-                    Err(LOCAL_PASSPHRASE_REQUIRED.to_owned())
+                    Err(LOCAL_SOFTWARE_PASSPHRASE_REQUIRED.to_owned())
                 } else {
                     assert_eq!(passphrase, Some("correct horse battery staple"));
                     assert!(system_auth.is_empty());
@@ -209,7 +221,8 @@ mod tests {
 
     #[test]
     fn system_auth_failure_does_not_silently_downgrade_to_passphrase() {
-        let system = SystemAuthUnlockProvider::new(SIGNER, |_| Ok(vec![0u8; 32])).unwrap();
+        let system =
+            SystemAuthUnlockProvider::new(SIGNER, |_| SystemAuthRelease::Cancelled).unwrap();
         let error = submit_with_authorization_sources::<()>(
             &[system],
             &[],
