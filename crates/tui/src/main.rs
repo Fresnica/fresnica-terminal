@@ -14,10 +14,11 @@ use app::App;
 const HELP: &str = r#"Fresnica native Rust TUI
 
 Usage:
-  fresnica-tui [--home PATH] [--network mainnet|testnet] [--horizon-url URL] [--wallet NAME]
+  fresnica-tui [--home PATH] [--network mainnet|testnet] [--horizon-url URL] [--tx-timeout SECONDS] [--wallet NAME]
 
 Environment:
-  FRESNICA_HORIZON_URL   Default Horizon endpoint override; command-line flag wins
+  FRESNICA_HORIZON_URL          Default Horizon endpoint override; command-line flag wins
+  FRESNICA_TX_TIMEOUT_SECONDS   Default Classic transaction validity window; flag wins
 
 Keys:
   q / Esc     quit
@@ -58,7 +59,10 @@ fn run() -> Result<(), String> {
     if let Some(horizon_url) = horizon_url_override(options.horizon_url.as_deref()) {
         profile = profile.with_horizon_url(&horizon_url)?;
     }
-    let client = FresnicaClient::from_profile(&options.home, profile)?;
+    let mut client = FresnicaClient::from_profile(&options.home, profile)?;
+    if let Some(timeout_seconds) = tx_timeout_override(options.tx_timeout_seconds)? {
+        client = client.with_classic_transaction_timeout_seconds(timeout_seconds)?;
+    }
     let mut app = App::new(client, options.wallet.as_deref())?;
 
     ratatui::run(|terminal| -> std::io::Result<()> {
@@ -80,6 +84,7 @@ struct Options {
     home: PathBuf,
     network: String,
     horizon_url: Option<String>,
+    tx_timeout_seconds: Option<u64>,
     wallet: Option<String>,
 }
 
@@ -88,6 +93,7 @@ impl Options {
         let mut home = None;
         let mut network = "mainnet".to_owned();
         let mut horizon_url = None;
+        let mut tx_timeout_seconds = None;
         let mut wallet = None;
         let mut index = 0;
         while index < arguments.len() {
@@ -122,6 +128,14 @@ impl Options {
                     );
                     index += 1;
                 }
+                "--tx-timeout" => {
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| "--tx-timeout requires seconds".to_owned())?;
+                    tx_timeout_seconds = Some(parse_tx_timeout(value)?);
+                    index += 1;
+                }
                 "--wallet" => {
                     index += 1;
                     wallet = Some(
@@ -143,6 +157,7 @@ impl Options {
             home,
             network,
             horizon_url,
+            tx_timeout_seconds,
             wallet,
         })
     }
@@ -152,6 +167,26 @@ fn horizon_url_override(cli_value: Option<&str>) -> Option<String> {
     cli_value
         .map(str::to_owned)
         .or_else(|| env::var("FRESNICA_HORIZON_URL").ok())
+}
+
+fn parse_tx_timeout(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            "Classic transaction timeout must be a positive integer number of seconds".to_owned()
+        })
+}
+
+fn tx_timeout_override(cli_value: Option<u64>) -> Result<Option<u64>, String> {
+    match cli_value {
+        Some(value) => Ok(Some(value)),
+        None => env::var("FRESNICA_TX_TIMEOUT_SECONDS")
+            .ok()
+            .map(|value| parse_tx_timeout(&value))
+            .transpose(),
+    }
 }
 
 fn default_home() -> Result<PathBuf, String> {
@@ -197,6 +232,13 @@ mod tests {
     };
 
     #[test]
+    fn transaction_timeout_parser_rejects_non_numeric_values() {
+        assert_eq!(parse_tx_timeout("900").unwrap(), 900);
+        assert!(parse_tx_timeout("0").is_err());
+        assert!(parse_tx_timeout("five-minutes").is_err());
+    }
+
+    #[test]
     fn parses_network_and_wallet_options() {
         let options = Options::parse(&[
             "--home".to_owned(),
@@ -205,6 +247,8 @@ mod tests {
             "testnet".to_owned(),
             "--horizon-url".to_owned(),
             "https://stellar.example/horizon".to_owned(),
+            "--tx-timeout".to_owned(),
+            "900".to_owned(),
             "--wallet".to_owned(),
             "alpha".to_owned(),
         ])
@@ -215,6 +259,7 @@ mod tests {
             options.horizon_url.as_deref(),
             Some("https://stellar.example/horizon")
         );
+        assert_eq!(options.tx_timeout_seconds, Some(900));
         assert_eq!(options.wallet.as_deref(), Some("alpha"));
     }
 

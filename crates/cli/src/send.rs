@@ -137,6 +137,7 @@ fn render_review(review: &PaymentReview) {
     println!("Amount:    {} {}", review.amount, review.asset);
     println!("Fee:       {} XLM", review.fee_xlm);
     println!("Network:   {}", review.network);
+    println!("Lifetime:  {} seconds", review.transaction_timeout_seconds);
     if let Some(memo) = &review.memo {
         println!("Memo:      {} ({})", memo.value, memo.memo_type);
     }

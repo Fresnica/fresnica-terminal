@@ -463,6 +463,10 @@ impl App {
             Line::from(format!("Amount:    {} {}", review.amount, review.asset)),
             Line::from(format!("Fee:       {} XLM", review.fee_xlm)),
             Line::from(format!("Network:   {}", review.network)),
+            Line::from(format!(
+                "Lifetime:  {} seconds",
+                review.transaction_timeout_seconds
+            )),
         ];
         if let Some(memo) = &review.memo {
             lines.push(Line::from(format!(
@@ -500,19 +504,23 @@ impl App {
             Line::from(format!("Asset:     {}", review.asset)),
             Line::from(format!("Fee:       {} XLM", review.fee_xlm)),
             Line::from(format!("Network:   {}", review.network)),
+            Line::from(format!(
+                "Lifetime:  {} seconds",
+                review.transaction_timeout_seconds
+            )),
         ];
         if let Some(limit) = &review.limit {
             lines.insert(3, Line::from(format!("Limit:     {limit}")));
         }
         if let Some(authorization) = review.authorization {
             lines.insert(
-                lines.len().saturating_sub(2),
+                lines.len().saturating_sub(3),
                 Line::from(format!("Auth:      {}", authorization.label())),
             );
         }
         if let Some(clawback_enabled) = review.clawback_enabled {
             lines.insert(
-                lines.len().saturating_sub(2),
+                lines.len().saturating_sub(3),
                 Line::from(format!(
                     "Clawback:  {}",
                     if clawback_enabled {
@@ -597,6 +605,10 @@ impl App {
         }
         lines.push(Line::from(format!("Fee:       {} XLM", review.fee_xlm)));
         lines.push(Line::from(format!("Network:   {}", review.network)));
+        lines.push(Line::from(format!(
+            "Lifetime:  {} seconds",
+            review.transaction_timeout_seconds
+        )));
         lines.push(Line::from(""));
         lines.extend(
             authorization_review_lines(&review.ledger_authorization)

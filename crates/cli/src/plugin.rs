@@ -13,6 +13,7 @@ pub struct NativeHostContext<'a> {
     pub network: &'a str,
     pub horizon_url: Option<&'a str>,
     pub rpc_url: Option<&'a str>,
+    pub tx_timeout_seconds: Option<u64>,
 }
 
 pub fn command_plugin(args: &[String]) -> Result<(), String> {
@@ -66,6 +67,9 @@ fn run_invocation(
         }
         if let Some(url) = context.rpc_url {
             command.env("FRESNICA_RPC_URL", url);
+        }
+        if let Some(timeout_seconds) = context.tx_timeout_seconds {
+            command.env("FRESNICA_TX_TIMEOUT_SECONDS", timeout_seconds.to_string());
         }
     }
     let status = command.status().map_err(|error| {

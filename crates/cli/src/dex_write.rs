@@ -192,6 +192,7 @@ fn render_offer_review(review: &OfferReview) {
     }
     println!("Fee:       {} XLM", review.fee_xlm);
     println!("Network:   {}", review.network);
+    println!("Lifetime:  {} seconds", review.transaction_timeout_seconds);
     render_authorization_review(&review.ledger_authorization);
 }
 

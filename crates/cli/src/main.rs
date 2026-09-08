@@ -51,10 +51,12 @@ Global options:
   -vv                          Also show CLI version, network, and pinned Fresnica source
   --horizon-url URL            Override the Horizon endpoint for this invocation
   --rpc-url URL                Override the Stellar RPC endpoint for this invocation
+  --tx-timeout SECONDS         Override the Classic transaction validity window
 
 Environment:
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
   FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
+  FRESNICA_TX_TIMEOUT_SECONDS  Default Classic transaction validity window; CLI flag wins
 
 Network commands:
   account                       Show current ledger account state
@@ -148,6 +150,7 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         network: &global.network,
         horizon_url: global.horizon_url.as_deref(),
         rpc_url: global.rpc_url.as_deref(),
+        tx_timeout_seconds: global.tx_timeout_seconds,
     };
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
@@ -181,7 +184,10 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
     if let Some(rpc_url) = rpc_url_override(global.rpc_url.as_deref()) {
         profile = profile.with_rpc_url(&rpc_url)?;
     }
-    let client = FresnicaClient::from_profile(&global.home, profile)?;
+    let mut client = FresnicaClient::from_profile(&global.home, profile)?;
+    if let Some(timeout_seconds) = tx_timeout_override(global.tx_timeout_seconds)? {
+        client = client.with_classic_transaction_timeout_seconds(timeout_seconds)?;
+    }
     match global.command[0].as_str() {
         "account" => read_commands::command_account(&client, &global.command[1..]),
         "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
@@ -201,6 +207,7 @@ struct GlobalOptions {
     network: String,
     horizon_url: Option<String>,
     rpc_url: Option<String>,
+    tx_timeout_seconds: Option<u64>,
     verbosity: u8,
     command: Vec<String>,
 }
@@ -211,6 +218,7 @@ impl GlobalOptions {
         let mut network = "mainnet".to_owned();
         let mut horizon_url = None;
         let mut rpc_url = None;
+        let mut tx_timeout_seconds = None;
         let mut verbosity = 0u8;
         let mut index = 0;
         while index < arguments.len() {
@@ -260,6 +268,14 @@ impl GlobalOptions {
                     );
                     index += 1;
                 }
+                "--tx-timeout" => {
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| "--tx-timeout requires seconds".to_owned())?;
+                    tx_timeout_seconds = Some(parse_tx_timeout(value)?);
+                    index += 1;
+                }
                 _ => break,
             }
         }
@@ -272,6 +288,7 @@ impl GlobalOptions {
             network,
             horizon_url,
             rpc_url,
+            tx_timeout_seconds,
             verbosity,
             command: arguments[index..].to_vec(),
         })
@@ -288,6 +305,26 @@ fn rpc_url_override(cli_value: Option<&str>) -> Option<String> {
     cli_value
         .map(str::to_owned)
         .or_else(|| env::var("FRESNICA_RPC_URL").ok())
+}
+
+fn parse_tx_timeout(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            "Classic transaction timeout must be a positive integer number of seconds".to_owned()
+        })
+}
+
+fn tx_timeout_override(cli_value: Option<u64>) -> Result<Option<u64>, String> {
+    match cli_value {
+        Some(value) => Ok(Some(value)),
+        None => env::var("FRESNICA_TX_TIMEOUT_SECONDS")
+            .ok()
+            .map(|value| parse_tx_timeout(&value))
+            .transpose(),
+    }
 }
 
 fn command_stage(command: &[String]) -> &'static str {
@@ -355,6 +392,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transaction_timeout_parser_rejects_non_numeric_values() {
+        assert_eq!(parse_tx_timeout("900").unwrap(), 900);
+        assert!(parse_tx_timeout("0").is_err());
+        assert!(parse_tx_timeout("five-minutes").is_err());
+    }
+
+    #[test]
     fn parses_verbose_global_options() {
         let args = [
             "-v",
@@ -364,6 +408,8 @@ mod tests {
             "https://stellar.example/horizon",
             "--rpc-url",
             "https://stellar.example/rpc",
+            "--tx-timeout",
+            "900",
             "--verbose",
             "account",
         ]
@@ -379,6 +425,7 @@ mod tests {
             global.rpc_url.as_deref(),
             Some("https://stellar.example/rpc")
         );
+        assert_eq!(global.tx_timeout_seconds, Some(900));
         assert_eq!(global.command, ["account"]);
     }
 }

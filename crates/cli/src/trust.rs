@@ -60,6 +60,7 @@ fn render_review(review: &TrustlineReview) {
     }
     println!("Fee:       {} XLM", review.fee_xlm);
     println!("Network:   {}", review.network);
+    println!("Lifetime:  {} seconds", review.transaction_timeout_seconds);
     render_authorization_review(&review.ledger_authorization);
 }
 
