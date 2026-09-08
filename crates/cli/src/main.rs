@@ -6,6 +6,7 @@ mod dex;
 mod diagnostics;
 mod friendbot;
 mod ledger;
+mod plugin;
 mod read_commands;
 mod send;
 mod transaction_flow;
@@ -42,6 +43,7 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...
+  fresnica plugin ls
 
 Global options:
   -v, --verbose                Show safe execution stages and failure context
@@ -63,6 +65,9 @@ Network commands:
   dex                           Read and trade on the Stellar DEX
   contract                      Invoke deployed contracts through their on-chain interface
   anchor                        Discover anchor capabilities and start SEP-24/SEP-6 transfers
+
+Plugin commands:
+  plugin ls                     List PATH-discovered Stellar CLI plugins
 
 Contract invocation:
   Fresnica options come before `--`; the function and named arguments after `--`
@@ -139,9 +144,13 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     diagnostics::stage(command_stage(&global.command));
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
+        "plugin" => plugin::command_plugin(&global.command[1..]),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
         | "contract" | "anchor" => run_network_command(&global),
-        other => Err(format!("unknown command: {other}\n\n{HELP}")),
+        other => match plugin::dispatch(&global.command)? {
+            Some(exit_code) => process::exit(exit_code),
+            None => Err(format!("unknown command: {other}\n\n{HELP}")),
+        },
     }
 }
 
@@ -288,6 +297,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("contract") => "CLI command: contract",
         Some("anchor") => "CLI command: anchor",
         Some("wallet") => "CLI command: wallet",
+        Some("plugin") => "CLI command: plugin",
         _ => "CLI command dispatch",
     }
 }

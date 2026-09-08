@@ -55,6 +55,7 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `wallet backup NAME PATH`
 - `wallet restore PATH [--name NAME]`
 - `wallet delete NAME`
+- `plugin ls`
 
 It reads and writes the same wallet record files, `.default` pointer,
 `contacts.json`, and `fresnica-wallet-backup` version-1 format as the Python
@@ -168,6 +169,25 @@ fresnica --network testnet contract invoke C... --wallet main -- transfer --from
 The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. Dynamic help exposes official type examples where available.
 
 Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. Actual invocation first follows Stellar CLI's current default-send rule: if simulation contains no ledger write, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
+
+
+## Stellar CLI plugins
+
+Fresnica reuses the Stellar CLI executable-plugin convention instead of defining a second plugin ABI. When a command is not a built-in Fresnica command, Terminal searches `PATH` for the longest matching `stellar-<subcommand>` executable and then the legacy `soroban-<subcommand>` name. Remaining arguments are forwarded unchanged, the plugin inherits stdin/stdout/stderr, and Fresnica exits with the plugin's exit status.
+
+For example, an executable named `stellar-saint` on `PATH` makes `fresnica saint account G... --json` available without modifying Fresnica. Nested command names prefer the longest executable match, so `stellar-saint-account` wins when present before falling back to `stellar-saint`.
+
+Installed plugin names can be inspected with:
+
+```sh
+fresnica plugin ls
+```
+
+This is a command-extension boundary, not a signer-provider boundary. Fresnica does not hand a plugin decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, or an opened Ledger/HSM signer. A plugin that wants a transaction signed must use an explicit Fresnica command/API boundary that preserves Fresnica review and authorization; this first slice does not add such a bridge.
+
+Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee here is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
+
+Fresnica global options parsed before the plugin name are host options and are not rewritten into plugin arguments. Existing Stellar CLI plugins should keep using their own supported flags after the plugin command.
 
 ## Diagnostics
 
