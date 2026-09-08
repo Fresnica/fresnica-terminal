@@ -126,7 +126,7 @@ struct AnchorPaymentProposal {
     destination: String,
     memo: PaymentMemoWire,
     anchor: String,
-    transaction_id: String,
+    transaction_id: Option<String>,
     external: Option<String>,
     details: Option<String>,
     more_info: Option<String>,
@@ -176,7 +176,11 @@ fn command_anchor_payment(client: &FresnicaClient, arguments: &[String]) -> Resu
 
     println!("Anchor withdrawal payment handoff");
     println!("Anchor:   {}", proposal.anchor);
-    println!("Transfer: {}", proposal.transaction_id);
+    if let Some(transaction_id) = proposal.transaction_id.as_deref() {
+        println!("Transfer: {transaction_id}");
+    } else {
+        println!("Transfer: immediate SEP-6 response");
+    }
     if let Some(value) = proposal.external.as_deref() {
         println!("External: {value}");
     }
@@ -221,6 +225,25 @@ fn parse_wallet_only(arguments: &[String]) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anchor_payment_proposal_accepts_immediate_sep6_without_transaction_id() {
+        let proposal: AnchorPaymentProposal = serde_json::from_value(serde_json::json!({
+            "schema": "fresnica-plugin-anchor-payment-v1",
+            "wallet": "watch",
+            "asset": "XRP:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "amount": "5",
+            "destination": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "memo": {"type": "none"},
+            "anchor": "anchor.example",
+            "transaction_id": null,
+            "external": "rExample",
+            "details": null,
+            "more_info": null
+        }))
+        .unwrap();
+        assert!(proposal.transaction_id.is_none());
+    }
 
     #[test]
     fn anchor_payment_hash_memo_requires_exactly_32_bytes() {

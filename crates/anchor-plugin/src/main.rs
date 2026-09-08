@@ -6,11 +6,11 @@ use std::process::{self, Command, Stdio};
 
 use fresnica_client::{
     anchor_status_requires_sep10, anchor_transaction_text, anchor_transfer_requires_sep10,
-    anchor_withdrawal_payment_from_transaction, discover_anchor_at, fetch_anchor_transaction,
-    get_anchor_customer, put_anchor_customer, select_anchor_status_protocol,
-    select_anchor_transfer_protocol, start_anchor_sep24_transfer, start_anchor_sep6_transfer,
-    AnchorCustomerFile, AnchorCustomerQuery, AnchorCustomerSnapshot, AnchorCustomerUpdate,
-    AnchorProtocol, AnchorTransferKind, PaymentMemo,
+    anchor_withdrawal_payment_from_sep6_response, anchor_withdrawal_payment_from_transaction,
+    discover_anchor_at, fetch_anchor_transaction, get_anchor_customer, put_anchor_customer,
+    select_anchor_status_protocol, select_anchor_transfer_protocol, start_anchor_sep24_transfer,
+    start_anchor_sep6_transfer, AnchorCustomerFile, AnchorCustomerQuery, AnchorCustomerSnapshot,
+    AnchorCustomerUpdate, AnchorProtocol, AnchorTransferKind, PaymentMemo,
 };
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
@@ -163,6 +163,18 @@ fn command_transfer(args: &[String], kind: AnchorTransferKind) -> Result<(), Str
                 &options.fields,
                 token.as_ref().map(|value| value.as_str()),
             )?;
+            let immediate_payment = if kind == AnchorTransferKind::Withdraw
+                && anchor_transaction_text(&response, "account_id").is_some()
+            {
+                options
+                    .fields
+                    .get("amount")
+                    .map(|amount| anchor_withdrawal_payment_from_sep6_response(&response, amount))
+                    .transpose()?
+            } else {
+                None
+            };
+
             if options.json {
                 println!(
                     "{}",
@@ -195,6 +207,35 @@ fn command_transfer(args: &[String], kind: AnchorTransferKind) -> Result<(), Str
                         discovery.asset.display(),
                         discovery.home_domain
                     );
+                } else if kind == AnchorTransferKind::Withdraw
+                    && anchor_transaction_text(&response, "account_id").is_some()
+                {
+                    match immediate_payment {
+                        Some(payment) => {
+                            println!(
+                                "Payment: SEP-6 returned immediate Stellar payment instructions; Fresnica review follows."
+                            );
+                            host_anchor_payment(AnchorPaymentProposalWire {
+                                schema: "fresnica-plugin-anchor-payment-v1",
+                                wallet,
+                                asset: discovery.asset.display(),
+                                amount: payment.amount,
+                                destination: payment.destination,
+                                memo: payment_memo_wire(payment.memo),
+                                anchor: discovery.home_domain,
+                                transaction_id: None,
+                                external: options.fields.get("dest").cloned(),
+                                details: options.fields.get("dest_extra").cloned(),
+                                more_info: response
+                                    .get("extra_info")
+                                    .and_then(JsonValue::as_str)
+                                    .map(str::to_owned),
+                            })?;
+                        }
+                        None => println!(
+                            "Payment: immediate SEP-6 instructions returned; provide --field amount=... to continue with Fresnica review."
+                        ),
+                    }
                 }
             }
         }
@@ -896,7 +937,7 @@ fn command_status(args: &[String]) -> Result<(), String> {
         destination: payment.destination,
         memo: payment_memo_wire(payment.memo),
         anchor: discovery.home_domain,
-        transaction_id: options.transaction_id,
+        transaction_id: Some(options.transaction_id),
         external: anchor_transaction_text(&transaction, "to").map(str::to_owned),
         details: anchor_transaction_text(&transaction, "external_extra_text").map(str::to_owned),
         more_info: anchor_transaction_text(&transaction, "more_info_url").map(str::to_owned),
@@ -914,7 +955,7 @@ struct AnchorPaymentProposalWire {
     destination: String,
     memo: PaymentMemoWire,
     anchor: String,
-    transaction_id: String,
+    transaction_id: Option<String>,
     external: Option<String>,
     details: Option<String>,
     more_info: Option<String>,
