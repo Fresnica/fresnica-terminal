@@ -19,6 +19,20 @@ same process-oriented executable convention, but they serve different purposes.
 This dual namespace is an architectural decision. A milestone that implements
 only one path must not be documented as removing the other path.
 
+## Distribution naming convention
+
+Executable names are the discovery contract and do not constrain implementation
+language. When a plugin is distributed as a Python package, use:
+
+```text
+Fresnica-native:  package fresnica_<name>  -> executable fresnica-<name>
+Stellar current:  package stellar_<name>   -> executable stellar-<name>
+Stellar legacy:   package soroban_<name>   -> executable soroban-<name>
+```
+
+Other implementation languages should expose the same executable names rather
+than introducing a language-specific discovery mechanism.
+
 ## Command resolution
 
 Built-in Fresnica commands always win. For an unknown command, plugin resolution
