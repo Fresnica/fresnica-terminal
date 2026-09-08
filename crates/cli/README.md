@@ -64,6 +64,8 @@ otherwise `~/.fresnica`.
 
 The selected Stellar network and provider endpoints are separate runtime concerns. By default the shared `fresnica-client` profile uses Fresnica's mainnet/testnet Horizon endpoint; Testnet also has the shared Stellar RPC default while Mainnet contract invocation requires an explicit RPC endpoint until Fresnica intentionally adopts a stable default. Set `FRESNICA_HORIZON_URL` / `--horizon-url URL` for Horizon and `FRESNICA_RPC_URL` / `--rpc-url URL` for Stellar RPC; command-line values win. Provider overrides never change the selected Stellar network identity or signing passphrase.
 
+Classic transaction TimeBounds are a separate client policy. Payment, Trustline and SDEX writes default to a 300-second validity window so interactive software/Ledger signing has time to complete. Use global `--tx-timeout SECONDS` or `FRESNICA_TX_TIMEOUT_SECONDS` to override that window; the CLI value wins, zero is rejected, and the exact selected lifetime is shown in write review before signing. The same policy applies when a native plugin returns a host-owned Classic payment proposal, including Anchor withdrawal payment. It does not change Soroban transaction/auth TTLs or the independent 210-second uncertain-submission recovery window.
+
 Asset discovery preserves exact Stellar identity: `XLM` or `CODE:GISSUER` remains
 authoritative, while domain/name/organization/source are optional metadata only.
 `asset discover` refreshes the bounded mainnet catalog through the shared
@@ -92,7 +94,7 @@ signature application remain in `fresnica-client` / SDK / Core; Terminal reuses 
 `stellar-ledger` HID/APDU implementation only for device public-key lookup and clear-signing. A
 connected device is re-checked against the recorded public key before every signature. Mixed
 software + Ledger multisig preflights the Fresnica passphrase before any device signing request.
-Soroban authorization, SEP-10, SEP-53 and generic Dapp sessions are not part of this Ledger slice.
+Anchor SEP-10 now reuses the same provider-aware Classic signing coordination and can select a matching Ledger provider without exposing it to the plugin; physical Ledger SEP-10 remains an unverified acceptance item. Soroban authorization, SEP-53 and generic Dapp sessions are not part of this Ledger slice.
 
 Contacts are client-local public metadata. Contact names are resolved before
 payment construction, an explicit `--memo` takes precedence over a contact's
@@ -189,7 +191,7 @@ Plugins are command extensions, not signer providers. Fresnica does not hand the
 
 Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee here is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
 
-Fresnica global options parsed before the plugin name are host options and are not rewritten into plugin arguments. Existing Stellar CLI plugins should keep using their own supported flags after the plugin command.
+Fresnica global options parsed before the plugin name are host options and are not rewritten into plugin arguments. For Fresnica-native plugins only, an explicit Classic `--tx-timeout` is propagated as host policy so any later host-owned payment uses the same reviewed TimeBounds. Compatible `stellar-*` / `soroban-*` plugins do not receive that Fresnica-native policy injection. Existing Stellar CLI plugins should keep using their own supported flags after the plugin command.
 
 ## Diagnostics
 

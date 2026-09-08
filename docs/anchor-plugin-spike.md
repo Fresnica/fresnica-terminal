@@ -57,10 +57,12 @@ FRESNICA_PLUGIN_NETWORK=<selected network>
 FRESNICA_HOME=<selected Fresnica home>
 FRESNICA_HORIZON_URL=<explicit override, when present>
 FRESNICA_RPC_URL=<explicit override, when present>
+FRESNICA_TX_TIMEOUT_SECONDS=<explicit Classic host-policy override, when present>
 ```
 
 These values are not signer capabilities. `FRESNICA_PLUGIN_API=1` is a protocol
 marker, not a credential.
+`FRESNICA_TX_TIMEOUT_SECONDS` is likewise host policy, not plugin authority: it only ensures a later Fresnica-owned Classic payment proposal is rebuilt with the same reviewed TimeBounds. Compatible `stellar-*` / `soroban-*` plugins do not receive this explicit native-policy injection.
 
 The Anchor consumer currently proves four bounded host operations:
 

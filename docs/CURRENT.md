@@ -1,16 +1,18 @@
 # Fresnica Terminal Current State
 
-Status: **validated Draft stack remains unmerged/unreleased; Ledger Classic is accepted; the dual-namespace plugin runtime is validated; and Anchor has completed native-plugin parity with full Testnet deposit settlement evidence while Main/release remain untouched**.
+Status: **validated Draft stack remains unmerged/unreleased; Ledger Classic and native plugins are accepted; Anchor parity/legacy SEP-6 compatibility are validated; and Classic transaction lifetime is now configurable while Main/release remain untouched**.
 
 Last verified: 2026-09-08.
 
 ## Source of truth
 
 - Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
+- Current active Terminal development branch: `feat/terminal-classic-tx-timeout@cbab7acc87477d01459805f2ca6b058589b7495f`; tree `98a0bb648d1104ee643837a268e154f580c6680b`.
+- Current exact upstream pin: `Fresnica/fresnica@4eab2708481ed6a332232039281a6d155a64cfb0` on `feat/rust-client-classic-tx-timeout`; tree `2092f301a74addcd6a844aa3083a5b0e79bb7805`.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
-- Terminal Rust source pin: `Fresnica/fresnica@65a9da804ca16849e320d24365e6e839e62cf5d8`, the validated History implementation commit from upstream #167.
+- Historical #19 Terminal Rust source pin: `Fresnica/fresnica@65a9da804ca16849e320d24365e6e839e62cf5d8`, the validated History implementation commit from upstream #167.
 - Upstream #167 current head: `a63fc62a6289fc3b4696556eb436c9a0147feb96`. Its only change after the Terminal pin is the carried-forward `docs/capabilities/network.md` Rust-runtime scope correction; Rust source is unchanged.
 - Upstream cumulative integration candidate: Draft PR #169, head `f01f6607bcd1cbf5e28de800ce215187bf23091f`, one commit directly on upstream `main`, with a tree byte-identical to #167 current top.
 - Upstream Soroban capability Draft PR #171: `670f39dc6833af350059d5ad0280a3651dacf66d`; Required CI #102 / run `34074383876` passed after replacing the Fresnica-owned ABI value parser with official `soroban-spec-tools`.
@@ -31,6 +33,15 @@ Active Anchor native-plugin checkpoint:
 - Live fchain.io compatibility proves the legacy/programmatic SEP-6 branch: deposit returns XRPL address + mandatory Destination Tag; withdrawal returns immediate Stellar `account_id + hash memo` without a transaction id; Fresnica now maps that immediate response into the same interactive host payment review when the user supplied an explicit amount. `/transaction(s)` currently return 404, so fchain remains a legacy SEP-6 subset rather than a current full transaction-lifecycle implementation.
 - SEP-59 is recorded as a complementary inbound reusable-account model, not a replacement for SEP-6 withdrawals and not a reason to reject historical reusable-address behavior.
 - This milestone has no product PR, Main merge, GitHub CI run or release workflow invocation. Local deterministic validation is the gate.
+
+Active Classic transaction-lifetime checkpoint:
+
+- Terminal branch `feat/terminal-classic-tx-timeout`; product `cbab7acc87477d01459805f2ca6b058589b7495f`; upstream `feat/rust-client-classic-tx-timeout@4eab2708481ed6a332232039281a6d155a64cfb0`.
+- The 300-second Classic TimeBounds default introduced for interactive signing remains unchanged, but `FresnicaClient` now owns an explicit per-client override. Payment, Trustline and SDEX builders consume it; public/default builders and Soroban keep the 300-second default.
+- CLI/TUI expose `--tx-timeout SECONDS` and `FRESNICA_TX_TIMEOUT_SECONDS`; zero is rejected. Payment/Trustline/SDEX reviews show the exact lifetime before signing.
+- Native `fresnica-*` dispatch propagates an explicit CLI timeout as Fresnica host policy; compatible `stellar-*` / `soroban-*` dispatch does not receive that injection. Anchor host-owned withdrawal payments therefore use the same Classic lifetime without giving the plugin signing authority.
+- `PENDING_TTL_SECONDS=210` remains a separate uncertain-submission reconciliation window and is not changed by this option. Soroban transaction/auth/resource lifetimes are outside this slice.
+- Local validation: upstream rust-client 190/190; Terminal boundary/fmt/workspace Clippy `-D warnings` PASS; 7 Anchor plugin + 45 CLI + 2 CLI contract + 3 presentation + 21 TUI tests PASS; native/compatible subprocess policy-isolation smoke PASS. No PR, Main merge, GitHub CI or release workflow was triggered.
 
 ## Plugin architecture correction — 2026-09-08
 

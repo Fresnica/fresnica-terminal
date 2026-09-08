@@ -77,6 +77,8 @@ These operations justify the architecture direction, not a generic host RPC. The
 current env/JSON wire is still experimental; see
 [`docs/anchor-plugin-spike.md`](anchor-plugin-spike.md).
 
+Host-owned transaction policy may also cross the native process boundary without becoming plugin authority. For example, an explicit Classic transaction timeout can be propagated to a `fresnica-*` child so a later host-owned payment proposal uses the same reviewed TimeBounds. This policy injection is native-only; it is not added to compatible `stellar-*` / `soroban-*` children and does not grant direct signing.
+
 A plugin that needs an on-chain write must propose intent/material back to Fresnica.
 It does not get to choose Fresnica's signer or bypass confirmation. In particular,
 `fresnica-anchor status --pay` rejects `-y`/`--yes`; the host performs the normal
