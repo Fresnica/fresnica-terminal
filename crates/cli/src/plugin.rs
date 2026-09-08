@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const PREFIXES: [&str; 3] = ["fresnica-", "stellar-", "soroban-"];
+const NATIVE_PREFIXES: [&str; 1] = ["fresnica-"];
+
+pub struct NativeHostContext<'a> {
+    pub home: &'a Path,
+    pub network: &'a str,
+    pub horizon_url: Option<&'a str>,
+    pub rpc_url: Option<&'a str>,
+}
 
 pub fn command_plugin(args: &[String]) -> Result<(), String> {
     match args {
@@ -31,31 +39,72 @@ pub fn command_plugin(args: &[String]) -> Result<(), String> {
     }
 }
 
-pub fn dispatch(args: &[String]) -> Result<Option<i32>, String> {
+pub fn dispatch(args: &[String], context: &NativeHostContext<'_>) -> Result<Option<i32>, String> {
     let Some(invocation) = find_plugin(args, env::var_os("PATH").as_deref()) else {
         return Ok(None);
     };
+    run_invocation(invocation, context).map(Some)
+}
 
-    let status = Command::new(&invocation.executable)
-        .args(&invocation.args)
-        .status()
-        .map_err(|error| {
-            format!(
-                "unable to run external CLI plugin {}: {error}",
-                invocation.executable.display()
-            )
+pub fn dispatch_native(
+    args: &[String],
+    context: &NativeHostContext<'_>,
+) -> Result<Option<i32>, String> {
+    let Some(invocation) =
+        find_plugin_with_prefixes(args, env::var_os("PATH").as_deref(), &NATIVE_PREFIXES)
+    else {
+        return Ok(None);
+    };
+    run_invocation(invocation, context).map(Some)
+}
+
+fn run_invocation(
+    invocation: PluginInvocation,
+    context: &NativeHostContext<'_>,
+) -> Result<i32, String> {
+    let mut command = Command::new(&invocation.executable);
+    command.args(&invocation.args);
+    if invocation.native {
+        let host = env::current_exe().map_err(|error| {
+            format!("unable to locate Fresnica plugin host executable: {error}")
         })?;
-
-    Ok(Some(status.code().unwrap_or(1)))
+        command
+            .env("FRESNICA_PLUGIN_API", "1")
+            .env("FRESNICA_PLUGIN_HOST", host)
+            .env("FRESNICA_PLUGIN_NETWORK", context.network)
+            .env("FRESNICA_HOME", context.home);
+        if let Some(url) = context.horizon_url {
+            command.env("FRESNICA_HORIZON_URL", url);
+        }
+        if let Some(url) = context.rpc_url {
+            command.env("FRESNICA_RPC_URL", url);
+        }
+    }
+    let status = command.status().map_err(|error| {
+        format!(
+            "unable to run external CLI plugin {}: {error}",
+            invocation.executable.display()
+        )
+    })?;
+    Ok(status.code().unwrap_or(1))
 }
 
 #[derive(Debug, PartialEq, Eq)]
 struct PluginInvocation {
     executable: PathBuf,
     args: Vec<String>,
+    native: bool,
 }
 
 fn find_plugin(args: &[String], path: Option<&OsStr>) -> Option<PluginInvocation> {
+    find_plugin_with_prefixes(args, path, &PREFIXES)
+}
+
+fn find_plugin_with_prefixes(
+    args: &[String],
+    path: Option<&OsStr>,
+    prefixes: &[&str],
+) -> Option<PluginInvocation> {
     let command_len = args
         .iter()
         .take_while(|argument| !argument.starts_with("--"))
@@ -63,11 +112,12 @@ fn find_plugin(args: &[String], path: Option<&OsStr>) -> Option<PluginInvocation
 
     for len in (1..=command_len).rev() {
         let command_name = args[..len].join("-");
-        for prefix in PREFIXES {
+        for prefix in prefixes {
             if let Some(executable) = find_executable(&format!("{prefix}{command_name}"), path) {
                 return Some(PluginInvocation {
                     executable,
                     args: args[len..].to_vec(),
+                    native: *prefix == "fresnica-",
                 });
             }
         }

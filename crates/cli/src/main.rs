@@ -1,4 +1,5 @@
 mod anchor;
+mod anchor_auth;
 mod asset_discovery;
 mod contacts;
 mod contract;
@@ -7,6 +8,7 @@ mod diagnostics;
 mod friendbot;
 mod ledger;
 mod plugin;
+mod plugin_host;
 mod read_commands;
 mod send;
 mod transaction_flow;
@@ -142,12 +144,23 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     }
 
     diagnostics::stage(command_stage(&global.command));
+    let plugin_context = plugin::NativeHostContext {
+        home: &global.home,
+        network: &global.network,
+        horizon_url: global.horizon_url.as_deref(),
+        rpc_url: global.rpc_url.as_deref(),
+    };
+    if global.command[0] == "anchor" {
+        if let Some(exit_code) = plugin::dispatch_native(&global.command, &plugin_context)? {
+            process::exit(exit_code);
+        }
+    }
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
         "plugin" => plugin::command_plugin(&global.command[1..]),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
-        | "contract" | "anchor" => run_network_command(&global),
-        other => match plugin::dispatch(&global.command)? {
+        | "contract" | "anchor" | "__plugin-host" => run_network_command(&global),
+        other => match plugin::dispatch(&global.command, &plugin_context)? {
             Some(exit_code) => process::exit(exit_code),
             None => Err(format!("unknown command: {other}\n\n{HELP}")),
         },
@@ -185,6 +198,7 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
         "dex" => dex::command_dex(&client, &global.command[1..]),
         "contract" => contract::command_contract(&client, &global.command[1..]),
         "anchor" => anchor::command_anchor(&client, &global.command[1..]),
+        "__plugin-host" => plugin_host::command(&client, &global.network, &global.command[1..]),
         _ => unreachable!("network command was classified before dispatch"),
     }
 }

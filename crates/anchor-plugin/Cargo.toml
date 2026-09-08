@@ -1,0 +1,17 @@
+[package]
+name = "fresnica-anchor-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Fresnica-native Anchor protocol plugin"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "fresnica-anchor"
+path = "src/main.rs"
+
+[dependencies]
+fresnica-client.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "=1.9.0"
