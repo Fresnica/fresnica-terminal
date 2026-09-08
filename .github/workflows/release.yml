@@ -13,6 +13,8 @@ on:
       - "Cargo.lock"
       - "FRESNICA_REV"
       - "crates/**"
+      - "scripts/*macos-system-auth*.sh"
+      - "scripts/macos-system-auth-development/**"
 
 permissions:
   contents: write

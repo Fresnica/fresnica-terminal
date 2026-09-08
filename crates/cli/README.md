@@ -95,6 +95,8 @@ System Auth is an optional device-local convenience for an exact protected softw
 
 macOS uses a reserved first-party companion provider located beside `fresnica`, not a PATH plugin. The provider owns Data Protection Keychain / LocalAuthentication and receives only an exact slot id plus the verified 32-byte `WalletUnlockKey` over private pipes. Production packaging requires an Apple-signed app-like wrapper with the required provisioning profile; the source/compile gate is present but an unsigned helper is intentionally not shipped as if it were functional. Linux external System Auth providers remain future explicitly trusted providers, never ordinary `fresnica-*` plugins.
 
+For physical macOS development acceptance, `scripts/install-macos-system-auth-development.sh UPSTREAM_DIR DESTINATION_DIR` prepares the app-like Xcode target from the exact pinned upstream Apple sources, uses the local Apple Development identity with Xcode automatic provisioning, verifies the embedded macOS provisioning profile and keychain access-group entitlement, and installs `FresnicaSystemAuth.app` beside the selected `fresnica` binary. Development signing is intentionally separate from later Developer ID distribution/notarization.
+
 Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
 Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
 signature application remain in `fresnica-client` / SDK / Core; Terminal reuses SDF's
