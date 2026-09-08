@@ -1,18 +1,17 @@
 [package]
-name = "fresnica-tui"
+name = "fresnica-anchor-plugin"
 version = "0.3.0"
 edition = "2021"
-description = "Native terminal UI reference client for Fresnica"
+description = "Fresnica-native Anchor protocol plugin"
 license = "MIT"
 publish = false
 
 [[bin]]
-name = "fresnica-tui"
+name = "fresnica-anchor"
 path = "src/main.rs"
 
 [dependencies]
 fresnica-client.workspace = true
-fresnica-terminal-presentation = { path = "../presentation" }
-ratatui = "=0.30.2"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zeroize = "=1.9.0"

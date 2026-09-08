@@ -6,7 +6,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use fresnica_client::FresnicaClient;
+use fresnica_client::{FresnicaClient, NetworkProfile};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
 use app::App;
@@ -14,7 +14,11 @@ use app::App;
 const HELP: &str = r#"Fresnica native Rust TUI
 
 Usage:
-  fresnica-tui [--home PATH] [--network mainnet|testnet] [--wallet NAME]
+  fresnica-tui [--home PATH] [--network mainnet|testnet] [--horizon-url URL] [--tx-timeout SECONDS] [--wallet NAME]
+
+Environment:
+  FRESNICA_HORIZON_URL          Default Horizon endpoint override; command-line flag wins
+  FRESNICA_TX_TIMEOUT_SECONDS   Default Classic transaction validity window; flag wins
 
 Keys:
   q / Esc     quit
@@ -51,7 +55,14 @@ fn run() -> Result<(), String> {
     }
 
     let options = Options::parse(&arguments)?;
-    let client = FresnicaClient::new(&options.home, &options.network)?;
+    let mut profile = NetworkProfile::for_network(&options.network)?;
+    if let Some(horizon_url) = horizon_url_override(options.horizon_url.as_deref()) {
+        profile = profile.with_horizon_url(&horizon_url)?;
+    }
+    let mut client = FresnicaClient::from_profile(&options.home, profile)?;
+    if let Some(timeout_seconds) = tx_timeout_override(options.tx_timeout_seconds)? {
+        client = client.with_classic_transaction_timeout_seconds(timeout_seconds)?;
+    }
     let mut app = App::new(client, options.wallet.as_deref())?;
 
     ratatui::run(|terminal| -> std::io::Result<()> {
@@ -72,6 +83,8 @@ fn run() -> Result<(), String> {
 struct Options {
     home: PathBuf,
     network: String,
+    horizon_url: Option<String>,
+    tx_timeout_seconds: Option<u64>,
     wallet: Option<String>,
 }
 
@@ -79,6 +92,8 @@ impl Options {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut home = None;
         let mut network = "mainnet".to_owned();
+        let mut horizon_url = None;
+        let mut tx_timeout_seconds = None;
         let mut wallet = None;
         let mut index = 0;
         while index < arguments.len() {
@@ -103,6 +118,24 @@ impl Options {
                     }
                     index += 1;
                 }
+                "--horizon-url" => {
+                    index += 1;
+                    horizon_url = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| "--horizon-url requires a URL".to_owned())?
+                            .to_owned(),
+                    );
+                    index += 1;
+                }
+                "--tx-timeout" => {
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| "--tx-timeout requires seconds".to_owned())?;
+                    tx_timeout_seconds = Some(parse_tx_timeout(value)?);
+                    index += 1;
+                }
                 "--wallet" => {
                     index += 1;
                     wallet = Some(
@@ -123,8 +156,36 @@ impl Options {
         Ok(Self {
             home,
             network,
+            horizon_url,
+            tx_timeout_seconds,
             wallet,
         })
+    }
+}
+
+fn horizon_url_override(cli_value: Option<&str>) -> Option<String> {
+    cli_value
+        .map(str::to_owned)
+        .or_else(|| env::var("FRESNICA_HORIZON_URL").ok())
+}
+
+fn parse_tx_timeout(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            "Classic transaction timeout must be a positive integer number of seconds".to_owned()
+        })
+}
+
+fn tx_timeout_override(cli_value: Option<u64>) -> Result<Option<u64>, String> {
+    match cli_value {
+        Some(value) => Ok(Some(value)),
+        None => env::var("FRESNICA_TX_TIMEOUT_SECONDS")
+            .ok()
+            .map(|value| parse_tx_timeout(&value))
+            .transpose(),
     }
 }
 
@@ -171,18 +232,34 @@ mod tests {
     };
 
     #[test]
+    fn transaction_timeout_parser_rejects_non_numeric_values() {
+        assert_eq!(parse_tx_timeout("900").unwrap(), 900);
+        assert!(parse_tx_timeout("0").is_err());
+        assert!(parse_tx_timeout("five-minutes").is_err());
+    }
+
+    #[test]
     fn parses_network_and_wallet_options() {
         let options = Options::parse(&[
             "--home".to_owned(),
             "/tmp/fresnica".to_owned(),
             "--network".to_owned(),
             "testnet".to_owned(),
+            "--horizon-url".to_owned(),
+            "https://stellar.example/horizon".to_owned(),
+            "--tx-timeout".to_owned(),
+            "900".to_owned(),
             "--wallet".to_owned(),
             "alpha".to_owned(),
         ])
         .unwrap();
         assert_eq!(options.home, PathBuf::from("/tmp/fresnica"));
         assert_eq!(options.network, "testnet");
+        assert_eq!(
+            options.horizon_url.as_deref(),
+            Some("https://stellar.example/horizon")
+        );
+        assert_eq!(options.tx_timeout_seconds, Some(900));
         assert_eq!(options.wallet.as_deref(), Some("alpha"));
     }
 

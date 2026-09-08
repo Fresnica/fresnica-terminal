@@ -7,8 +7,8 @@ native reference client without a process/FFI transport.
 ## Current scope
 
 The native client currently covers local wallet lifecycle and contacts, testnet
-Friendbot funding, read-only Horizon queries, cache-first asset discovery, reviewed payments, issued-asset
-trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anchor flows:
+Friendbot funding, read-only ledger queries, cache-first asset discovery, reviewed payments, issued-asset
+trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-driven Soroban invocation, and Stellar anchor flows:
 
 - `info [--wallet NAME]`
 - `account [--wallet NAME] [--json]`
@@ -31,18 +31,22 @@ trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anc
 - `dex trades BASE COUNTER [--limit N] [--json]`
 - `dex fills [--wallet NAME] [--limit N] [--json]`
 - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
-- `anchor discover CODE:GISSUER [--json]`
-- `anchor auth CODE:GISSUER [--wallet NAME]`
-- `anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
-- `anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]`
-- `anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]`
-- `anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]`
+- `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
+- `anchor discover CODE:GISSUER --home-domain DOMAIN [--json]`
+- `anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]`
+- `anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]`
+- `anchor withdraw CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]`
+- `anchor status CODE:GISSUER ID --home-domain DOMAIN [--wallet NAME] [--protocol sep24|sep6] [--pay] [--json]`
+- `anchor customer CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]`
 - `wallet list`
 - `wallet use NAME`
 - `wallet create NAME`
 - `wallet import-secret NAME`
 - `wallet import-mnemonic NAME`
 - `wallet import-watch NAME G...`
+- `wallet import-ledger NAME [--hd-path N]`
+- `wallet attach-ledger NAME [--hd-path N]`
+- `wallet detach-ledger NAME`
 - `wallet attach-secret NAME`
 - `wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]`
 - `wallet detach-signer NAME`
@@ -51,11 +55,16 @@ trustline lifecycle, Classic SDEX read/write/history operations, and Stellar anc
 - `wallet backup NAME PATH`
 - `wallet restore PATH [--name NAME]`
 - `wallet delete NAME`
+- `plugin ls`
 
 It reads and writes the same wallet record files, `.default` pointer,
 `contacts.json`, and `fresnica-wallet-backup` version-1 format as the Python
 reference client. The default application home is `FRESNICA_HOME` when set,
 otherwise `~/.fresnica`.
+
+The selected Stellar network and provider endpoints are separate runtime concerns. By default the shared `fresnica-client` profile uses Fresnica's mainnet/testnet Horizon endpoint; Testnet also has the shared Stellar RPC default while Mainnet contract invocation requires an explicit RPC endpoint until Fresnica intentionally adopts a stable default. Set `FRESNICA_HORIZON_URL` / `--horizon-url URL` for Horizon and `FRESNICA_RPC_URL` / `--rpc-url URL` for Stellar RPC; command-line values win. Provider overrides never change the selected Stellar network identity or signing passphrase.
+
+Classic transaction TimeBounds are a separate client policy. Payment, Trustline and SDEX writes default to a 300-second validity window so interactive software/Ledger signing has time to complete. Use global `--tx-timeout SECONDS` or `FRESNICA_TX_TIMEOUT_SECONDS` to override that window; the CLI value wins, zero is rejected, and the exact selected lifetime is shown in write review before signing. The same policy applies when a native plugin returns a host-owned Classic payment proposal, including Anchor withdrawal payment. It does not change Soroban transaction/auth TTLs or the independent 210-second uncertain-submission recovery window.
 
 Asset discovery preserves exact Stellar identity: `XLM` or `CODE:GISSUER` remains
 authoritative, while domain/name/organization/source are optional metadata only.
@@ -71,11 +80,21 @@ Secret, mnemonic, BIP39-passphrase, and Fresnica-passphrase prompts are read fro
 the controlling terminal with input hidden; they are not accepted as command-line
 arguments.
 
-A watch-only Classic account can later attach a secret or mnemonic signer without
-changing wallet identity. The CLI passes the existing G address as the SDK
-`expected_signer_public_key`; mismatched material is rejected before the wallet
-record changes. `wallet detach-signer` removes only local protected signing
-material after passphrase verification and keeps the same account as watch-only.
+A watch-only Classic account can later attach a secret, mnemonic, or Ledger signer without
+changing wallet identity. Software signer attachment passes the existing G address as the SDK
+`expected_signer_public_key`; mismatched material is rejected before the wallet record changes.
+`wallet import-ledger` / `attach-ledger` read the public key from the connected Stellar Ledger
+app at `m/44'/148'/N'` (default `N=0`) and persist only public provider metadata in the existing
+wallet record. `wallet detach-ledger` removes only that metadata. `wallet detach-signer` removes
+only local protected software signing material after passphrase verification.
+
+Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
+Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
+signature application remain in `fresnica-client` / SDK / Core; Terminal reuses SDF's
+`stellar-ledger` HID/APDU implementation only for device public-key lookup and clear-signing. A
+connected device is re-checked against the recorded public key before every signature. Mixed
+software + Ledger multisig preflights the Fresnica passphrase before any device signing request.
+Anchor SEP-10 now reuses the same provider-aware Classic signing coordination and can select a matching Ledger provider without exposing it to the plugin; physical Ledger SEP-10 remains an unverified acceptance item. Soroban authorization, SEP-53 and generic Dapp sessions are not part of this Ledger slice.
 
 Contacts are client-local public metadata. Contact names are resolved before
 payment construction, an explicit `--memo` takes precedence over a contact's
@@ -86,10 +105,10 @@ Friendbot is a testnet-only client utility. It funds the selected testnet addres
 directly through `friendbot.stellar.org` with a 15-second request timeout and does
 not require signing material, so watch-only testnet wallets are valid targets.
 
-Account state, balances, recent operations, SDEX reads, transaction preparation
-and Horizon submission are client responsibilities. Reusable Rust application
-semantics live in `fresnica-client`, which talks to the matching public or testnet
-Horizon server; none of that HTTP or product policy is moved into `fresnica-core`.
+Account state, balances, recent operations, SDEX reads, transaction preparation,
+and provider submission are client responsibilities. Reusable Rust application
+semantics live in `fresnica-client`, which consumes the resolved network profile and
+Horizon/RPC endpoints; none of that HTTP/RPC or product policy is moved into `fresnica-core`.
 
 Reviewed write commands present operation-specific review and ask for
 confirmation before requesting the Fresnica passphrase. Payment preparation, its
@@ -138,6 +157,40 @@ activity, remain separate segments. The native client deliberately does not add 
 second chain-data cache implementation in this slice; the asset catalog is a
 small public-metadata cache owned by the shared Asset Discovery capability.
 
+## Contract invocation
+
+`contract invoke` follows Stellar CLI's fully-typed contract model: the deployed on-chain contract specification is the source of truth for functions, parameter names, types, and documentation. Fresnica options stay before `--`; the function and contract-specific named arguments follow it.
+
+```sh
+fresnica --network testnet contract invoke C... -- --help
+fresnica --network testnet contract invoke C... -- transfer --help
+fresnica --network testnet contract invoke C... --json -- balance --id G...
+fresnica --network testnet contract invoke C... --wallet main -- transfer --from G... --to C... --amount 10000000
+```
+
+The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. Dynamic help exposes official type examples where available.
+
+Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. Actual invocation first follows Stellar CLI's current default-send rule: if simulation contains no ledger write, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
+
+
+## External CLI plugins
+
+Fresnica uses the executable-dispatch idea proven by Stellar CLI, but the product namespace is intentionally Fresnica-only. Unknown commands resolve by longest command chain to `fresnica-<command-chain>` executables on PATH. `stellar-*` and legacy `soroban-*` executables are not auto-dispatched: they use a different developer-tool identity/config model and would create a misleading wallet-context expectation under the `fresnica` command.
+
+For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` is a reserved companion binary, not a plugin.
+
+Installed Fresnica plugins can be inspected with:
+
+```sh
+fresnica plugin ls
+```
+
+Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. The bundled `fresnica-anchor` consumer proves bounded semantic host re-entry: public wallet/network context, issued-asset receive preflight, Anchor-specific SEP-10 authentication, and an interactive-only withdrawal payment proposal. Fresnica owns receive validation, authorization, software/Ledger signer selection, transaction review and signature verification. The plugin receives only bounded semantic results such as the short-lived Anchor token and never gets generic signing authority. See [`docs/anchor-plugin-spike.md`](../../docs/anchor-plugin-spike.md).
+
+Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
+
+Fresnica global options parsed before the plugin name remain host policy. Selected public network/provider context and explicitly supported policy such as Classic transaction lifetime may be supplied to `fresnica-*`; plugin-specific arguments remain after the plugin command.
+
 ## Diagnostics
 
 `-v` / `--verbose` prints safe execution stages and reports the last stage reached on failure.
@@ -155,12 +208,13 @@ Default failures stay concise and point to `-v` for additional context.
 
 ## Anchor protocol boundary
 
-The implemented CLI anchor surface covers capability discovery, SEP-10 authentication, SEP-24/SEP-6 transfer flows, transfer status/payment handoff, and SEP-12 customer status/update. Reusable protocol/HTTP/application semantics remain in `fresnica-client`; CLI owns terminal argument parsing, hidden input, rendering, confirmation, and local file selection.
+Anchor is no longer a CLI built-in. The bundled `fresnica-anchor` native plugin covers capability discovery, SEP-10 authentication, SEP-24/SEP-6 transfer flows, transfer status, interactive withdrawal payment handoff, and SEP-12 customer status/update. Reusable protocol/HTTP/application semantics remain in `fresnica-client`; the plugin owns Anchor command grammar/rendering while the Fresnica host owns wallet context, receive preflight, hidden input, review, signer selection and submission.
 
 ## Build
 
 ```sh
 cargo build --release -p fresnica-cli --bin fresnica
+cargo build --release -p fresnica-anchor-plugin --bin fresnica-anchor
 ```
 
 The executable is then:
@@ -174,6 +228,7 @@ For example:
 ```sh
 target/release/fresnica wallet list
 target/release/fresnica --network testnet wallet testnet-fund
+target/release/fresnica --horizon-url https://stellar.example/horizon balance
 target/release/fresnica account
 target/release/fresnica balance
 target/release/fresnica history --limit 20
@@ -186,15 +241,18 @@ target/release/fresnica dex buy XRP:G... XLM 100 0.325 --allow-trustline
 target/release/fresnica dex trades XRP:G... XLM --limit 20
 target/release/fresnica dex fills
 target/release/fresnica dex candles XRP:G... XLM --resolution 1h
+target/release/fresnica --network testnet contract invoke C... -- --help
 ```
 
-A wallet record is bound to its configured Stellar network. Network commands
-fail before contacting Horizon if the invocation network does not match the
+A wallet record is bound to its configured Stellar network. Wallet-backed network commands
+fail before contacting the required provider if the invocation network does not match the
 wallet record; use `--network testnet` for a testnet wallet.
 
 ## Deliberate non-goals of this slice
 
 General chain-data caching and a product recommendation/ranking engine remain outside the CLI command surface.
+
+Read-only contract calls are simulation-only and expose the decoded return value. File-backed contract-input convenience flags remain outside this slice; values continue to use the official Contract Spec parser rather than a second Fresnica ABI syntax.
 
 The native client does not expose a raw `sign-xdr` shortcut. Routine transaction
 signing stays behind client-side construction and review rather than creating a

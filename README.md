@@ -3,9 +3,10 @@
 Fresnica Terminal is the native terminal product repository for Fresnica. It contains both terminal surfaces:
 
 - `fresnica` — command-line interface for scripting and direct wallet operations;
-- `fresnica-tui` — interactive terminal UI.
+- `fresnica-tui` — interactive terminal UI;
+- `fresnica-anchor` — Fresnica-native Anchor plugin discovered by `fresnica` through PATH.
 
-The two surfaces intentionally live together because they share the same Rust Application Capability layer, wallet storage semantics, release toolchain and compatibility contract.
+These terminal products intentionally live together because they share the same Rust Application Capability layer, wallet storage semantics, release toolchain and compatibility contract.
 
 ## Architecture boundary
 
@@ -21,12 +22,13 @@ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependenc
 
 This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
 
-Terminal v0.1.0 pins `b1d0427ec5c5398c3bb2e01b886e4e3084e46a73`, the source commit that published Native SDK v0.3.0 (Native Binding API 3 / Universal SDK API 5 / Core Client API 5). Terminal consumes the Rust `fresnica-client` / `fresnica-sdk` boundary directly; it does not consume Native/UniFFI artifacts.
+Terminal v0.3.0 pins `be12ee185002cc41ac874fa3f969e19d99eaf63c`, the integrated Fresnica Rust capability source. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); the v0.3.0 Terminal work changes the reusable Rust client/reference layer, not the published Native/UniFFI ABI. Terminal consumes `fresnica-client` / `fresnica-sdk` directly.
 
 ## Layout
 
 ```text
 crates/cli/       fresnica command-line product
+crates/anchor-plugin/  native Anchor plugin
 crates/tui/       fresnica-tui interactive product
 scripts/          repository-boundary validation
 FRESNICA_REV      pinned shared Fresnica source revision
@@ -34,9 +36,9 @@ FRESNICA_REV      pinned shared Fresnica source revision
 
 ## Releases
 
-Fresnica Terminal v0.1.0 is the first independent preview release line after extraction from the shared repository. A single release contains both terminal products: `fresnica` and `fresnica-tui`.
+Fresnica Terminal v0.3.0 is the current preview release line. A single release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`.
 
-Release publication is marker-gated by `releases/terminal-v0.1.0.json`. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
+Release publication is marker-gated by `releases/terminal-v0.3.0.json`. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
 
 The CLI supports safe `-v` / `-vv` diagnostics. Verbose output exposes execution stages and version/network metadata, never the raw argument vector or hidden secret input.
 
@@ -46,6 +48,7 @@ The CLI supports safe `-v` / `-vv` diagnostics. Verbose output exposes execution
 bash scripts/validate-boundary.sh
 cargo test --workspace --all-targets
 cargo build --release -p fresnica-cli --bin fresnica
+cargo build --release -p fresnica-anchor-plugin --bin fresnica-anchor
 cargo build --release -p fresnica-tui --bin fresnica-tui
 ```
 
@@ -53,6 +56,7 @@ Run the products:
 
 ```bash
 target/release/fresnica --help
+PATH="$PWD/target/release:$PATH" target/release/fresnica plugin ls
 target/release/fresnica-tui --network testnet
 ```
 

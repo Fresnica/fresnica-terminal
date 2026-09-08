@@ -1,0 +1,10 @@
+[package]
+name = "fresnica-terminal-presentation"
+version = "0.3.0"
+edition = "2021"
+description = "Shared presentation helpers for Fresnica terminal clients"
+license = "MIT"
+publish = false
+
+[dependencies]
+fresnica-client.workspace = true

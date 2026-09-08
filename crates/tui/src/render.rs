@@ -1,13 +1,14 @@
 use fresnica_client::{
-    balance_asset_label, operation_summary, OfferReviewDetails, PreparedOffer, PreparedPayment,
+    AuthorizationScope, AuthorizationThreshold, ClassicOperationKind, LedgerAuthorizationSnapshot,
+    LedgerSignerAvailability, LedgerSignerKind, OfferReviewDetails, PreparedOffer, PreparedPayment,
     PreparedTrustline,
 };
+use fresnica_terminal_presentation::history_operation_summary;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table};
 use ratatui::Frame;
-use serde_json::Value;
 
 use super::app::{App, AssetPickerState};
 use super::state::{
@@ -95,14 +96,10 @@ impl App {
             .style(Style::new().add_modifier(Modifier::BOLD));
         let rows = self.balances.iter().map(|balance| {
             Row::new([
-                balance_asset_label(balance),
-                text(balance, "balance").unwrap_or("0").to_owned(),
-                text(balance, "selling_liabilities")
-                    .unwrap_or("0")
-                    .to_owned(),
-                text(balance, "buying_liabilities")
-                    .unwrap_or("0")
-                    .to_owned(),
+                balance.asset.identity(),
+                balance.balance.clone(),
+                balance.selling_liabilities.clone(),
+                balance.buying_liabilities.clone(),
             ])
         });
         let table = Table::new(
@@ -156,11 +153,11 @@ impl App {
             self.operations
                 .iter()
                 .map(|operation| {
-                    let created_at = text(operation, "created_at").unwrap_or("?");
-                    let operation_type = text(operation, "type").unwrap_or("unknown");
+                    let created_at = operation.created_at.as_deref().unwrap_or("?");
                     ListItem::new(Line::from(format!(
-                        "{created_at}  {operation_type}  {}",
-                        operation_summary(operation, address)
+                        "{created_at}  {}  {}",
+                        operation.operation_type(),
+                        history_operation_summary(operation, address)
                     )))
                 })
                 .collect()
@@ -466,6 +463,10 @@ impl App {
             Line::from(format!("Amount:    {} {}", review.amount, review.asset)),
             Line::from(format!("Fee:       {} XLM", review.fee_xlm)),
             Line::from(format!("Network:   {}", review.network)),
+            Line::from(format!(
+                "Lifetime:  {} seconds",
+                review.transaction_timeout_seconds
+            )),
         ];
         if let Some(memo) = &review.memo {
             lines.push(Line::from(format!(
@@ -473,6 +474,12 @@ impl App {
                 memo.value, memo.memo_type
             )));
         }
+        lines.push(Line::from(""));
+        lines.extend(
+            authorization_review_lines(&review.ledger_authorization)
+                .into_iter()
+                .map(Line::from),
+        );
         lines.push(Line::from(""));
         lines.push(Line::from("Press y/Enter to continue to signing."));
         let area = popup_area(frame.area());
@@ -497,19 +504,23 @@ impl App {
             Line::from(format!("Asset:     {}", review.asset)),
             Line::from(format!("Fee:       {} XLM", review.fee_xlm)),
             Line::from(format!("Network:   {}", review.network)),
+            Line::from(format!(
+                "Lifetime:  {} seconds",
+                review.transaction_timeout_seconds
+            )),
         ];
         if let Some(limit) = &review.limit {
             lines.insert(3, Line::from(format!("Limit:     {limit}")));
         }
         if let Some(authorization) = review.authorization {
             lines.insert(
-                lines.len().saturating_sub(2),
+                lines.len().saturating_sub(3),
                 Line::from(format!("Auth:      {}", authorization.label())),
             );
         }
         if let Some(clawback_enabled) = review.clawback_enabled {
             lines.insert(
-                lines.len().saturating_sub(2),
+                lines.len().saturating_sub(3),
                 Line::from(format!(
                     "Clawback:  {}",
                     if clawback_enabled {
@@ -520,6 +531,12 @@ impl App {
                 )),
             );
         }
+        lines.push(Line::from(""));
+        lines.extend(
+            authorization_review_lines(&review.ledger_authorization)
+                .into_iter()
+                .map(Line::from),
+        );
         lines.push(Line::from(""));
         lines.push(Line::from("Press y/Enter to continue to signing."));
         let area = popup_area(frame.area());
@@ -588,6 +605,16 @@ impl App {
         }
         lines.push(Line::from(format!("Fee:       {} XLM", review.fee_xlm)));
         lines.push(Line::from(format!("Network:   {}", review.network)));
+        lines.push(Line::from(format!(
+            "Lifetime:  {} seconds",
+            review.transaction_timeout_seconds
+        )));
+        lines.push(Line::from(""));
+        lines.extend(
+            authorization_review_lines(&review.ledger_authorization)
+                .into_iter()
+                .map(Line::from),
+        );
         lines.push(Line::from(""));
         lines.push(Line::from("Press y/Enter to continue to signing."));
         let area = popup_area(frame.area());
@@ -671,6 +698,114 @@ pub(super) fn compact_asset(value: &str) -> String {
     format!("{code}:{}...{}", &issuer[..6], &issuer[issuer.len() - 4..])
 }
 
+fn authorization_review_lines(snapshot: &LedgerAuthorizationSnapshot) -> Vec<String> {
+    let mut lines = vec![format!("Authorization: {}", authorization_status(snapshot))];
+    for account in &snapshot.accounts {
+        lines.push(format!(
+            "  {}: req {} · sat {} · local {} · rem {}",
+            compact_authorization_key(&account.account_id),
+            account.required_weight,
+            account.satisfied_weight,
+            account.local_available_weight,
+            account.remaining_weight
+        ));
+        for usage in &account.uses {
+            lines.push(format!(
+                "    {}: {} {}",
+                scope_label(&usage.scope),
+                threshold_label(usage.threshold),
+                usage.required_weight
+            ));
+        }
+        for signer in &account.signers {
+            lines.push(format!(
+                "    {} {} {} (w{})",
+                availability_label(signer.availability),
+                signer_kind_label(&signer.condition.kind),
+                compact_authorization_key(&signer.condition.key),
+                signer.weight
+            ));
+        }
+    }
+    for signer in &snapshot.extra_signers {
+        lines.push(format!(
+            "  extra: {} {} {}",
+            availability_label(signer.availability),
+            signer_kind_label(&signer.condition.kind),
+            compact_authorization_key(&signer.condition.key)
+        ));
+    }
+    lines.push(format!(
+        "Prepared tx: {}",
+        compact_authorization_key(&snapshot.transaction_hash)
+    ));
+    lines
+}
+
+fn authorization_status(snapshot: &LedgerAuthorizationSnapshot) -> &'static str {
+    if snapshot.satisfied {
+        "already satisfied"
+    } else if snapshot.locally_satisfiable {
+        "local signing ready"
+    } else {
+        "external authorization required"
+    }
+}
+
+fn availability_label(availability: LedgerSignerAvailability) -> &'static str {
+    match availability {
+        LedgerSignerAvailability::Satisfied => "satisfied",
+        LedgerSignerAvailability::LocalEd25519 => "local",
+        LedgerSignerAvailability::UnavailableLocally => "external",
+    }
+}
+
+fn signer_kind_label(kind: &LedgerSignerKind) -> &'static str {
+    match kind {
+        LedgerSignerKind::Ed25519PublicKey => "Ed25519",
+        LedgerSignerKind::PreauthorizedTransaction => "preauth-tx",
+        LedgerSignerKind::HashX => "Hash-X",
+        LedgerSignerKind::Ed25519SignedPayload => "signed-payload",
+    }
+}
+
+fn threshold_label(threshold: AuthorizationThreshold) -> &'static str {
+    match threshold {
+        AuthorizationThreshold::Low => "low",
+        AuthorizationThreshold::Medium => "medium",
+        AuthorizationThreshold::High => "high",
+    }
+}
+
+fn scope_label(scope: &AuthorizationScope) -> String {
+    match scope {
+        AuthorizationScope::TransactionSource => "source".to_owned(),
+        AuthorizationScope::Operation { index, kind } => {
+            format!("op {} {}", index + 1, operation_kind_label(*kind))
+        }
+    }
+}
+
+fn operation_kind_label(kind: ClassicOperationKind) -> &'static str {
+    match kind {
+        ClassicOperationKind::CreateAccount => "CreateAccount",
+        ClassicOperationKind::Payment => "Payment",
+        ClassicOperationKind::ManageSellOffer => "ManageSellOffer",
+        ClassicOperationKind::ManageBuyOffer => "ManageBuyOffer",
+        ClassicOperationKind::ChangeTrust => "ChangeTrust",
+        ClassicOperationKind::ManageData => "ManageData",
+        ClassicOperationKind::InvokeHostFunction => "InvokeHostFunction",
+        ClassicOperationKind::BumpSequence => "BumpSequence",
+    }
+}
+
+fn compact_authorization_key(value: &str) -> String {
+    if value.len() <= 22 {
+        return value.to_owned();
+    }
+    format!("{}...{}", &value[..10], &value[value.len() - 6..])
+}
+
 fn popup_area(area: Rect) -> Rect {
     let [_, vertical, _] = Layout::vertical([
         Constraint::Percentage(14),
@@ -687,6 +822,64 @@ fn popup_area(area: Rect) -> Rect {
     popup
 }
 
-fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fresnica_client::{
+        AccountAuthorizationSnapshot, AuthorizationUse, LedgerSignerCondition,
+        WeightedLedgerSignerSnapshot,
+    };
+
+    #[test]
+    fn authorization_review_compacts_keys_without_reinterpreting_weights() {
+        let account_id = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+        let signer_key = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBI4";
+        let snapshot = LedgerAuthorizationSnapshot {
+            transaction_hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_owned(),
+            accounts: vec![AccountAuthorizationSnapshot {
+                account_id: account_id.to_owned(),
+                required_weight: 2,
+                satisfied_weight: 0,
+                local_available_weight: 1,
+                remaining_weight: 1,
+                uses: vec![AuthorizationUse {
+                    scope: AuthorizationScope::Operation {
+                        index: 0,
+                        kind: ClassicOperationKind::ChangeTrust,
+                    },
+                    threshold: AuthorizationThreshold::Medium,
+                    required_weight: 2,
+                }],
+                signers: vec![WeightedLedgerSignerSnapshot {
+                    condition: LedgerSignerCondition {
+                        kind: LedgerSignerKind::Ed25519PublicKey,
+                        key: signer_key.to_owned(),
+                    },
+                    weight: 1,
+                    availability: LedgerSignerAvailability::LocalEd25519,
+                }],
+            }],
+            extra_signers: Vec::new(),
+            satisfied: false,
+            locally_satisfiable: false,
+        };
+
+        let lines = authorization_review_lines(&snapshot);
+
+        assert_eq!(lines[0], "Authorization: external authorization required");
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("req 2 · sat 0 · local 1 · rem 1")));
+        assert!(lines
+            .iter()
+            .any(|line| line == "    op 1 ChangeTrust: medium 2"));
+        assert!(lines.iter().any(|line| {
+            line == &format!(
+                "    local Ed25519 {} (w1)",
+                compact_authorization_key(signer_key)
+            )
+        }));
+        assert_eq!(compact_authorization_key(account_id), "GAAAAAAAAA...AAAWHF");
+    }
 }

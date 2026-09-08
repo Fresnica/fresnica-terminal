@@ -1,9 +1,13 @@
-mod anchor;
+mod anchor_auth;
 mod asset_discovery;
 mod contacts;
+mod contract;
 mod dex;
 mod diagnostics;
 mod friendbot;
+mod ledger;
+mod plugin;
+mod plugin_host;
 mod read_commands;
 mod send;
 mod transaction_flow;
@@ -14,7 +18,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use fresnica_client::FresnicaClient;
+use fresnica_client::{FresnicaClient, NetworkProfile, WalletStorage};
 use zeroize::Zeroizing;
 
 const HELP: &str = r#"Fresnica native Rust CLI
@@ -32,27 +36,45 @@ Usage:
   fresnica [--home PATH] [--network mainnet|testnet] trust remove CODE:GISSUER [--wallet NAME] [-y]
   fresnica [--home PATH] [--network mainnet|testnet] dex orderbook SELLING BUYING [--json]
   fresnica [--home PATH] [--network mainnet|testnet] dex offers [--wallet NAME] [--limit N] [--json]
-  fresnica [--network mainnet|testnet] anchor discover CODE:GISSUER [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor auth CODE:GISSUER [--wallet NAME]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER [--wallet NAME] [--field NAME=VALUE]... [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID [--wallet NAME] [--protocol sep24|sep6] [--pay] [-y] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...
+  fresnica [--network mainnet|testnet] anchor discover CODE:GISSUER --home-domain DOMAIN [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID --home-domain DOMAIN [--wallet NAME] [--protocol sep24|sep6] [--pay] [--json]
+  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
   fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...
+  fresnica plugin ls
 
 Global options:
   -v, --verbose                Show safe execution stages and failure context
   -vv                          Also show CLI version, network, and pinned Fresnica source
+  --horizon-url URL            Override the Horizon endpoint for this invocation
+  --rpc-url URL                Override the Stellar RPC endpoint for this invocation
+  --tx-timeout SECONDS         Override the Classic transaction validity window
+
+Environment:
+  FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
+  FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
+  FRESNICA_TX_TIMEOUT_SECONDS  Default Classic transaction validity window; CLI flag wins
 
 Network commands:
-  account                       Show current Horizon account state
+  account                       Show current ledger account state
   balance                       Show current account balances and liabilities
-  history                       Show newest Horizon operations (default 20, max 200)
+  history                       Show newest account operations (default 20, max 200)
   asset                         Discover exact issued-asset identities and optional metadata
   send                          Review, sign through Fresnica SDK/Core, and submit a payment
   trust                         Add, change, or remove an issued-asset trustline
   dex                           Read and trade on the Stellar DEX
-  anchor                        Discover anchor capabilities and start SEP-24/SEP-6 transfers
+  contract                      Invoke deployed contracts through their on-chain interface
+  anchor                        Native plugin for Anchor SEP flows; wallet authorization remains Fresnica-hosted
+
+Plugin commands:
+  plugin ls                     List PATH-discovered Fresnica plugins
+
+Contract invocation:
+  Fresnica options come before `--`; the function and named arguments after `--`
+  are resolved from the deployed contract specification.
 
 Contact commands:
   list
@@ -66,6 +88,9 @@ Wallet commands:
   import-secret NAME
   import-mnemonic NAME [--index N] [--language LANGUAGE]
   import-watch NAME G...
+  import-ledger NAME [--hd-path N]  Import connected Ledger account as watch-only signer
+  attach-ledger NAME [--hd-path N]  Bind connected Ledger signer to matching watch-only G address
+  detach-ledger NAME                Remove Ledger provider metadata and keep the G address
   attach-secret NAME             Add matching S... signing material to watch-only wallet
   attach-mnemonic NAME [--index N] [--language LANGUAGE]
   detach-signer NAME             Remove local signing material and keep the G address
@@ -119,29 +144,70 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         return Ok(());
     }
 
-    diagnostics::stage("initialize Fresnica client");
-    let client = FresnicaClient::new(&global.home, &global.network)?;
-    let storage = client.storage();
     diagnostics::stage(command_stage(&global.command));
+    let plugin_context = plugin::NativeHostContext {
+        home: &global.home,
+        network: &global.network,
+        horizon_url: global.horizon_url.as_deref(),
+        rpc_url: global.rpc_url.as_deref(),
+        tx_timeout_seconds: global.tx_timeout_seconds,
+    };
     match global.command[0].as_str() {
-        "info" => wallet::command_info(storage, &global.command[1..]),
+        "info" | "contact" | "wallet" => run_local_command(&global),
+        "plugin" => plugin::command_plugin(&global.command[1..]),
+        "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
+        | "contract" | "__plugin-host" => run_network_command(&global),
+        other => match plugin::dispatch(&global.command, &plugin_context)? {
+            Some(exit_code) => process::exit(exit_code),
+            None => Err(format!("unknown command: {other}\n\n{HELP}")),
+        },
+    }
+}
+
+fn run_local_command(global: &GlobalOptions) -> Result<(), String> {
+    diagnostics::stage("initialize local wallet storage");
+    let storage = WalletStorage::new(&global.home)?;
+    match global.command[0].as_str() {
+        "info" => wallet::command_info(&storage, &global.command[1..]),
+        "contact" => contacts::command_contact(&storage, &global.command[1..]),
+        "wallet" => wallet::command_wallet(&storage, &global.network, &global.command[1..]),
+        _ => unreachable!("local command was classified before dispatch"),
+    }
+}
+
+fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
+    diagnostics::stage("initialize Fresnica network client");
+    let mut profile = NetworkProfile::for_network(&global.network)?;
+    if let Some(horizon_url) = horizon_url_override(global.horizon_url.as_deref()) {
+        profile = profile.with_horizon_url(&horizon_url)?;
+    }
+    if let Some(rpc_url) = rpc_url_override(global.rpc_url.as_deref()) {
+        profile = profile.with_rpc_url(&rpc_url)?;
+    }
+    let mut client = FresnicaClient::from_profile(&global.home, profile)?;
+    if let Some(timeout_seconds) = tx_timeout_override(global.tx_timeout_seconds)? {
+        client = client.with_classic_transaction_timeout_seconds(timeout_seconds)?;
+    }
+    match global.command[0].as_str() {
         "account" => read_commands::command_account(&client, &global.command[1..]),
         "balance" | "assets" => read_commands::command_balance(&client, &global.command[1..]),
         "history" => read_commands::command_history(&client, &global.command[1..]),
         "asset" => asset_discovery::command_asset(&client, &global.command[1..]),
         "send" => send::command_send(&client, &global.command[1..]),
-        "contact" => contacts::command_contact(storage, &global.command[1..]),
         "trust" => trust::command_trust(&client, &global.command[1..]),
         "dex" => dex::command_dex(&client, &global.command[1..]),
-        "anchor" => anchor::command_anchor(&client, &global.command[1..]),
-        "wallet" => wallet::command_wallet(storage, &global.network, &global.command[1..]),
-        other => Err(format!("unknown command: {other}\n\n{HELP}")),
+        "contract" => contract::command_contract(&client, &global.command[1..]),
+        "__plugin-host" => plugin_host::command(&client, &global.network, &global.command[1..]),
+        _ => unreachable!("network command was classified before dispatch"),
     }
 }
 
 struct GlobalOptions {
     home: PathBuf,
     network: String,
+    horizon_url: Option<String>,
+    rpc_url: Option<String>,
+    tx_timeout_seconds: Option<u64>,
     verbosity: u8,
     command: Vec<String>,
 }
@@ -150,6 +216,9 @@ impl GlobalOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
         let mut home = None;
         let mut network = "mainnet".to_owned();
+        let mut horizon_url = None;
+        let mut rpc_url = None;
+        let mut tx_timeout_seconds = None;
         let mut verbosity = 0u8;
         let mut index = 0;
         while index < arguments.len() {
@@ -179,6 +248,34 @@ impl GlobalOptions {
                     validate_network(&network)?;
                     index += 1;
                 }
+                "--horizon-url" => {
+                    index += 1;
+                    horizon_url = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| "--horizon-url requires a URL".to_owned())?
+                            .to_owned(),
+                    );
+                    index += 1;
+                }
+                "--rpc-url" => {
+                    index += 1;
+                    rpc_url = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| "--rpc-url requires a URL".to_owned())?
+                            .to_owned(),
+                    );
+                    index += 1;
+                }
+                "--tx-timeout" => {
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| "--tx-timeout requires seconds".to_owned())?;
+                    tx_timeout_seconds = Some(parse_tx_timeout(value)?);
+                    index += 1;
+                }
                 _ => break,
             }
         }
@@ -189,9 +286,44 @@ impl GlobalOptions {
         Ok(Self {
             home,
             network,
+            horizon_url,
+            rpc_url,
+            tx_timeout_seconds,
             verbosity,
             command: arguments[index..].to_vec(),
         })
+    }
+}
+
+fn horizon_url_override(cli_value: Option<&str>) -> Option<String> {
+    cli_value
+        .map(str::to_owned)
+        .or_else(|| env::var("FRESNICA_HORIZON_URL").ok())
+}
+
+fn rpc_url_override(cli_value: Option<&str>) -> Option<String> {
+    cli_value
+        .map(str::to_owned)
+        .or_else(|| env::var("FRESNICA_RPC_URL").ok())
+}
+
+fn parse_tx_timeout(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            "Classic transaction timeout must be a positive integer number of seconds".to_owned()
+        })
+}
+
+fn tx_timeout_override(cli_value: Option<u64>) -> Result<Option<u64>, String> {
+    match cli_value {
+        Some(value) => Ok(Some(value)),
+        None => env::var("FRESNICA_TX_TIMEOUT_SECONDS")
+            .ok()
+            .map(|value| parse_tx_timeout(&value))
+            .transpose(),
     }
 }
 
@@ -206,8 +338,10 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("contact") => "CLI command: contact",
         Some("trust") => "CLI command: trust",
         Some("dex") => "CLI command: dex",
+        Some("contract") => "CLI command: contract",
         Some("anchor") => "CLI command: anchor",
         Some("wallet") => "CLI command: wallet",
+        Some("plugin") => "CLI command: plugin",
         _ => "CLI command dispatch",
     }
 }
@@ -258,11 +392,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transaction_timeout_parser_rejects_non_numeric_values() {
+        assert_eq!(parse_tx_timeout("900").unwrap(), 900);
+        assert!(parse_tx_timeout("0").is_err());
+        assert!(parse_tx_timeout("five-minutes").is_err());
+    }
+
+    #[test]
     fn parses_verbose_global_options() {
-        let args = ["-v", "--network", "testnet", "--verbose", "account"].map(str::to_owned);
+        let args = [
+            "-v",
+            "--network",
+            "testnet",
+            "--horizon-url",
+            "https://stellar.example/horizon",
+            "--rpc-url",
+            "https://stellar.example/rpc",
+            "--tx-timeout",
+            "900",
+            "--verbose",
+            "account",
+        ]
+        .map(str::to_owned);
         let global = GlobalOptions::parse(&args).unwrap();
         assert_eq!(global.verbosity, 2);
         assert_eq!(global.network, "testnet");
+        assert_eq!(
+            global.horizon_url.as_deref(),
+            Some("https://stellar.example/horizon")
+        );
+        assert_eq!(
+            global.rpc_url.as_deref(),
+            Some("https://stellar.example/rpc")
+        );
+        assert_eq!(global.tx_timeout_seconds, Some(900));
         assert_eq!(global.command, ["account"]);
     }
 }

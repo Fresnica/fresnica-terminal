@@ -105,6 +105,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
+      - name: Install Linux HID build prerequisite
+        run: sudo apt-get update -qq && sudo apt-get install -y libudev-dev
       - name: Restore Cargo source cache
         uses: actions/cache@v4
         with:
@@ -126,6 +128,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --all-targets --locked
       - run: cargo build --release --locked -p fresnica-cli --bin fresnica
+      - run: cargo build --release --locked -p fresnica-anchor-plugin --bin fresnica-anchor
       - run: cargo build --release --locked -p fresnica-tui --bin fresnica-tui
       - uses: actions/checkout@v4
         with:
@@ -186,6 +189,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - name: Install Linux HID build prerequisite
+        if: matrix.asset_os == 'linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y libudev-dev
       - name: Restore Cargo source cache
         uses: actions/cache@v4
         with:
@@ -254,6 +260,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --locked -p fresnica-cli --bin fresnica
+          cargo build --release --locked -p fresnica-anchor-plugin --bin fresnica-anchor
           cargo build --release --locked -p fresnica-tui --bin fresnica-tui
       - name: Build Windows MSVC binaries
         if: matrix.cross_windows
@@ -265,6 +272,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo xwin build --release --locked --target "$TARGET" -p fresnica-cli --bin fresnica
+          cargo xwin build --release --locked --target "$TARGET" -p fresnica-anchor-plugin --bin fresnica-anchor
           cargo xwin build --release --locked --target "$TARGET" -p fresnica-tui --bin fresnica-tui
       - name: Package binaries
         shell: bash
@@ -272,6 +280,7 @@ jobs:
           set -euo pipefail
           mkdir -p package dist
           cp "${{ matrix.binary_dir }}/fresnica${{ matrix.extension }}" package/
+          cp "${{ matrix.binary_dir }}/fresnica-anchor${{ matrix.extension }}" package/
           cp "${{ matrix.binary_dir }}/fresnica-tui${{ matrix.extension }}" package/
           cp README.md package/README.md
           cp crates/cli/README.md package/CLI-README.md
@@ -300,6 +309,11 @@ jobs:
           & "package/fresnica.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "package/fresnica.exe" --help | Select-Object -First 8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:Path = "$(Resolve-Path package);$env:Path"
+          & "package/fresnica.exe" plugin ls
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "package/fresnica-anchor.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "package/fresnica-tui.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -357,8 +371,10 @@ jobs:
           cat > release-notes.md <<EOF
           Fresnica Terminal v${VERSION} preview release.
 
-          - \`fresnica\`: CLI with safe \`-v\` / \`-vv\` diagnostics.
+          - \`fresnica\`: self-custody wallet CLI with reviewed payments, trustlines, SDEX, Soroban invocation and Ledger Classic signing.
+          - \`fresnica-anchor\`: bundled Fresnica-native Anchor plugin with SEP-10/24/6/12 flows.
           - \`fresnica-tui\`: interactive terminal UI from the same source line.
+          - Fresnica-native executable plugins use the \`fresnica-*\` namespace; Stellar CLI plugins are not auto-dispatched.
           - Shared Fresnica source: \`${FRESNICA_REV}\`.
           - Terminal consumes the Rust client/SDK boundary directly; Native/UniFFI binaries are not a runtime dependency.
           EOF
