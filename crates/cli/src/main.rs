@@ -10,6 +10,7 @@ mod plugin;
 mod plugin_host;
 mod read_commands;
 mod send;
+mod system_auth;
 mod transaction_flow;
 mod trust;
 mod wallet;

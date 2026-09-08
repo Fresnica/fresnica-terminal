@@ -27,8 +27,8 @@ fn review_and_submit(
     }
 
     crate::diagnostics::stage("trustline: sign and submit");
-    let submission = submit_with_classic_signers(client, |passcode, providers| {
-        client.submit_trustline_with_providers(prepared, passcode, providers)
+    let submission = submit_with_classic_signers(client, |passcode, system_auth, providers| {
+        client.submit_trustline_with_providers(prepared, passcode, system_auth, providers)
     })?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {

@@ -3,8 +3,9 @@ use std::io::{self, Write};
 use fresnica_client::{
     AuthorizationScope, AuthorizationThreshold, ClassicOperationKind,
     ExternalEd25519SigningProvider, FresnicaClient, LedgerAuthorizationSnapshot,
-    LedgerSignerAvailability, LedgerSignerKind,
+    LedgerSignerAvailability, LedgerSignerKind, SystemAuthUnlockProvider,
 };
+use zeroize::Zeroizing;
 
 pub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};
 
@@ -117,13 +118,38 @@ const LOCAL_PASSPHRASE_REQUIRED: &str =
 
 pub fn submit_with_classic_signers<T>(
     client: &FresnicaClient,
-    mut submit: impl FnMut(Option<&str>, &[ExternalEd25519SigningProvider]) -> Result<T, String>,
+    submit: impl FnMut(
+        Option<&str>,
+        &[SystemAuthUnlockProvider],
+        &[ExternalEd25519SigningProvider],
+    ) -> Result<T, String>,
 ) -> Result<T, String> {
-    let providers = crate::ledger::external_signing_providers(client)?;
-    match submit(None, &providers) {
+    let external_providers = crate::ledger::external_signing_providers(client)?;
+    let system_auth_providers = crate::system_auth::one_shot_providers(client)?;
+    submit_with_authorization_sources(
+        &system_auth_providers,
+        &external_providers,
+        || crate::prompt_hidden("Fresnica passphrase: "),
+        submit,
+    )
+}
+
+fn submit_with_authorization_sources<T>(
+    system_auth_providers: &[SystemAuthUnlockProvider],
+    external_providers: &[ExternalEd25519SigningProvider],
+    mut prompt_passphrase: impl FnMut() -> Result<Zeroizing<String>, String>,
+    mut submit: impl FnMut(
+        Option<&str>,
+        &[SystemAuthUnlockProvider],
+        &[ExternalEd25519SigningProvider],
+    ) -> Result<T, String>,
+) -> Result<T, String> {
+    match submit(None, system_auth_providers, external_providers) {
         Err(error) if error == LOCAL_PASSPHRASE_REQUIRED => {
-            let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-            submit(Some(passcode.as_str()), &providers)
+            let passphrase = prompt_passphrase()?;
+            // A fresh passphrase is the higher-authority fallback. Do not also
+            // invoke device System Auth for other selected software signers.
+            submit(Some(passphrase.as_str()), &[], external_providers)
         }
         result => result,
     }
@@ -151,6 +177,52 @@ mod tests {
         AccountAuthorizationSnapshot, AuthorizationUse, LedgerSignerCondition,
         WeightedLedgerSignerSnapshot,
     };
+
+    const SIGNER: &str = "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR";
+
+    #[test]
+    fn passphrase_fallback_drops_system_auth_providers() {
+        let system = SystemAuthUnlockProvider::new(SIGNER, |_| Ok(vec![0u8; 32])).unwrap();
+        let mut attempts = 0usize;
+        let result = submit_with_authorization_sources(
+            &[system],
+            &[],
+            || Ok(Zeroizing::new("correct horse battery staple".to_owned())),
+            |passphrase, system_auth, external| {
+                attempts += 1;
+                assert!(external.is_empty());
+                if attempts == 1 {
+                    assert!(passphrase.is_none());
+                    assert_eq!(system_auth.len(), 1);
+                    Err(LOCAL_PASSPHRASE_REQUIRED.to_owned())
+                } else {
+                    assert_eq!(passphrase, Some("correct horse battery staple"));
+                    assert!(system_auth.is_empty());
+                    Ok("submitted")
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(result, "submitted");
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn system_auth_failure_does_not_silently_downgrade_to_passphrase() {
+        let system = SystemAuthUnlockProvider::new(SIGNER, |_| Ok(vec![0u8; 32])).unwrap();
+        let error = submit_with_authorization_sources::<()>(
+            &[system],
+            &[],
+            || panic!("provider failure must not prompt for passphrase"),
+            |passphrase, system_auth, _| {
+                assert!(passphrase.is_none());
+                assert_eq!(system_auth.len(), 1);
+                Err("System authentication for signer failed: cancelled".to_owned())
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("cancelled"));
+    }
 
     #[test]
     fn authorization_review_explains_transaction_specific_local_capacity() {
