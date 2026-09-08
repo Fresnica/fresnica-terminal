@@ -1,6 +1,6 @@
 # Fresnica Terminal Current State
 
-Status: **validated Draft stack remains unmerged/unreleased; Ledger Classic is accepted and the external-plugin work is active with its durable architecture now recorded separately**.
+Status: **validated Draft stack remains unmerged/unreleased; Ledger Classic is accepted; the dual-namespace plugin runtime is validated; and an Anchor native-plugin consumer spike is locally validated without Main merge or release**.
 
 Last verified: 2026-09-08.
 
@@ -20,6 +20,13 @@ Last verified: 2026-09-08.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts. Durable plugin namespace/trust decisions are authoritative in [`docs/plugin-architecture.md`](plugin-architecture.md); this CURRENT file records implementation state only.
 
+Active Anchor consumer experiment:
+
+- Terminal branch: `feat/terminal-anchor-plugin-spike`; product commit `7d47c2ff006af85d437a8311d03e13d6d12081e7`, based on `feat/terminal-fresnica-plugin-namespace@26f5e63af4fd7b9d297b8a654ad0ad6c47f487ce`.
+- Pinned upstream experiment: `Fresnica/fresnica@51ac66909484bc1c78d544c8d68f8546197aacb0` on `feat/rust-client-anchor-explicit-domain`.
+- Exact experimental host contract and live Testnet evidence: [`docs/anchor-plugin-spike.md`](anchor-plugin-spike.md).
+- This experiment has no PR, Main merge, GitHub CI run, or release publication. Local deterministic validation is the gate.
+
 ## Plugin architecture correction — 2026-09-08
 
 The accepted architecture is dual-path, not Stellar-only:
@@ -29,7 +36,9 @@ The accepted architecture is dual-path, not Stellar-only:
 
 For unknown commands the intended resolution is longest command-chain first, then `fresnica-*` -> `stellar-*` -> `soroban-*` for the same chain. Built-ins always win. Plugins remain separate from Signer Providers; writes must return through Fresnica review, authorization, signing, and submission safety.
 
-Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proves the stronger PATH/listing/platform dispatcher for `stellar-*` and `soroban-*`. The follow-up `feat/terminal-fresnica-plugin-namespace` slice now restores `fresnica-*` on top of that dispatcher without adding a wallet-context ABI or signing callback. VPS validation passes repository boundary, rustfmt, CLI Clippy with warnings denied, 44 CLI unit tests, 2 CLI contract tests, and a real subprocess smoke proving Fresnica-first same-chain dispatch, exact argv forwarding, exit-code propagation, and deduplicated `plugin ls` output.
+Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proves the stronger PATH/listing/platform dispatcher for `stellar-*` and `soroban-*`. The follow-up `feat/terminal-fresnica-plugin-namespace` slice restores `fresnica-*` on top of that dispatcher without a host ABI. The child Anchor spike is now the first real native consumer: it adds an **experimental bounded host re-entry** for public context and Anchor-specific SEP-10 authentication while keeping software/Ledger signer selection and signature verification inside Fresnica. This is consumer evidence, not a generic signing callback or frozen plugin SDK.
+
+The Anchor spike also verified that compatible `stellar-*` children receive none of the Fresnica-native host coordination variables. Live Testnet discovery through `fresnica anchor ... -> fresnica-anchor` succeeded against `testanchor.stellar.org`; a live SEP-10 run reached the inner Fresnica signing prompt and was intentionally terminated without automating wallet secret material. Full token exchange/SEP-24 interactive completion and physical Ledger SEP-10 remain acceptance tests, not claimed results.
 
 ## What this milestone was solving
 
@@ -142,11 +151,11 @@ The current top tree was re-audited after #19 against the shared-foundation plac
 
 - Account, Balance and History no longer require Terminal to interpret provider-shaped read records.
 - DEX order book, offers, pair trades, account fills and candles consume typed `fresnica-client` snapshots/models; Terminal owns parsing and rendering only.
-- Anchor still contains substantial CLI-only orchestration and JSON input handling. This is an acknowledged exception, not a newly discovered ownership regression: there is still no second Terminal Anchor consumer or stronger shared contract evidence that justifies extracting another layer.
+- The previous Anchor exception is now superseded by concrete consumer evidence. `fresnica-anchor` is a real second process boundary over shared Anchor protocol functions, and its spike proves that Anchor-specific orchestration can leave the CLI while wallet authorization/signing remains host-owned. The old built-in remains temporarily as a behavior oracle/fallback; do not mistake that migration state for the final architecture.
 - Official-reuse audit: the Fresnica-owned primitive Soroban ABI parser, manual ContractInstance decode, deprecated Wasm helper path, and Terminal's duplicate invoke-time Contract Spec fetch have been removed.
 - Official-reuse audit: `rs-stellar-rpc-client` already supplies `send_transaction` and polling, but its high-level error path does not preserve Fresnica's safety-critical distinction between explicit rejection and an uncertain submission that may already have been accepted. Keep Fresnica pending/reconciliation policy until the official client exposes enough structured transport/submission state.
 - Official-reuse audit: community `soroban-client` / `stellar-baselib` overlaps Classic Payment/ChangeTrust/offer construction, but adopting it wholesale would also import a second keypair/signing/crypto and transaction ownership layer. Current direct SDF `stellar-xdr` construction remains the smaller boundary; use the community SDK as a possible conformance oracle, not a runtime replacement, unless its ownership/error model changes.
-- Official-reuse audit: the official Wallet SDK covers SEP-1/10/6/12/24/38 but currently has no Rust implementation. Terminal Anchor therefore remains an interactive product state machine over Client-owned protocol validation; extract only when a second Rust product proves the shared orchestration.
+- Official-reuse audit: the official Wallet SDK covers SEP-1/10/6/12/24/38 but currently has no Rust implementation. The Anchor plugin spike is now the concrete second-process consumer that justifies extraction of Terminal-only orchestration; shared protocol validation remains in `fresnica-client`, while the native plugin owns Anchor command flow and re-enters Fresnica only for bounded wallet capabilities.
 - Low-priority cleanup: Terminal Friendbot still hard-codes the public Testnet endpoint even though Stellar RPC `getNetwork` exposes `friendbotUrl`; move endpoint discovery behind Client when Friendbot is next touched.
 - The History `1..=200` limit is enforced by `FresnicaClient::history()` itself. Terminal's matching argument guard is user-facing validation rather than a provider-ownership leak. A test name still mentions Horizon page size; that wording alone does not justify a code PR.
 - CLI and TUI authorization rendering intentionally differ in full-key versus compact-key presentation. Do not generalize the new History presentation crate into a universal formatter merely for symmetry.
@@ -163,7 +172,7 @@ The following are separate product/capability decisions, not unfinished cleanup 
 
 - richer transaction-grouped Activity, cache/cursors, spam classification and enrichment;
 - generic Dapp/SEP-53 session transport;
-- external Ledger hardware integration;
+- expansion/physical acceptance of hardware signing beyond the currently validated Classic paths, including physical Ledger SEP-10 through the Anchor plugin host;
 - Passkey / smart-account product paths;
 - Anchor TUI parity;
 - Horizon-to-RPC/provider migration beyond the semantic boundaries already prepared.

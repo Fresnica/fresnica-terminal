@@ -67,11 +67,12 @@ proposal capabilities. Fresnica must not inject or pass:
 - opened Ledger/HSM handles;
 - an unrestricted signer capability.
 
-A Fresnica-native plugin may eventually receive the minimum public/session
-context required by a real integration, such as selected network or account
-identity. That context is a versioned product contract, not ambient access to
-the wallet. Its concrete fields must be driven by a real consumer rather than a
-speculative generic host ABI.
+The first real consumer, the Anchor plugin spike, proves that a Fresnica-native
+plugin may need bounded host re-entry for public context and one semantic wallet
+capability. This does not grant ambient wallet access: the host remains responsible
+for validation, authorization, signer selection and user interaction. The current
+wire details remain experimental and are recorded in `docs/anchor-plugin-spike.md`;
+they must not be generalized into a plugin SDK without further consumer evidence.
 
 A plugin that needs an on-chain write should return or otherwise propose the
 transaction/invocation material to Fresnica. Fresnica remains responsible for
@@ -99,9 +100,10 @@ is stable; SAINT itself must not depend on Fresnica plugin internals.
 ## Deliberate non-goals
 
 The plugin architecture does not currently require a plugin registry/search
-service, installer/updater, in-process ABI, generic `FRESNICA_BIN` callback,
-unrestricted host RPC, or signer-provider bridge. These require separate,
-consumer-driven decisions.
+service, installer/updater, in-process ABI, generic/unrestricted host RPC, generic
+transaction-signing callback, or signer-provider bridge. The Anchor spike does use
+one bounded semantic host re-entry path; that evidence must not be rewritten as
+permission for arbitrary host callbacks.
 
 ## Implementation status
 
@@ -117,6 +119,15 @@ chain. It deliberately adds no wallet-context fields, host callback, signing
 bridge, registry/search/install behavior, dependency, or Cargo manifest change.
 Earlier Draft PR #31 remains historical implementation evidence rather than a
 branch to revive wholesale.
+
+The first real native consumer is now implemented on experimental branch
+`feat/terminal-anchor-plugin-spike`, product commit
+`7d47c2ff006af85d437a8311d03e13d6d12081e7`. It proves a bounded Anchor-specific
+host interaction without exposing generic signing or wallet secrets. Because the old
+Anchor built-in is retained as a behavior oracle during extraction, this spike alone
+tries `fresnica-anchor` before that one built-in. This is a migration probe, not a
+change to the global built-in-first resolution contract. See
+[`docs/anchor-plugin-spike.md`](anchor-plugin-spike.md) for exact evidence and limits.
 
 ## Documentation/source-of-truth rule
 

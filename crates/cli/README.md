@@ -185,7 +185,7 @@ Installed plugins supported by the current dispatcher can be inspected with:
 fresnica plugin ls
 ```
 
-Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. A future Fresnica-native plugin may receive only a bounded, explicit public/session context and must still return write intent through Fresnica's review/authorization/signing path.
+Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. The experimental `fresnica-anchor` consumer now proves one bounded native host re-entry model: public wallet/network context plus an Anchor-specific SEP-10 authentication capability. Fresnica still owns authorization, software/Ledger signer selection and signature verification; the plugin receives only the resulting short-lived Anchor token, never a generic signing capability. See [`docs/anchor-plugin-spike.md`](../../docs/anchor-plugin-spike.md).
 
 Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee here is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
 
