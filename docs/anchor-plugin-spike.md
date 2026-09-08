@@ -25,10 +25,12 @@ secret-handling and submission authority.
 ## Exact checkpoint
 
 - Terminal branch: `feat/terminal-anchor-plugin-parity`.
-- validated product commit: `f700075628ae0381d0f5e77604eca1f6041ff292`.
-- product tree: `f5cf5dc59c32096071ed7a922547ada575b10582`.
+- validated parity product: `f700075628ae0381d0f5e77604eca1f6041ff292`.
+- immediate SEP-6 compatibility product: `8c33baaf837d078ed090aba6310a125c788fc027`.
+- parity product tree: `f5cf5dc59c32096071ed7a922547ada575b10582`.
+- immediate SEP-6 product tree: `6711b5bc956d094399b218a396085896d6217f71`.
 - parent spike/docs checkpoint: `09d7da83f087a5bb707c8e12ec16af8d48efd311`.
-- pinned Fresnica source: `a43ae377eea9346f48151c4d5ef596717fed2454`.
+- pinned Fresnica source: `07be0fb4fedbb448ab1538305c1a336378724a43`.
 - upstream branch: `feat/rust-client-anchor-explicit-domain`.
 - no Main merge, product PR, GitHub CI run, or release workflow was triggered for
   this parity milestone; VPS-local deterministic validation is the evidence source.
@@ -202,6 +204,28 @@ proposal and covered by local tests/gates. A live withdrawal settlement was not
 executed in this VPS session. Do not claim withdrawal settlement evidence from this
 milestone.
 
+## Legacy/programmatic SEP-6 evidence — fchain.io
+
+A live compatibility probe against `fchain.io` confirmed a useful real-world boundary:
+
+- SEP-1 advertises `TRANSFER_SERVER=https://api.fchain.io`; no SEP-24 server and no SEP-10 path are advertised for this flow.
+- `/info` advertises XRP deposit/withdraw through the legacy SEP-6 `type=crypto` / `dest` / `dest_extra` shape.
+- live deposit instructions return an XRPL custody address plus a mandatory Destination Tag.
+- live withdrawal instructions return the Anchor Stellar `account_id`, `memo_type=hash`, memo, fees and minimum amount immediately, with no transaction id.
+- `/transaction` and `/transactions` currently return 404 and `/info.transactions.enabled=false`.
+
+This is an older but historically standard SEP-6 usage pattern. Modern SEP-6 later tightened the transaction lifecycle (notably v3.11.0 requiring wallets to obtain `amount_in` from `/transaction` before payment) and deprecated `type` / `dest` / `dest_extra` in favor of `funding_method` plus SEP-12. Fresnica therefore uses modern fields when advertised but keeps legacy `/info`-driven compatibility instead of treating deprecated fields as unsupported.
+
+The consumer-driven fix adds generic **immediate SEP-6 withdrawal** handling: when a withdrawal response directly contains `account_id` and optional memo fields, and the user explicitly supplied `amount`, the plugin converts those instructions into the same host-owned payment proposal used by async `status --pay`. Human mode enters Fresnica's mandatory interactive payment review; `--json` never submits a payment. There is no `fchain.io` domain special case.
+
+Actual mainnet settlement was not executed in this environment because that requires real funded assets and signing authority. Live evidence covers the real Anchor discovery/instruction endpoints; deterministic tests cover the immediate-response-to-host-proposal boundary.
+
+### SEP-59 relationship
+
+Draft SEP-59 addresses a different resource: a reusable **inbound external account/instrument** (crypto address, address+memo/tag, IBAN, virtual account) bound to a wallet. It explicitly exists because repeatedly representing a reusable receiving account as a SEP-6 transaction makes transaction/account lifecycle and reconciliation ambiguous. It is not a condemnation of anchors that historically reused SEP-6 deposit addresses.
+
+The fchain XRP custody address + per-user Destination Tag is conceptually close to SEP-59's reusable crypto-address-plus-memo example, but fchain is not a SEP-59 implementation: SEP-59 has its own account lifecycle and authentication requirements. SEP-59 is also inbound-only, so SEP-6 remains relevant for withdrawals.
+
 ## Packaging evidence
 
 The release package contract now builds and ships three binaries together:
@@ -219,13 +243,13 @@ explicitly excluded from plugin discovery/dispatch.
 
 ## Validation
 
-Terminal exact product commit `f700075628ae0381d0f5e77604eca1f6041ff292`:
+Terminal parity product `f700075628ae0381d0f5e77604eca1f6041ff292`, plus immediate SEP-6 compatibility `8c33baaf837d078ed090aba6310a125c788fc027`:
 
-- repository boundary PASS at upstream pin `a43ae377...`;
+- repository boundary PASS at upstream pin `07be0fb4...`;
 - rustfmt PASS;
 - workspace Clippy `-D warnings` PASS;
 - Anchor plugin tests 7/7 PASS;
-- CLI unit tests 43/43 PASS;
+- CLI unit tests 44/44 PASS;
 - CLI contract tests 2/2 PASS;
 - presentation tests 3/3 PASS;
 - TUI tests 20/20 PASS;
@@ -235,7 +259,7 @@ Terminal exact product commit `f700075628ae0381d0f5e77604eca1f6041ff292`:
 - complete reference SEP-10 -> SEP-24 deposit -> Stellar settlement PASS;
 - live SEP-12 read PASS.
 
-Upstream `a43ae377...` passed the full rust-client suite: 188 tests.
+Upstream `07be0fb4...` passed the full rust-client suite: 189 tests, including the fchain-shaped immediate SEP-6 withdrawal response.
 
 ## Anti-drift rule / next boundary
 

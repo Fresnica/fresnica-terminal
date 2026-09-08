@@ -22,12 +22,14 @@ Repository source, exact branch heads and CI remain authoritative if this file l
 
 Active Anchor native-plugin checkpoint:
 
-- Terminal branch: `feat/terminal-anchor-plugin-parity`; validated product commit `f700075628ae0381d0f5e77604eca1f6041ff292`; tree `f5cf5dc59c32096071ed7a922547ada575b10582`.
-- Pinned upstream experiment: `Fresnica/fresnica@a43ae377eea9346f48151c4d5ef596717fed2454` on `feat/rust-client-anchor-explicit-domain`.
+- Terminal branch: `feat/terminal-anchor-plugin-parity`; validated parity product `f700075628ae0381d0f5e77604eca1f6041ff292`; immediate SEP-6 compatibility product `8c33baaf837d078ed090aba6310a125c788fc027`.
+- Pinned upstream experiment: `Fresnica/fresnica@07be0fb4fedbb448ab1538305c1a336378724a43` on `feat/rust-client-anchor-explicit-domain`.
 - The old CLI `anchor.rs` built-in and special Anchor dispatch route are removed; `fresnica anchor ...` now uses normal unknown-command dispatch to the bundled `fresnica-anchor`.
 - Full Testnet deposit evidence: SEP-24 `56e480db-4c09-433b-95aa-e7269b89cd1a` completed to Stellar tx `c3819ef01a0d53f969c156621fd35fa4b88430758e24923a9b8f1e2f269f0b99`; Fresnica then read `1.11` SRT.
 - Live SEP-12 read returned `NEEDS_INFO` with 47 required fields. Physical Ledger SEP-10 and live withdrawal settlement remain unclaimed acceptance items.
 - Exact host contract, receive-preflight evidence and packaging smoke: [`docs/anchor-plugin-spike.md`](anchor-plugin-spike.md).
+- Live fchain.io compatibility proves the legacy/programmatic SEP-6 branch: deposit returns XRPL address + mandatory Destination Tag; withdrawal returns immediate Stellar `account_id + hash memo` without a transaction id; Fresnica now maps that immediate response into the same interactive host payment review when the user supplied an explicit amount. `/transaction(s)` currently return 404, so fchain remains a legacy SEP-6 subset rather than a current full transaction-lifecycle implementation.
+- SEP-59 is recorded as a complementary inbound reusable-account model, not a replacement for SEP-6 withdrawals and not a reason to reject historical reusable-address behavior.
 - This milestone has no product PR, Main merge, GitHub CI run or release workflow invocation. Local deterministic validation is the gate.
 
 ## Plugin architecture correction — 2026-09-08

@@ -98,6 +98,17 @@ Fresnica remains wallet/security authority. SAINT can follow the same consumer m
 once its standalone bounded contract is ready; SAINT itself should not depend on
 private Fresnica plugin internals.
 
+## Anchor protocol placement
+
+Do not model SEP-24 as the replacement for SEP-6. They satisfy different wallet product needs:
+
+- **SEP-24** is hosted/interactive: the Anchor owns a web interaction surface.
+- **SEP-6** is programmatic: the wallet can collect fields and complete the flow without sending the user to an Anchor web UI.
+
+Fresnica should prefer what an Anchor actually advertises and preserve backwards compatibility when deprecated SEP-6 fields are explicitly declared in `/info`. Legacy support must be protocol-shape driven, never domain-name special cases. Both async transaction/status withdrawals and older immediate `account_id + memo` withdrawals return through the same Fresnica-owned payment review/signing boundary.
+
+Draft SEP-59 is complementary and inbound-only. It introduces a reusable external-account resource for long-lived receiving instruments; it does not replace SEP-6 transaction flows or withdrawals. A future Anchor may expose SEP-59 provisioning and SEP-6 transfers over the same underlying receiving account.
+
 ## Deliberate non-goals
 
 This architecture does not currently require:
@@ -121,9 +132,9 @@ Historical executable-dispatch evidence:
 
 Current validated Anchor parity checkpoint:
 
-- Terminal `feat/terminal-anchor-plugin-parity@f700075628ae0381d0f5e77604eca1f6041ff292`;
-- tree `f5cf5dc59c32096071ed7a922547ada575b10582`;
-- upstream `feat/rust-client-anchor-explicit-domain@a43ae377eea9346f48151c4d5ef596717fed2454`;
+- Terminal parity product `f700075628ae0381d0f5e77604eca1f6041ff292`, followed by immediate SEP-6 compatibility `8c33baaf837d078ed090aba6310a125c788fc027`;
+- parity tree `f5cf5dc59c32096071ed7a922547ada575b10582`; immediate SEP-6 tree `6711b5bc956d094399b218a396085896d6217f71`;
+- upstream `feat/rust-client-anchor-explicit-domain@07be0fb4fedbb448ab1538305c1a336378724a43`;
 - old CLI Anchor built-in removed;
 - `discover/auth/deposit/withdraw/status/customer` owned by `fresnica-anchor`;
 - SEP-24-first/SEP-6-fallback preserved through shared client selectors;
