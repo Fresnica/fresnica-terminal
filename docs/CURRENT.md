@@ -1,14 +1,14 @@
 # Fresnica Terminal Current State
 
-Status: **v0.3.0 release candidate: architecture stack converged; Ledger Classic, Anchor native plugin, legacy SEP-6 compatibility and configurable Classic lifetime are validated; Fresnica-native plugins are the only product plugin namespace; Main/release integration pending final gate**.
+Status: **v0.3.0 released; System Auth is the active post-release architecture slice. Rust signing coordination is validated; production OS backends are not yet shipped.**
 
 Last verified: 2026-09-08.
 
 ## Source of truth
 
-- Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
-- Current Terminal release branch: `feat/terminal-classic-tx-timeout`; v0.3.0 convergence RC before final Main repin: `82951714eabbaf5c400cdc6c5fe3ded0e67c7eaf`. Repository HEAD is authoritative for the final repin commit.
-- Current exact upstream pin: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c` on `main`; tree `2092f301a74addcd6a844aa3083a5b0e79bb7805`. Upstream integration PR #180 was squash-merged with a GitHub-verified signature; Main bundle #66 passed.
+- Current Terminal `main`: `d32e0755e39018ee04a5a30f86102e6d9c9539e9`; released preview `v0.3.0`. Main CI #109 and Release Terminal #86 passed.
+- Active Terminal branch: `feat/terminal-system-auth`; product checkpoint `29d65078545784ef6705c659818ba6427bbb9db5`.
+- Released upstream Main baseline: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. The active System Auth Rust-client product checkpoint is `221a039fa4a4f416b6e2667f4b6a93720705a74d` on `feat/system-auth-sdk-boundary`; docs head `ae9d083edd4d728847350b046a1ec9016377fe19`.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
@@ -21,6 +21,18 @@ Last verified: 2026-09-08.
 - Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts. Durable plugin namespace/trust decisions are authoritative in [`docs/plugin-architecture.md`](plugin-architecture.md); this CURRENT file records implementation state only.
+
+Active System Auth architecture checkpoint:
+
+- Goal: prove CLI one-shot System Auth can authorize an existing local protected software signer without weakening the strong Passphrase root or bypassing SDK/Core.
+- Upstream `221a039...` adds `SystemAuthSlot`, verified enrollment-key derivation, `SystemAuthUnlockProvider`, and Classic Signing Coordination support. Core is unchanged; released unlock material is consumed by the existing SDK unlock-key signing API.
+- Terminal `29d6507...` injects a client-owned `SystemAuthBackend` into the central Classic signing path used by Payment, Trustline, SDEX and SEP-10. Terminal still has no direct `fresnica-sdk` dependency.
+- Exact enrollment identity is `signer public key + SHA-256(canonical protected envelope)`. Re-protection/passphrase rotation therefore cannot silently reuse an old enrollment.
+- CLI is one-shot only. Non-interactive invocation does not activate System Auth. No CLI session/cache was added.
+- If no exact System Auth source satisfies the selected local software signer, a fresh Passphrase retry covers all selected software signers and drops System Auth providers. Once an enrolled provider is invoked, cancellation/provider failure/stale or invalid unlock material fails the attempt and does not silently downgrade.
+- System Auth providers and external signer providers are distinct types; the same signer cannot be configured as both in one signing attempt. Linux external System Auth remains a future explicitly trusted provider, not an ordinary `fresnica-*` PATH plugin.
+- Validation: upstream rust-client 197/197; Terminal boundary/fmt/workspace Clippy `-D warnings`; 7 Anchor + 47 CLI + 2 CLI contract + 3 presentation + 21 TUI tests all PASS. Injected fake-backend tests prove exact-envelope enrollment, non-interactive suppression, stale enrollment rejection, Passphrase fallback precedence and fail-closed provider errors.
+- This checkpoint intentionally does **not** claim a production macOS/Windows/Linux OS backend. The existing Apple `FresnicaWalletUnlockKeyStore` API matches the backend lifecycle and can use `SystemAuthSlot::storage_id()` as its signer identifier in the next platform slice.
 
 Active Anchor native-plugin checkpoint:
 
