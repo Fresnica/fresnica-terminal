@@ -29,7 +29,7 @@ The accepted architecture is dual-path, not Stellar-only:
 
 For unknown commands the intended resolution is longest command-chain first, then `fresnica-*` -> `stellar-*` -> `soroban-*` for the same chain. Built-ins always win. Plugins remain separate from Signer Providers; writes must return through Fresnica review, authorization, signing, and submission safety.
 
-Current implementation state is narrower than that architecture. Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proves the stronger PATH/listing/platform dispatcher for `stellar-*` and `soroban-*`, but does not yet restore `fresnica-*`. Earlier Draft PR #31 contains evidence for Fresnica-first namespace dispatch. The next bounded plugin slice is to restore `fresnica-*` on top of #32 without inventing the wallet-context ABI yet.
+Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proves the stronger PATH/listing/platform dispatcher for `stellar-*` and `soroban-*`. The follow-up `feat/terminal-fresnica-plugin-namespace` slice now restores `fresnica-*` on top of that dispatcher without adding a wallet-context ABI or signing callback. VPS validation passes repository boundary, rustfmt, CLI Clippy with warnings denied, 44 CLI unit tests, 2 CLI contract tests, and a real subprocess smoke proving Fresnica-first same-chain dispatch, exact argv forwarding, exit-code propagation, and deduplicated `plugin ls` output.
 
 ## What this milestone was solving
 

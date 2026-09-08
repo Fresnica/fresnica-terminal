@@ -67,7 +67,7 @@ Network commands:
   anchor                        Discover anchor capabilities and start SEP-24/SEP-6 transfers
 
 Plugin commands:
-  plugin ls                     List PATH-discovered Stellar CLI plugins
+  plugin ls                     List PATH-discovered Fresnica/Stellar CLI plugins
 
 Contract invocation:
   Fresnica options come before `--`; the function and named arguments after `--`

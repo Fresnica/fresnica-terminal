@@ -91,16 +91,18 @@ consumer-driven decisions.
 
 ## Implementation status
 
-Draft PR #32 (`feat/terminal-stellar-plugin-dispatch`) currently proves the
-Stellar-compatibility half only: `stellar-*`, legacy `soroban-*`, longest-chain
+Draft PR #32 (`feat/terminal-stellar-plugin-dispatch`) proves the
+Stellar-compatibility half: `stellar-*`, legacy `soroban-*`, longest-chain
 matching, PATH discovery/listing, platform executable rules, inherited stdio,
 and exit-status propagation.
 
-PR #32 does **not** prove that the Fresnica-native path was rejected. Earlier
-Draft PR #31 included `fresnica-*` dispatch and remains useful implementation
-evidence. The next bounded plugin slice should restore the Fresnica namespace on
-top of the stronger #32 dispatcher, without reviving unrelated old code or
-inventing wallet-context fields before a real consumer requires them.
+The follow-up `feat/terminal-fresnica-plugin-namespace` slice restores
+`fresnica-*` on top of that dispatcher with the accepted precedence: longest
+command chain first, then `fresnica-*`, `stellar-*`, `soroban-*` for the same
+chain. It deliberately adds no wallet-context fields, host callback, signing
+bridge, registry/search/install behavior, dependency, or Cargo manifest change.
+Earlier Draft PR #31 remains historical implementation evidence rather than a
+branch to revive wholesale.
 
 ## Documentation/source-of-truth rule
 

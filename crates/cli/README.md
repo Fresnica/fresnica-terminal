@@ -175,9 +175,9 @@ Human help sanitizes control characters from untrusted on-chain documentation be
 
 Fresnica's accepted plugin architecture has two executable namespaces; see [`docs/plugin-architecture.md`](../../docs/plugin-architecture.md) for the durable contract. `fresnica-*` is the native namespace for Fresnica-owned, eventually wallet-context-aware ecosystem integrations. `stellar-*`, with legacy `soroban-*` compatibility, lets Fresnica consume the existing Stellar CLI plugin ecosystem without copying its search/registry/install product.
 
-The **current Draft implementation in PR #32** proves only the Stellar-compatibility half. When a command is not a built-in Fresnica command, Terminal searches `PATH` for the longest matching `stellar-<subcommand>` executable and then the legacy `soroban-<subcommand>` name. Remaining arguments are forwarded unchanged, the plugin inherits stdin/stdout/stderr, and Fresnica exits with the plugin's exit status. `fresnica-*` dispatch is an accepted architecture item that is not yet restored on this branch.
+The current development implementation resolves unknown commands by longest command chain first. For the same chain it prefers `fresnica-<subcommand>`, then `stellar-<subcommand>`, then the legacy `soroban-<subcommand>` name. Remaining arguments are forwarded unchanged, the plugin inherits stdin/stdout/stderr, and Fresnica exits with the plugin's exit status. Built-in Fresnica commands are matched before plugin dispatch and cannot be shadowed.
 
-For example, an executable named `stellar-saint` on `PATH` currently makes `fresnica saint account G... --json` available without modifying Fresnica. Nested command names prefer the longest executable match, so `stellar-saint-account` wins when present before falling back to `stellar-saint`.
+For example, `fresnica aqua contract ...` prefers a matching `fresnica-aqua-contract` before falling back to `fresnica-aqua`; compatible `stellar-*` / `soroban-*` executables are considered only after the same-length Fresnica-native name.
 
 Installed plugins supported by the current dispatcher can be inspected with:
 

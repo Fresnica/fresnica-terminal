@@ -5,17 +5,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const PREFIXES: [&str; 2] = ["stellar-", "soroban-"];
+const PREFIXES: [&str; 3] = ["fresnica-", "stellar-", "soroban-"];
 
 pub fn command_plugin(args: &[String]) -> Result<(), String> {
     match args {
         [command] if command == "ls" => {
             let plugins = list_plugins(env::var_os("PATH").as_deref());
             if plugins.is_empty() {
-                println!("No Stellar CLI plugins found on PATH.");
-                println!("Plugins are executable commands named stellar-<name>.");
+                println!("No Fresnica or Stellar CLI plugins found on PATH.");
+                println!(
+                    "Plugins are executable commands named fresnica-<name> or stellar-<name>."
+                );
             } else {
-                println!("Installed Stellar CLI plugins:");
+                println!("Installed external CLI plugins:");
                 for plugin in plugins {
                     println!("  {plugin}");
                 }
@@ -39,7 +41,7 @@ pub fn dispatch(args: &[String]) -> Result<Option<i32>, String> {
         .status()
         .map_err(|error| {
             format!(
-                "unable to run Stellar CLI plugin {}: {error}",
+                "unable to run external CLI plugin {}: {error}",
                 invocation.executable.display()
             )
         })?;
@@ -216,8 +218,45 @@ mod tests {
     }
 
     #[test]
-    fn plugin_lookup_prefers_stellar_prefix_over_legacy_soroban_prefix() {
+    fn plugin_lookup_prefers_longer_chain_before_namespace_priority() {
+        let root = temporary_directory("longer-before-prefix");
+        create_test_plugin(&root, "fresnica-aqua");
+        create_test_plugin(&root, "stellar-aqua-contract");
+        let path = env::join_paths([&root]).unwrap();
+        let args = ["aqua", "contract", "quote"].map(str::to_owned);
+
+        let invocation = find_plugin(&args, Some(&path)).unwrap();
+
+        assert_eq!(
+            invocation.executable.file_name().and_then(OsStr::to_str),
+            Some(test_executable_name("stellar-aqua-contract").as_str())
+        );
+        assert_eq!(invocation.args, ["quote"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plugin_lookup_prefers_fresnica_then_stellar_then_legacy_soroban() {
         let root = temporary_directory("prefix");
+        create_test_plugin(&root, "fresnica-hello");
+        create_test_plugin(&root, "stellar-hello");
+        create_test_plugin(&root, "soroban-hello");
+        let path = env::join_paths([&root]).unwrap();
+        let args = ["hello", "world"].map(str::to_owned);
+
+        let invocation = find_plugin(&args, Some(&path)).unwrap();
+
+        assert_eq!(
+            invocation.executable.file_name().and_then(OsStr::to_str),
+            Some(test_executable_name("fresnica-hello").as_str())
+        );
+        assert_eq!(invocation.args, ["world"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plugin_lookup_prefers_stellar_over_legacy_soroban_without_fresnica_plugin() {
+        let root = temporary_directory("stellar-prefix");
         create_test_plugin(&root, "stellar-hello");
         create_test_plugin(&root, "soroban-hello");
         let path = env::join_paths([&root]).unwrap();
@@ -265,11 +304,12 @@ mod tests {
     }
 
     #[test]
-    fn plugin_list_deduplicates_current_and_legacy_prefixes() {
+    fn plugin_list_deduplicates_all_supported_prefixes() {
         let root = temporary_directory("list");
+        create_test_plugin(&root, "fresnica-alpha");
         create_test_plugin(&root, "stellar-alpha");
         create_test_plugin(&root, "soroban-alpha");
-        create_test_plugin(&root, "stellar-beta");
+        create_test_plugin(&root, "fresnica-beta");
         let path = env::join_paths([&root]).unwrap();
 
         assert_eq!(list_plugins(Some(&path)), ["alpha", "beta"]);
