@@ -42,7 +42,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/fresnica-system-auth-dev.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 "$script_dir/prepare-macos-system-auth-development-project.sh" "$upstream" "$work" >/dev/null
 
-build_root="$work/build"
+product_dir="$work/product"
 obj_root="$work/obj"
 
 xcodebuild \
@@ -55,12 +55,11 @@ xcodebuild \
   CODE_SIGN_IDENTITY="Apple Development" \
   CODE_SIGN_STYLE=Automatic \
   PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
-  SYMROOT="$build_root" \
+  CONFIGURATION_BUILD_DIR="$product_dir" \
   OBJROOT="$obj_root" \
-  -quiet \
   build
 
-app="$build_root/Release/FresnicaSystemAuth.app"
+app="$product_dir/FresnicaSystemAuth.app"
 provider="$app/Contents/MacOS/fresnica-system-auth-provider"
 profile="$app/Contents/embedded.provisionprofile"
 

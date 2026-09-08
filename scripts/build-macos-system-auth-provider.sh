@@ -12,7 +12,7 @@ mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$output/xcode-project"
-build_root="$output/build"
+product_dir="$output/product"
 obj_root="$output/obj"
 
 "$script_dir/prepare-macos-system-auth-development-project.sh" \
@@ -23,12 +23,14 @@ xcodebuild \
   -target FresnicaSystemAuth \
   -configuration Release \
   CODE_SIGNING_ALLOWED=NO \
-  SYMROOT="$build_root" \
+  CONFIGURATION_BUILD_DIR="$product_dir" \
   OBJROOT="$obj_root" \
-  -quiet \
-  build
+  build >&2
 
-app="$output/FresnicaSystemAuth.app"
-rm -rf "$app"
-ditto "$build_root/Release/FresnicaSystemAuth.app" "$app"
-echo "$app"
+app="$product_dir/FresnicaSystemAuth.app"
+if [[ ! -d "$app" ]]; then
+  echo "Xcode did not produce FresnicaSystemAuth.app at $app" >&2
+  find "$output" -maxdepth 4 -type d -name 'FresnicaSystemAuth.app' -print >&2 || true
+  exit 1
+fi
+printf '%s\n' "$app"
