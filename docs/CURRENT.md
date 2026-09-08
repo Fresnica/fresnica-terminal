@@ -7,8 +7,8 @@ Last verified: 2026-09-08.
 ## Source of truth
 
 - Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
-- Current active Terminal development branch: `feat/terminal-classic-tx-timeout@cbab7acc87477d01459805f2ca6b058589b7495f`; tree `98a0bb648d1104ee643837a268e154f580c6680b`.
-- Current exact upstream pin: `Fresnica/fresnica@4eab2708481ed6a332232039281a6d155a64cfb0` on `feat/rust-client-classic-tx-timeout`; tree `2092f301a74addcd6a844aa3083a5b0e79bb7805`.
+- Current Terminal release branch: `feat/terminal-classic-tx-timeout`; v0.3.0 convergence RC before final Main repin: `82951714eabbaf5c400cdc6c5fe3ded0e67c7eaf`. Repository HEAD is authoritative for the final repin commit.
+- Current exact upstream pin: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c` on `main`; tree `2092f301a74addcd6a844aa3083a5b0e79bb7805`. Upstream integration PR #180 was squash-merged with a GitHub-verified signature; Main bundle #66 passed.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
@@ -36,7 +36,7 @@ Active Anchor native-plugin checkpoint:
 
 Active Classic transaction-lifetime checkpoint:
 
-- Terminal branch `feat/terminal-classic-tx-timeout`; product `cbab7acc87477d01459805f2ca6b058589b7495f`; upstream `feat/rust-client-classic-tx-timeout@4eab2708481ed6a332232039281a6d155a64cfb0`.
+- Terminal branch `feat/terminal-classic-tx-timeout`; lifetime product slice `cbab7acc87477d01459805f2ca6b058589b7495f`; final v0.3.0 convergence continues on the same branch and now pins upstream `main@be12ee185002cc41ac874fa3f969e19d99eaf63c`.
 - The 300-second Classic TimeBounds default introduced for interactive signing remains unchanged, but `FresnicaClient` now owns an explicit per-client override. Payment, Trustline and SDEX builders consume it; public/default builders and Soroban keep the 300-second default.
 - CLI/TUI expose `--tx-timeout SECONDS` and `FRESNICA_TX_TIMEOUT_SECONDS`; zero is rejected. Payment/Trustline/SDEX reviews show the exact lifetime before signing.
 - Native `fresnica-*` dispatch propagates an explicit CLI timeout as Fresnica host policy. Anchor host-owned withdrawal payments therefore use the same Classic lifetime without giving the plugin signing authority.
@@ -61,10 +61,10 @@ Official Testnet evidence includes completed SEP-10 token exchange, official SEP
 
 - Version: `0.3.0` for `fresnica`, `fresnica-anchor`, `fresnica-tui`, and the shared presentation crate.
 - Release marker: `releases/terminal-v0.3.0.json`.
-- Exact Fresnica source: `4eab2708481ed6a332232039281a6d155a64cfb0`; this is the fast-forward upstream Main candidate and contains no Core/SDK/native-binding product changes beyond the existing Native SDK 0.3.0 ABI baseline.
+- Exact Fresnica source: `be12ee185002cc41ac874fa3f969e19d99eaf63c`; this is the integrated upstream Main commit and contains no Core/SDK/native-binding product changes beyond the existing Native SDK 0.3.0 ABI baseline.
 - Product plugin namespace: `fresnica-*` only. The former automatic `stellar-*` / `soroban-*` fallback is historical architecture evidence and is intentionally not shipped.
 - Release package contract: `fresnica`, `fresnica-anchor`, `fresnica-tui`; standalone version/help metadata is available for all shipped executables.
-- Main integration is intended as fast-forward in both repositories because the current candidates are strictly ahead of their current Main merge bases.
+- Repository rules require PR integration, required checks and verified Main commits. Upstream is already integrated through PR #180; Terminal will use a squash integration PR so the v0.3.0 release marker is part of one single-parent verified Main commit.
 
 ## What this milestone was solving
 

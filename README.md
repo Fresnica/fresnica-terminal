@@ -22,7 +22,7 @@ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependenc
 
 This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
 
-Terminal v0.3.0 pins `4eab2708481ed6a332232039281a6d155a64cfb0`, the integrated Fresnica Rust capability source. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); the v0.3.0 Terminal work changes the reusable Rust client/reference layer, not the published Native/UniFFI ABI. Terminal consumes `fresnica-client` / `fresnica-sdk` directly.
+Terminal v0.3.0 pins `be12ee185002cc41ac874fa3f969e19d99eaf63c`, the integrated Fresnica Rust capability source. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); the v0.3.0 Terminal work changes the reusable Rust client/reference layer, not the published Native/UniFFI ABI. Terminal consumes `fresnica-client` / `fresnica-sdk` directly.
 
 ## Layout
 
