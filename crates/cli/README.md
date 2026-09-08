@@ -171,19 +171,21 @@ The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external
 Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. Actual invocation first follows Stellar CLI's current default-send rule: if simulation contains no ledger write, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
 
 
-## Stellar CLI plugins
+## External CLI plugins
 
-Fresnica reuses the Stellar CLI executable-plugin convention instead of defining a second plugin ABI. When a command is not a built-in Fresnica command, Terminal searches `PATH` for the longest matching `stellar-<subcommand>` executable and then the legacy `soroban-<subcommand>` name. Remaining arguments are forwarded unchanged, the plugin inherits stdin/stdout/stderr, and Fresnica exits with the plugin's exit status.
+Fresnica's accepted plugin architecture has two executable namespaces; see [`docs/plugin-architecture.md`](../../docs/plugin-architecture.md) for the durable contract. `fresnica-*` is the native namespace for Fresnica-owned, eventually wallet-context-aware ecosystem integrations. `stellar-*`, with legacy `soroban-*` compatibility, lets Fresnica consume the existing Stellar CLI plugin ecosystem without copying its search/registry/install product.
 
-For example, an executable named `stellar-saint` on `PATH` makes `fresnica saint account G... --json` available without modifying Fresnica. Nested command names prefer the longest executable match, so `stellar-saint-account` wins when present before falling back to `stellar-saint`.
+The **current Draft implementation in PR #32** proves only the Stellar-compatibility half. When a command is not a built-in Fresnica command, Terminal searches `PATH` for the longest matching `stellar-<subcommand>` executable and then the legacy `soroban-<subcommand>` name. Remaining arguments are forwarded unchanged, the plugin inherits stdin/stdout/stderr, and Fresnica exits with the plugin's exit status. `fresnica-*` dispatch is an accepted architecture item that is not yet restored on this branch.
 
-Installed plugin names can be inspected with:
+For example, an executable named `stellar-saint` on `PATH` currently makes `fresnica saint account G... --json` available without modifying Fresnica. Nested command names prefer the longest executable match, so `stellar-saint-account` wins when present before falling back to `stellar-saint`.
+
+Installed plugins supported by the current dispatcher can be inspected with:
 
 ```sh
 fresnica plugin ls
 ```
 
-This is a command-extension boundary, not a signer-provider boundary. Fresnica does not hand a plugin decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, or an opened Ledger/HSM signer. A plugin that wants a transaction signed must use an explicit Fresnica command/API boundary that preserves Fresnica review and authorization; this first slice does not add such a bridge.
+Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. A future Fresnica-native plugin may receive only a bounded, explicit public/session context and must still return write intent through Fresnica's review/authorization/signing path.
 
 Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee here is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
 

@@ -1,8 +1,8 @@
 # Fresnica Terminal Current State
 
-Status: **architecture convergence remains validated; Contract-Spec-driven Soroban Invoke plus automatic read-only simulation are implemented on Draft PRs and remain unmerged/unreleased**.
+Status: **validated Draft stack remains unmerged/unreleased; Ledger Classic is accepted and the external-plugin work is active with its durable architecture now recorded separately**.
 
-Last verified: 2026-09-07.
+Last verified: 2026-09-08.
 
 ## Source of truth
 
@@ -18,7 +18,18 @@ Last verified: 2026-09-07.
 - Upstream read-only child Draft PR #172: `a4b0bd4eaa1a47e5f8cb8107ca264bffac6d444b`; Required CI #103 / run `34077833532` passed.
 - Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
-Repository source, exact branch heads and CI remain authoritative if this file later drifts.
+Repository source, exact branch heads and CI remain authoritative if this file later drifts. Durable plugin namespace/trust decisions are authoritative in [`docs/plugin-architecture.md`](plugin-architecture.md); this CURRENT file records implementation state only.
+
+## Plugin architecture correction — 2026-09-08
+
+The accepted architecture is dual-path, not Stellar-only:
+
+- `fresnica-*`: Fresnica-native plugins for Fresnica-owned ecosystem integrations, including future Aqua/DeFi and SAINT consumers. This namespace may later receive a bounded public/session wallet context, but never wallet secrets or unrestricted signer authority.
+- `stellar-*`, plus legacy `soroban-*`: compatibility path for consuming the existing Stellar CLI executable-plugin ecosystem without cloning Stellar CLI plugin search/registry/install.
+
+For unknown commands the intended resolution is longest command-chain first, then `fresnica-*` -> `stellar-*` -> `soroban-*` for the same chain. Built-ins always win. Plugins remain separate from Signer Providers; writes must return through Fresnica review, authorization, signing, and submission safety.
+
+Current implementation state is narrower than that architecture. Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proves the stronger PATH/listing/platform dispatcher for `stellar-*` and `soroban-*`, but does not yet restore `fresnica-*`. Earlier Draft PR #31 contains evidence for Fresnica-first namespace dispatch. The next bounded plugin slice is to restore `fresnica-*` on top of #32 without inventing the wallet-context ABI yet.
 
 ## What this milestone was solving
 
