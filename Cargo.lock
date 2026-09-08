@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "fresnica-anchor-plugin"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "fresnica-client",
  "serde",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "fresnica-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fresnica-client",
  "fresnica-terminal-presentation",
@@ -1464,14 +1464,14 @@ dependencies = [
 
 [[package]]
 name = "fresnica-terminal-presentation"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fresnica-client",
 ]
 
 [[package]]
 name = "fresnica-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fresnica-client",
  "fresnica-terminal-presentation",

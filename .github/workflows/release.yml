@@ -313,6 +313,8 @@ jobs:
           $env:Path = "$(Resolve-Path package);$env:Path"
           & "package/fresnica.exe" plugin ls
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "package/fresnica-anchor.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "package/fresnica-tui.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -369,8 +371,10 @@ jobs:
           cat > release-notes.md <<EOF
           Fresnica Terminal v${VERSION} preview release.
 
-          - \`fresnica\`: CLI with safe \`-v\` / \`-vv\` diagnostics.
+          - \`fresnica\`: self-custody wallet CLI with reviewed payments, trustlines, SDEX, Soroban invocation and Ledger Classic signing.
+          - \`fresnica-anchor\`: bundled Fresnica-native Anchor plugin with SEP-10/24/6/12 flows.
           - \`fresnica-tui\`: interactive terminal UI from the same source line.
+          - Fresnica-native executable plugins use the \`fresnica-*\` namespace; Stellar CLI plugins are not auto-dispatched.
           - Shared Fresnica source: \`${FRESNICA_REV}\`.
           - Terminal consumes the Rust client/SDK boundary directly; Native/UniFFI binaries are not a runtime dependency.
           EOF

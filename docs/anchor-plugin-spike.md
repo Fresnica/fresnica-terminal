@@ -45,8 +45,10 @@ The upstream consumer-driven additions are deliberately small:
 
 ## Runtime model
 
-Stellar-compatible `stellar-*` / legacy `soroban-*` children keep the Stellar CLI
-external-command behavior and receive no Fresnica-native host context.
+For v0.3.0, `fresnica-*` is the only product plugin namespace. The earlier
+`stellar-*` / legacy `soroban-*` compatibility prototype was removed before release:
+its dispatch mechanics were useful evidence, but silently launching a developer-tool
+plugin under the Fresnica wallet command creates the wrong wallet-context expectation.
 
 A `fresnica-*` child receives only experimental process coordination:
 
@@ -62,7 +64,7 @@ FRESNICA_TX_TIMEOUT_SECONDS=<explicit Classic host-policy override, when present
 
 These values are not signer capabilities. `FRESNICA_PLUGIN_API=1` is a protocol
 marker, not a credential.
-`FRESNICA_TX_TIMEOUT_SECONDS` is likewise host policy, not plugin authority: it only ensures a later Fresnica-owned Classic payment proposal is rebuilt with the same reviewed TimeBounds. Compatible `stellar-*` / `soroban-*` plugins do not receive this explicit native-policy injection.
+`FRESNICA_TX_TIMEOUT_SECONDS` is likewise host policy, not plugin authority: it only ensures a later Fresnica-owned Classic payment proposal is rebuilt with the same reviewed TimeBounds.
 
 The Anchor consumer currently proves four bounded host operations:
 
@@ -263,14 +265,16 @@ Terminal parity product `f700075628ae0381d0f5e77604eca1f6041ff292`, plus immedia
 
 Upstream `07be0fb4...` passed the full rust-client suite: 189 tests, including the fchain-shaped immediate SEP-6 withdrawal response.
 
+Before v0.3.0 release convergence, the default Stellar/soroban compatibility fallback was removed while keeping Fresnica-native longest-chain dispatch. Final package smoke shows only `anchor`; a synthetic `stellar-*` executable is ignored. `fresnica-anchor` now also exposes standalone `--version`/`--help` metadata and ships at the same 0.3.0 product version as CLI/TUI.
+
 ## Anti-drift rule / next boundary
 
 The first native consumer is now strong enough to validate the **direction** of bounded
 semantic host re-entry. It is not evidence for a generic plugin SDK.
 
-Do not reintroduce the Anchor built-in, Anchor-specific dispatch shadowing, plugin
-search/registry/install, unrestricted host RPC, generic signing, or signer-provider
-access. Do not freeze the current env/JSON wire solely because Anchor works; a second
+Do not reintroduce the Anchor built-in, Anchor-specific dispatch shadowing, automatic
+`stellar-*` / `soroban-*` fallback, plugin search/registry/install, unrestricted host
+RPC, generic signing, or signer-provider access. Do not freeze the current env/JSON wire solely because Anchor works; a second
 native consumer should confirm which parts are truly general.
 
 Remaining acceptance evidence is narrow:

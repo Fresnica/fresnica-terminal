@@ -27,6 +27,14 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    if matches!(args.as_slice(), [arg] if arg == "--version" || arg == "-V") {
+        println!("fresnica-anchor {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if matches!(args.as_slice(), [arg] if arg == "--help" || arg == "-h") {
+        println!("{HELP}");
+        return Ok(());
+    }
     let command = args
         .first()
         .map(String::as_str)

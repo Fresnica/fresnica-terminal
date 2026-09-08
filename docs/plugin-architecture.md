@@ -1,58 +1,61 @@
 # Fresnica Terminal Plugin Architecture
 
-Status: **Accepted architecture; first native consumer validated**
-Last reviewed: 2026-09-08
+Status: **accepted for v0.3.0; Fresnica-native namespace only; host wire remains experimental**
 
-## Decision
+Last verified: 2026-09-08.
 
-Fresnica Terminal has two complementary external-command paths. They share a
-process-oriented executable convention but have different trust contracts.
+## Durable decision
 
-1. **Fresnica-native plugins** use `fresnica-*`. They are Fresnica-owned ecosystem
-   integrations and may use narrowly defined semantic host re-entry.
-2. **Stellar ecosystem plugins** use `stellar-*`, with legacy `soroban-*`
-   compatibility. Fresnica consumes that executable ecosystem without cloning Stellar
-   CLI registry/search/install behavior.
-
-Plugins and signer providers remain separate extension mechanisms.
-
-## Distribution naming convention
-
-Executable names are the discovery contract and do not constrain implementation
-language. Python packages should expose:
+Fresnica learned the external-executable dispatch model from Stellar CLI, but the product contract is intentionally narrower:
 
 ```text
-Fresnica-native:  package fresnica_<name>  -> executable fresnica-<name>
-Stellar current:  package stellar_<name>   -> executable stellar-<name>
-Stellar legacy:   package soroban_<name>   -> executable soroban-<name>
+fresnica <command-chain>
+        -> built-in command, when present
+        -> otherwise PATH executable fresnica-<command-chain>
 ```
 
-`fresnica-tui` is a reserved companion product binary, not a plugin. It is excluded
-from plugin discovery and dispatch even though its executable name shares the native
-prefix.
+Only `fresnica-*` is a Fresnica plugin namespace. `stellar-*` and legacy `soroban-*` executables are **not** automatically dispatched. They belong to Stellar's developer-tool/config/identity model and would create a misleading expectation that a command launched under `fresnica` automatically uses the selected Fresnica wallet and authorization policy.
+
+The earlier Stellar-compatible dispatcher remains useful as architecture evidence, not as the shipped product contract.
+
+## Executable convention
+
+```text
+package / project convention:  fresnica_<name>
+PATH executable:                fresnica-<name>
+```
+
+Executable naming is language-neutral. `fresnica-tui` is a reserved companion product binary, not a plugin, and is explicitly excluded from listing/dispatch.
 
 ## Command resolution
 
-Built-in Fresnica commands win. Unknown commands use longest matching command chain
-first and, for the same chain, namespace precedence:
+Built-ins win. Unknown commands use longest matching Fresnica command chain first. For example:
 
 ```text
-fresnica-<command-chain>
-stellar-<command-chain>
-soroban-<command-chain>
+fresnica aqua contract quote ...
+  -> fresnica-aqua-contract ...
+  -> if absent, fresnica-aqua contract quote ...
 ```
 
-PATH discovery, argv forwarding, inherited stdio and child exit-status propagation
-remain intentionally compatible with Stellar CLI external commands.
+Remaining argv is forwarded unchanged, stdin/stdout/stderr are inherited, and Fresnica returns the child exit status.
 
-Anchor is now a real example of the normal rule: the CLI no longer contains an
-`anchor` built-in, so `fresnica anchor ...` resolves to the bundled
-`fresnica-anchor` executable. There is no special Anchor shadow route.
+`fresnica plugin ls` lists only executable `fresnica-*` plugins visible on PATH.
 
-## Trust and wallet-context boundary
+## Why Stellar CLI plugin auto-compatibility was removed
 
-A plugin is a lower-trust external process for query, ecosystem orchestration, build
-and proposal capabilities. Fresnica must not inject or pass:
+The compatibility prototype proved useful mechanics: PATH discovery, longest-chain matching, platform executable naming, argv/stdout/stderr inheritance, exit-code propagation, and release-package discovery. Those mechanics are retained.
+
+Automatic `stellar-*` / `soroban-*` fallback was removed before v0.3.0 because it offered little wallet-product value and weakened the user mental model:
+
+- Stellar CLI plugins generally assume Stellar CLI developer configuration and identities.
+- Fresnica commands imply the selected Fresnica wallet, network, review, signer selection and submission policy.
+- Silently launching a Stellar plugin beneath `fresnica` would look wallet-aware even when it is not.
+
+If a future Stellar ecosystem tool is valuable to Fresnica, integrate it deliberately as a `fresnica-*` adapter or reuse its library/protocol directly instead of granting automatic namespace compatibility.
+
+## Trust boundary
+
+A plugin is a lower-trust external process for ecosystem orchestration, queries and semantic proposals. Fresnica must not inject or pass:
 
 - private keys or mnemonic material;
 - Fresnica passphrases or raw unlock material;
@@ -61,97 +64,59 @@ and proposal capabilities. Fresnica must not inject or pass:
 - signer-provider objects;
 - unrestricted transaction-signing capability.
 
-The first real consumer proves that native plugins can need **bounded semantic host
-re-entry**. The host remains responsible for validation, authorization, user review,
-signer selection, signature verification and submission safety.
+The host remains responsible for validation, authorization, user review, signer selection, signature verification and submission safety.
 
-Current Anchor evidence includes four kinds of semantic interaction:
+Plugins are ordinary local executables and are not OS-sandboxed by Fresnica. Users must install only plugins they trust. The wallet guarantee is narrower: Fresnica does not hand the child secret wallet/signing material or generic signing authority.
 
-1. public wallet/network context;
+## Bounded native host re-entry
+
+The first real native consumer, `fresnica-anchor`, proves four bounded interaction classes:
+
+1. public selected wallet/network context;
 2. read-only asset receive readiness;
-3. Anchor-specific SEP-10 authentication returning only a short-lived token;
-4. a payment proposal whose transaction is reconstructed and interactively approved
-   by Fresnica.
+3. Anchor-specific SEP-10 authentication returning only a short-lived bearer token;
+4. payment proposal -> Fresnica reconstructs and interactively reviews/signs/submits.
 
-These operations justify the architecture direction, not a generic host RPC. Their
-current env/JSON wire is still experimental; see
-[`docs/anchor-plugin-spike.md`](anchor-plugin-spike.md).
+Current concrete host operations are documented in [`docs/anchor-plugin-spike.md`](anchor-plugin-spike.md). They validate the direction, not a generic host RPC or stable Plugin SDK.
 
-Host-owned transaction policy may also cross the native process boundary without becoming plugin authority. For example, an explicit Classic transaction timeout can be propagated to a `fresnica-*` child so a later host-owned payment proposal uses the same reviewed TimeBounds. This policy injection is native-only; it is not added to compatible `stellar-*` / `soroban-*` children and does not grant direct signing.
+A plugin that needs an on-chain write proposes intent/material back to Fresnica. It does not choose the signer and cannot bypass confirmation. Anchor withdrawal payment handoff therefore returns to the normal Fresnica Payment capability.
 
-A plugin that needs an on-chain write must propose intent/material back to Fresnica.
-It does not get to choose Fresnica's signer or bypass confirmation. In particular,
-`fresnica-anchor status --pay` rejects `-y`/`--yes`; the host performs the normal
-payment review interactively.
+Host-owned transaction policy may cross the plugin process boundary without becoming plugin authority. The validated example is Classic transaction lifetime: an explicit `--tx-timeout` is supplied to `fresnica-*` so a later Fresnica-owned payment proposal uses the same reviewed TimeBounds.
 
-Signer Providers are higher-trust signing capabilities coordinated by Fresnica.
-Ledger, HSM, secure-enclave and future passkey-style signers belong to that separate
-model and are not CLI plugins.
-
-## Ecosystem intent
-
-`stellar-*` compatibility lets Fresnica reuse useful Stellar CLI ecosystem tools before
-a Fresnica plugin community exists. `fresnica-*` serves a different purpose: Fresnica
-can ship wallet-aware integrations without moving protocol/product-specific logic into
-Core or the main Terminal binary.
-
-Aqua-style DeFi logic belongs outside Core and may be a Fresnica-native plugin while
-Fresnica remains wallet/security authority. SAINT can follow the same consumer model
-once its standalone bounded contract is ready; SAINT itself should not depend on
-private Fresnica plugin internals.
+Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/secure-enclave/passkey-style signers are not plugins.
 
 ## Anchor protocol placement
 
-Do not model SEP-24 as the replacement for SEP-6. They satisfy different wallet product needs:
+SEP-24 and SEP-6 are complementary product paths, not simply new versus old:
 
-- **SEP-24** is hosted/interactive: the Anchor owns a web interaction surface.
-- **SEP-6** is programmatic: the wallet can collect fields and complete the flow without sending the user to an Anchor web UI.
+- SEP-24 is hosted/interactive.
+- SEP-6 is programmatic and can stay inside the wallet.
 
-Fresnica should prefer what an Anchor actually advertises and preserve backwards compatibility when deprecated SEP-6 fields are explicitly declared in `/info`. Legacy support must be protocol-shape driven, never domain-name special cases. Both async transaction/status withdrawals and older immediate `account_id + memo` withdrawals return through the same Fresnica-owned payment review/signing boundary.
+Fresnica follows what the Anchor advertises and preserves `/info`-driven legacy SEP-6 compatibility without domain-name special cases. Both async transaction/status withdrawals and immediate `account_id + memo` withdrawals return through the same Fresnica-owned review/signing boundary.
 
-Draft SEP-59 is complementary and inbound-only. It introduces a reusable external-account resource for long-lived receiving instruments; it does not replace SEP-6 transaction flows or withdrawals. A future Anchor may expose SEP-59 provisioning and SEP-6 transfers over the same underlying receiving account.
+Draft SEP-59 is complementary and inbound-only. It models reusable external receiving instruments as account resources; it does not replace SEP-6 withdrawals.
 
-## Deliberate non-goals
+## Deliberate non-goals for v0.3.0
 
-This architecture does not currently require:
+Do not add merely to make the plugin framework look complete:
 
 - plugin registry/search/install/update;
+- Stellar CLI plugin auto-compatibility;
 - in-process extension ABI;
 - unrestricted host RPC;
-- generic `sign-xdr` callback;
+- generic `sign-xdr`;
 - signer-provider access from plugins;
-- a stable SDK wrapping the current experimental process wire.
+- a stable SDK wrapping the current one-consumer env/JSON wire.
 
-Do not infer those features from Anchor's bounded callbacks.
+A second real native consumer should determine which current wire details are genuinely general before a Native Plugin SDK is declared stable.
 
-## Implementation checkpoint
+## Historical evidence
 
-Historical executable-dispatch evidence:
+- `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proved Stellar-style executable dispatch mechanics.
+- `feat/terminal-fresnica-plugin-namespace@26f5e63af4fd7b9d297b8a654ad0ad6c47f487ce` proved the native namespace.
+- Anchor parity moved the real command surface to bundled `fresnica-anchor` and removed the old CLI Anchor built-in.
+- v0.3.0 convergence keeps only the Fresnica-native product namespace while preserving the proven dispatch mechanics.
 
-- Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` validated Stellar/legacy dispatch;
-- `feat/terminal-fresnica-plugin-namespace@26f5e63af4fd7b9d297b8a654ad0ad6c47f487ce` restored `fresnica-*` precedence without a host contract;
-- initial Anchor consumer product `7d47c2ff006af85d437a8311d03e13d6d12081e7` proved the first bounded host interaction.
+## Anti-drift rule
 
-Current validated Anchor parity checkpoint:
-
-- Terminal parity product `f700075628ae0381d0f5e77604eca1f6041ff292`, followed by immediate SEP-6 compatibility `8c33baaf837d078ed090aba6310a125c788fc027`;
-- parity tree `f5cf5dc59c32096071ed7a922547ada575b10582`; immediate SEP-6 tree `6711b5bc956d094399b218a396085896d6217f71`;
-- upstream `feat/rust-client-anchor-explicit-domain@07be0fb4fedbb448ab1538305c1a336378724a43`;
-- old CLI Anchor built-in removed;
-- `discover/auth/deposit/withdraw/status/customer` owned by `fresnica-anchor`;
-- SEP-24-first/SEP-6-fallback preserved through shared client selectors;
-- receive preflight, SEP-10 and interactive payment review stay host-owned;
-- release package includes `fresnica-anchor` beside CLI/TUI;
-- full local gates and official Testnet deposit settlement passed;
-- no Main merge, GitHub CI run or release workflow triggered for this milestone.
-
-Physical Ledger SEP-10 and live withdrawal settlement remain acceptance evidence, not
-claimed results.
-
-## Documentation/source-of-truth rule
-
-This file records durable plugin architecture. `docs/CURRENT.md`, handoffs and PR notes
-record implementation state and should link here instead of redefining the trust model.
-
-If implementation only proves part of a future abstraction, write **not stable yet**.
-Do not silently promote one consumer's wire details into a general SDK.
+Do not reintroduce `stellar-*` / `soroban-*` fallback merely because the resolver can support it. Compatibility must have a concrete Fresnica wallet product use case and an explicit identity/authorization model first.

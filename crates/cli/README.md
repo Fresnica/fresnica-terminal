@@ -175,23 +175,21 @@ Human help sanitizes control characters from untrusted on-chain documentation be
 
 ## External CLI plugins
 
-Fresnica's accepted plugin architecture has two executable namespaces; see [`docs/plugin-architecture.md`](../../docs/plugin-architecture.md) for the durable contract. `fresnica-*` is the native namespace for Fresnica-owned, eventually wallet-context-aware ecosystem integrations. `stellar-*`, with legacy `soroban-*` compatibility, lets Fresnica consume the existing Stellar CLI plugin ecosystem without copying its search/registry/install product.
+Fresnica uses the executable-dispatch idea proven by Stellar CLI, but the product namespace is intentionally Fresnica-only. Unknown commands resolve by longest command chain to `fresnica-<command-chain>` executables on PATH. `stellar-*` and legacy `soroban-*` executables are not auto-dispatched: they use a different developer-tool identity/config model and would create a misleading wallet-context expectation under the `fresnica` command.
 
-The current development implementation resolves unknown commands by longest command chain first. For the same chain it prefers `fresnica-<subcommand>`, then `stellar-<subcommand>`, then the legacy `soroban-<subcommand>` name. Remaining arguments are forwarded unchanged, the plugin inherits stdin/stdout/stderr, and Fresnica exits with the plugin's exit status. Built-in Fresnica commands are matched before plugin dispatch and cannot be shadowed.
+For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` is a reserved companion binary, not a plugin.
 
-For example, `fresnica aqua contract ...` prefers a matching `fresnica-aqua-contract` before falling back to `fresnica-aqua`; compatible `stellar-*` / `soroban-*` executables are considered only after the same-length Fresnica-native name.
-
-Installed plugins supported by the current dispatcher can be inspected with:
+Installed Fresnica plugins can be inspected with:
 
 ```sh
 fresnica plugin ls
 ```
 
-Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. The `fresnica-anchor` consumer proves bounded semantic host re-entry: public wallet/network context, issued-asset receive preflight, Anchor-specific SEP-10 authentication, and an interactive-only withdrawal payment proposal. Fresnica owns receive validation, authorization, software/Ledger signer selection, transaction review and signature verification. The plugin receives only the resulting short-lived Anchor token and never gets generic signing authority. See [`docs/anchor-plugin-spike.md`](../../docs/anchor-plugin-spike.md).
+Plugins are command extensions, not signer providers. Fresnica does not hand them decrypted wallet state, private keys, mnemonic material, Fresnica passphrases, raw unlock material, or an opened Ledger/HSM signer. The bundled `fresnica-anchor` consumer proves bounded semantic host re-entry: public wallet/network context, issued-asset receive preflight, Anchor-specific SEP-10 authentication, and an interactive-only withdrawal payment proposal. Fresnica owns receive validation, authorization, software/Ledger signer selection, transaction review and signature verification. The plugin receives only bounded semantic results such as the short-lived Anchor token and never gets generic signing authority. See [`docs/anchor-plugin-spike.md`](../../docs/anchor-plugin-spike.md).
 
-Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee here is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
+Plugins are ordinary local executables and are **not sandboxed** by Fresnica. They run with the operating-system permissions of the current user and inherit the process environment, so users must install only plugins they trust. The guarantee is narrower: Fresnica itself does not inject secret wallet/signing material into the child process.
 
-Fresnica global options parsed before the plugin name are host options and are not rewritten into plugin arguments. For Fresnica-native plugins only, an explicit Classic `--tx-timeout` is propagated as host policy so any later host-owned payment uses the same reviewed TimeBounds. Compatible `stellar-*` / `soroban-*` plugins do not receive that Fresnica-native policy injection. Existing Stellar CLI plugins should keep using their own supported flags after the plugin command.
+Fresnica global options parsed before the plugin name remain host policy. Selected public network/provider context and explicitly supported policy such as Classic transaction lifetime may be supplied to `fresnica-*`; plugin-specific arguments remain after the plugin command.
 
 ## Diagnostics
 

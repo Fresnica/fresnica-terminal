@@ -70,7 +70,7 @@ Network commands:
   anchor                        Native plugin for Anchor SEP flows; wallet authorization remains Fresnica-hosted
 
 Plugin commands:
-  plugin ls                     List PATH-discovered Fresnica/Stellar CLI plugins
+  plugin ls                     List PATH-discovered Fresnica plugins
 
 Contract invocation:
   Fresnica options come before `--`; the function and named arguments after `--`

@@ -1,6 +1,6 @@
 # Fresnica Terminal Current State
 
-Status: **validated Draft stack remains unmerged/unreleased; Ledger Classic and native plugins are accepted; Anchor parity/legacy SEP-6 compatibility are validated; and Classic transaction lifetime is now configurable while Main/release remain untouched**.
+Status: **v0.3.0 release candidate: architecture stack converged; Ledger Classic, Anchor native plugin, legacy SEP-6 compatibility and configurable Classic lifetime are validated; Fresnica-native plugins are the only product plugin namespace; Main/release integration pending final gate**.
 
 Last verified: 2026-09-08.
 
@@ -39,22 +39,32 @@ Active Classic transaction-lifetime checkpoint:
 - Terminal branch `feat/terminal-classic-tx-timeout`; product `cbab7acc87477d01459805f2ca6b058589b7495f`; upstream `feat/rust-client-classic-tx-timeout@4eab2708481ed6a332232039281a6d155a64cfb0`.
 - The 300-second Classic TimeBounds default introduced for interactive signing remains unchanged, but `FresnicaClient` now owns an explicit per-client override. Payment, Trustline and SDEX builders consume it; public/default builders and Soroban keep the 300-second default.
 - CLI/TUI expose `--tx-timeout SECONDS` and `FRESNICA_TX_TIMEOUT_SECONDS`; zero is rejected. Payment/Trustline/SDEX reviews show the exact lifetime before signing.
-- Native `fresnica-*` dispatch propagates an explicit CLI timeout as Fresnica host policy; compatible `stellar-*` / `soroban-*` dispatch does not receive that injection. Anchor host-owned withdrawal payments therefore use the same Classic lifetime without giving the plugin signing authority.
+- Native `fresnica-*` dispatch propagates an explicit CLI timeout as Fresnica host policy. Anchor host-owned withdrawal payments therefore use the same Classic lifetime without giving the plugin signing authority.
 - `PENDING_TTL_SECONDS=210` remains a separate uncertain-submission reconciliation window and is not changed by this option. Soroban transaction/auth/resource lifetimes are outside this slice.
-- Local validation: upstream rust-client 190/190; Terminal boundary/fmt/workspace Clippy `-D warnings` PASS; 7 Anchor plugin + 45 CLI + 2 CLI contract + 3 presentation + 21 TUI tests PASS; native/compatible subprocess policy-isolation smoke PASS. No PR, Main merge, GitHub CI or release workflow was triggered.
+- Final v0.3.0 local gate after namespace convergence: upstream rust-client 190/190; Terminal boundary/fmt/workspace Clippy `-D warnings` PASS; 7 Anchor plugin + 42 CLI + 2 CLI contract + 3 presentation + 21 TUI tests PASS; all three 0.3.0 release binaries build and report aligned versions; package smoke lists only `anchor` and ignores a synthetic `stellar-*` executable; Python reference CLI compatibility 5/5 PASS with the release workflow's uv 0.12.5/Python 3.11 setup; published v0.2.0 -> local v0.3.0 watch-wallet/default/contact storage upgrade smoke PASS. No development CI/release workflow was triggered.
 
 ## Plugin architecture correction — 2026-09-08
 
-The accepted architecture is dual-path, not Stellar-only:
+The accepted v0.3.0 product architecture is Fresnica-native only:
 
-- `fresnica-*`: Fresnica-native plugins for Fresnica-owned ecosystem integrations, including future Aqua/DeFi and SAINT consumers. This namespace may later receive a bounded public/session wallet context, but never wallet secrets or unrestricted signer authority.
-- `stellar-*`, plus legacy `soroban-*`: compatibility path for consuming the existing Stellar CLI executable-plugin ecosystem without cloning Stellar CLI plugin search/registry/install.
+- `fresnica-*`: external executable plugins for Fresnica ecosystem integrations. They may receive narrowly bounded Fresnica host context/policy but never wallet secrets or unrestricted signer authority.
+- `stellar-*` / legacy `soroban-*`: **not auto-dispatched**. The earlier compatibility prototype proved reusable executable-dispatch mechanics, but its developer-tool identity/config model does not justify appearing as a wallet-aware Fresnica command.
 
-For unknown commands the intended resolution is longest command-chain first, then `fresnica-*` -> `stellar-*` -> `soroban-*` for the same chain. Built-ins always win. Plugins remain separate from Signer Providers; writes must return through Fresnica review, authorization, signing, and submission safety.
+Unknown commands use longest matching `fresnica-*` command chain. Built-ins always win. Plugins remain separate from Signer Providers; writes must return through Fresnica review, authorization, signing and submission safety.
 
-Draft PR #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` proves the stronger PATH/listing/platform dispatcher for `stellar-*` and `soroban-*`. The follow-up `feat/terminal-fresnica-plugin-namespace` slice restores `fresnica-*` on top of that dispatcher without a host ABI. Anchor is now the first full native consumer: it proves bounded host re-entry for public context, receive readiness, SEP-10 authentication and interactive-only payment proposal while keeping review, software/Ledger signer selection and signature verification inside Fresnica. This remains consumer evidence, not a generic signing callback or frozen plugin SDK.
+Historical Draft #32 `feat/terminal-stellar-plugin-dispatch@bd55984777de5e9058063dd6fb91580b69f471fa` remains evidence for PATH/platform/argv/exit-code mechanics. The native namespace and Anchor consumer turned those mechanics into the actual product: `fresnica-anchor` proves bounded host re-entry for public context, receive readiness, SEP-10 authentication and interactive payment proposals while review, software/Ledger signer selection and signature verification stay inside Fresnica. `fresnica-tui` remains a reserved companion binary and is excluded from plugin discovery.
 
-The parity branch also verifies that compatible `stellar-*` children receive none of the Fresnica-native host coordination variables, `fresnica-tui` is excluded as a reserved companion binary, and a release-style package discovers only `anchor`. Official Testnet evidence now includes completed SEP-10 token exchange, official SEP-24 browser UI, successful Stellar settlement, typed Fresnica balance confirmation and live SEP-12 read. Physical Ledger SEP-10 and live withdrawal settlement remain acceptance items rather than claimed results.
+Official Testnet evidence includes completed SEP-10 token exchange, official SEP-24 browser UI, successful Stellar settlement, typed Fresnica balance confirmation and live SEP-12 read. Physical Ledger SEP-10 and live withdrawal settlement remain acceptance items rather than claimed results.
+
+
+## v0.3.0 release convergence
+
+- Version: `0.3.0` for `fresnica`, `fresnica-anchor`, `fresnica-tui`, and the shared presentation crate.
+- Release marker: `releases/terminal-v0.3.0.json`.
+- Exact Fresnica source: `4eab2708481ed6a332232039281a6d155a64cfb0`; this is the fast-forward upstream Main candidate and contains no Core/SDK/native-binding product changes beyond the existing Native SDK 0.3.0 ABI baseline.
+- Product plugin namespace: `fresnica-*` only. The former automatic `stellar-*` / `soroban-*` fallback is historical architecture evidence and is intentionally not shipped.
+- Release package contract: `fresnica`, `fresnica-anchor`, `fresnica-tui`; standalone version/help metadata is available for all shipped executables.
+- Main integration is intended as fast-forward in both repositories because the current candidates are strictly ahead of their current Main merge bases.
 
 ## What this milestone was solving
 

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const PREFIXES: [&str; 3] = ["fresnica-", "stellar-", "soroban-"];
+const PREFIX: &str = "fresnica-";
 const RESERVED_NATIVE_EXECUTABLES: [&str; 1] = ["fresnica-tui"];
 
 pub struct NativeHostContext<'a> {
@@ -21,10 +21,8 @@ pub fn command_plugin(args: &[String]) -> Result<(), String> {
         [command] if command == "ls" => {
             let plugins = list_plugins(env::var_os("PATH").as_deref());
             if plugins.is_empty() {
-                println!("No Fresnica or Stellar CLI plugins found on PATH.");
-                println!(
-                    "Plugins are executable commands named fresnica-<name> or stellar-<name>."
-                );
+                println!("No Fresnica plugins found on PATH.");
+                println!("Plugins are executable commands named fresnica-<name>.");
             } else {
                 println!("Installed external CLI plugins:");
                 for plugin in plugins {
@@ -53,24 +51,21 @@ fn run_invocation(
 ) -> Result<i32, String> {
     let mut command = Command::new(&invocation.executable);
     command.args(&invocation.args);
-    if invocation.native {
-        let host = env::current_exe().map_err(|error| {
-            format!("unable to locate Fresnica plugin host executable: {error}")
-        })?;
-        command
-            .env("FRESNICA_PLUGIN_API", "1")
-            .env("FRESNICA_PLUGIN_HOST", host)
-            .env("FRESNICA_PLUGIN_NETWORK", context.network)
-            .env("FRESNICA_HOME", context.home);
-        if let Some(url) = context.horizon_url {
-            command.env("FRESNICA_HORIZON_URL", url);
-        }
-        if let Some(url) = context.rpc_url {
-            command.env("FRESNICA_RPC_URL", url);
-        }
-        if let Some(timeout_seconds) = context.tx_timeout_seconds {
-            command.env("FRESNICA_TX_TIMEOUT_SECONDS", timeout_seconds.to_string());
-        }
+    let host = env::current_exe()
+        .map_err(|error| format!("unable to locate Fresnica plugin host executable: {error}"))?;
+    command
+        .env("FRESNICA_PLUGIN_API", "1")
+        .env("FRESNICA_PLUGIN_HOST", host)
+        .env("FRESNICA_PLUGIN_NETWORK", context.network)
+        .env("FRESNICA_HOME", context.home);
+    if let Some(url) = context.horizon_url {
+        command.env("FRESNICA_HORIZON_URL", url);
+    }
+    if let Some(url) = context.rpc_url {
+        command.env("FRESNICA_RPC_URL", url);
+    }
+    if let Some(timeout_seconds) = context.tx_timeout_seconds {
+        command.env("FRESNICA_TX_TIMEOUT_SECONDS", timeout_seconds.to_string());
     }
     let status = command.status().map_err(|error| {
         format!(
@@ -85,18 +80,9 @@ fn run_invocation(
 struct PluginInvocation {
     executable: PathBuf,
     args: Vec<String>,
-    native: bool,
 }
 
 fn find_plugin(args: &[String], path: Option<&OsStr>) -> Option<PluginInvocation> {
-    find_plugin_with_prefixes(args, path, &PREFIXES)
-}
-
-fn find_plugin_with_prefixes(
-    args: &[String],
-    path: Option<&OsStr>,
-    prefixes: &[&str],
-) -> Option<PluginInvocation> {
     let command_len = args
         .iter()
         .take_while(|argument| !argument.starts_with("--"))
@@ -104,18 +90,15 @@ fn find_plugin_with_prefixes(
 
     for len in (1..=command_len).rev() {
         let command_name = args[..len].join("-");
-        for prefix in prefixes {
-            let executable_name = format!("{prefix}{command_name}");
-            if RESERVED_NATIVE_EXECUTABLES.contains(&executable_name.as_str()) {
-                continue;
-            }
-            if let Some(executable) = find_executable(&executable_name, path) {
-                return Some(PluginInvocation {
-                    executable,
-                    args: args[len..].to_vec(),
-                    native: *prefix == "fresnica-",
-                });
-            }
+        let executable_name = format!("{PREFIX}{command_name}");
+        if RESERVED_NATIVE_EXECUTABLES.contains(&executable_name.as_str()) {
+            continue;
+        }
+        if let Some(executable) = find_executable(&executable_name, path) {
+            return Some(PluginInvocation {
+                executable,
+                args: args[len..].to_vec(),
+            });
         }
     }
 
@@ -146,12 +129,9 @@ fn list_plugins(path: Option<&OsStr>) -> Vec<String> {
             if RESERVED_NATIVE_EXECUTABLES.contains(&file_name) {
                 continue;
             }
-            for prefix in PREFIXES {
-                if let Some(name) = file_name.strip_prefix(prefix) {
-                    if !name.is_empty() {
-                        plugins.insert(name.to_owned());
-                    }
-                    break;
+            if let Some(name) = file_name.strip_prefix(PREFIX) {
+                if !name.is_empty() {
+                    plugins.insert(name.to_owned());
                 }
             }
         }
@@ -234,8 +214,8 @@ mod tests {
     #[test]
     fn plugin_lookup_prefers_longest_command_chain() {
         let root = temporary_directory("longest");
-        create_test_plugin(&root, "stellar-saint-account");
-        create_test_plugin(&root, "stellar-saint");
+        create_test_plugin(&root, "fresnica-saint-account");
+        create_test_plugin(&root, "fresnica-saint");
         let path = env::join_paths([&root]).unwrap();
         let args = ["saint", "account", "GABC", "--json"].map(str::to_owned);
 
@@ -243,7 +223,7 @@ mod tests {
 
         assert_eq!(
             invocation.executable.file_name().and_then(OsStr::to_str),
-            Some(test_executable_name("stellar-saint-account").as_str())
+            Some(test_executable_name("fresnica-saint-account").as_str())
         );
         assert_eq!(invocation.args, ["GABC", "--json"]);
         fs::remove_dir_all(root).unwrap();
@@ -252,7 +232,7 @@ mod tests {
     #[test]
     fn plugin_lookup_falls_back_to_shorter_command_chain() {
         let root = temporary_directory("shorter");
-        create_test_plugin(&root, "stellar-saint");
+        create_test_plugin(&root, "fresnica-saint");
         let path = env::join_paths([&root]).unwrap();
         let args = ["saint", "account", "GABC", "--json"].map(str::to_owned);
 
@@ -260,81 +240,22 @@ mod tests {
 
         assert_eq!(
             invocation.executable.file_name().and_then(OsStr::to_str),
-            Some(test_executable_name("stellar-saint").as_str())
+            Some(test_executable_name("fresnica-saint").as_str())
         );
         assert_eq!(invocation.args, ["account", "GABC", "--json"]);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn plugin_lookup_prefers_longer_chain_before_namespace_priority() {
-        let root = temporary_directory("longer-before-prefix");
-        create_test_plugin(&root, "fresnica-aqua");
-        create_test_plugin(&root, "stellar-aqua-contract");
-        let path = env::join_paths([&root]).unwrap();
-        let args = ["aqua", "contract", "quote"].map(str::to_owned);
-
-        let invocation = find_plugin(&args, Some(&path)).unwrap();
-
-        assert_eq!(
-            invocation.executable.file_name().and_then(OsStr::to_str),
-            Some(test_executable_name("stellar-aqua-contract").as_str())
-        );
-        assert_eq!(invocation.args, ["quote"]);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn plugin_lookup_prefers_fresnica_then_stellar_then_legacy_soroban() {
-        let root = temporary_directory("prefix");
-        create_test_plugin(&root, "fresnica-hello");
+    fn non_fresnica_executables_are_ignored() {
+        let root = temporary_directory("foreign");
         create_test_plugin(&root, "stellar-hello");
         create_test_plugin(&root, "soroban-hello");
         let path = env::join_paths([&root]).unwrap();
         let args = ["hello", "world"].map(str::to_owned);
 
-        let invocation = find_plugin(&args, Some(&path)).unwrap();
-
-        assert_eq!(
-            invocation.executable.file_name().and_then(OsStr::to_str),
-            Some(test_executable_name("fresnica-hello").as_str())
-        );
-        assert_eq!(invocation.args, ["world"]);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn plugin_lookup_prefers_stellar_over_legacy_soroban_without_fresnica_plugin() {
-        let root = temporary_directory("stellar-prefix");
-        create_test_plugin(&root, "stellar-hello");
-        create_test_plugin(&root, "soroban-hello");
-        let path = env::join_paths([&root]).unwrap();
-        let args = ["hello", "world"].map(str::to_owned);
-
-        let invocation = find_plugin(&args, Some(&path)).unwrap();
-
-        assert_eq!(
-            invocation.executable.file_name().and_then(OsStr::to_str),
-            Some(test_executable_name("stellar-hello").as_str())
-        );
-        assert_eq!(invocation.args, ["world"]);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn plugin_lookup_supports_legacy_soroban_prefix() {
-        let root = temporary_directory("legacy");
-        create_test_plugin(&root, "soroban-hello");
-        let path = env::join_paths([&root]).unwrap();
-        let args = ["hello", "world"].map(str::to_owned);
-
-        let invocation = find_plugin(&args, Some(&path)).unwrap();
-
-        assert_eq!(
-            invocation.executable.file_name().and_then(OsStr::to_str),
-            Some(test_executable_name("soroban-hello").as_str())
-        );
-        assert_eq!(invocation.args, ["world"]);
+        assert!(find_plugin(&args, Some(&path)).is_none());
+        assert!(list_plugins(Some(&path)).is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -354,19 +275,19 @@ mod tests {
     #[test]
     fn windows_plugin_listing_accepts_only_exe_names() {
         assert_eq!(
-            strip_windows_executable_suffix("stellar-alpha.exe"),
-            Some("stellar-alpha")
+            strip_windows_executable_suffix("fresnica-alpha.exe"),
+            Some("fresnica-alpha")
         );
         assert_eq!(
-            strip_windows_executable_suffix("stellar-alpha.EXE"),
-            Some("stellar-alpha")
+            strip_windows_executable_suffix("fresnica-alpha.EXE"),
+            Some("fresnica-alpha")
         );
-        assert_eq!(strip_windows_executable_suffix("stellar-alpha"), None);
-        assert_eq!(strip_windows_executable_suffix("stellar-alpha.cmd"), None);
+        assert_eq!(strip_windows_executable_suffix("fresnica-alpha"), None);
+        assert_eq!(strip_windows_executable_suffix("fresnica-alpha.cmd"), None);
     }
 
     #[test]
-    fn plugin_list_deduplicates_all_supported_prefixes() {
+    fn plugin_list_reports_only_fresnica_namespace() {
         let root = temporary_directory("list");
         create_test_plugin(&root, "fresnica-alpha");
         create_test_plugin(&root, "stellar-alpha");
