@@ -2,13 +2,13 @@
 
 Status: **v0.3.0 released; one-shot System Auth is the active post-release slice. Shared Classic/Soroban signing coordination and the macOS high-trust provider boundary are implemented; signed macOS packaging and physical user-presence acceptance remain open.**
 
-Last verified: 2026-09-08.
+Last verified: 2026-09-09.
 
 ## Source of truth
 
 - Current Terminal `main`: `d32e0755e39018ee04a5a30f86102e6d9c9539e9`; released preview `v0.3.0`. Main CI #109 and Release Terminal #86 passed.
-- Active Terminal branch: `feat/terminal-system-auth`; product checkpoint `9e59de1fe2f9d2120debd535311d41dafc672dbd`; exact upstream runtime pin `f8434d8ecfcc5c3ab7d7f61f4566cd79f1cb50d8`.
-- Released upstream Main baseline: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. Active upstream System Auth branch `feat/system-auth-sdk-boundary`: runtime/product `f8434d8ecfcc5c3ab7d7f61f4566cd79f1cb50d8`; docs `e42d6d5382255e3a576926d8234df7ccf7f08c4a`; test-only head `7c62237e6cfb57105b9a01671c126102a3778290`.
+- Active Terminal branch: `feat/terminal-system-auth`; current checkpoint `81b45728667070fbade73308300f38b3716aa22d`; exact upstream pin `ecdc6bf77741949e4f7043153143824ae78a1b44`.
+- Released upstream Main baseline: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. Active upstream System Auth branch `feat/system-auth-sdk-boundary`: Rust runtime/product `f8434d8ecfcc5c3ab7d7f61f4566cd79f1cb50d8`; current Apple/provider head `ecdc6bf77741949e4f7043153143824ae78a1b44`.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
@@ -26,13 +26,13 @@ Active System Auth architecture checkpoint:
 
 - Strong Passphrase remains the wallet protection/recovery root; the 15-scalar minimum is unchanged. `wallet system-auth enable|disable NAME` require a fresh Passphrase. Reveal/Export remain fresh-Passphrase-only.
 - Upstream runtime `f8434d8...` exposes exact-envelope `SystemAuthSlot`, structured final outcomes (`UnlockKey`, `PassphraseRequired`, `Cancelled`, fail-closed error), Classic signing coordination, Soroban detached-G authorization and final envelope signing, plus the Apple provider entrypoint. Core and SDK APIs did not change.
-- Terminal `9e59de1...` uses the same one-shot source for Payment, Trustline, SDEX, Anchor SEP-10/host payments and contract writes. Non-TTY invocation never activates System Auth; no CLI session/cache exists.
+- Terminal `81b4572...` uses the same one-shot source for Payment, Trustline, SDEX, Anchor SEP-10/host payments and contract writes, and adds the signed macOS companion development path. Non-TTY invocation never activates System Auth; no CLI session/cache exists.
 - OS/provider owns biometric retry and biometric -> device credential fallback. Explicit authentication exhaustion/unavailability may request a fresh Fresnica Passphrase; user cancellation aborts without a surprise password prompt; stale signer/envelope, wrong unlock key, malformed provider output or provider-integrity failure fail closed. Passphrase fallback drops System Auth providers for the retry.
 - Exact enrollment identity remains `signer public key + SHA-256(canonical protected envelope)`, so re-protection/passphrase rotation cannot silently reuse enrollment.
 - macOS uses a reserved high-trust sibling `FresnicaSystemAuth.app`, not PATH discovery. Only slot id is passed as argv; the verified 32-byte unlock key travels over private stdin/stdout pipes. The provider receives no Passphrase, mnemonic, S-key or generic signing authority. `fresnica-system-auth-provider` is reserved from ordinary plugin discovery.
-- Apple provider policy is `deviceOwnerAuthentication` / `userPresence`, allowing OS biometric retries and device-passcode fallback. Data Protection Keychain requires a signed app-like wrapper/provisioning profile; the branch compiles the helper on macOS CI but intentionally does not package an unsigned provider as functional.
-- Validation: upstream rust-client 200/200; Terminal boundary/fmt/workspace Clippy `-D warnings`; 7 Anchor + 50 CLI + 2 CLI contract + 3 presentation + 21 TUI tests PASS. Process-provider tests prove raw-key pipe transport and preservation of passphrase-required/cancel/fatal outcomes.
-- Remaining acceptance: macOS native compile/probe on the PR runner, then a real signed/provider package and physical user-context Touch ID/Face ID/system-password test. Windows and Linux providers remain separate later platform slices.
+- Apple provider policy is `deviceOwnerAuthentication` / `userPresence`, allowing OS biometric retries and device-passcode fallback. The EC domain key is created and retrieved in the Data Protection Keychain and is gated by `userPresence`. The development wrapper now uses a shared Xcode scheme and explicitly selects the current Mac as the signing destination so automatic provisioning can register it; unsigned CI never claims functional System Auth.
+- Validation: upstream Required CI #144 PASS; Terminal local boundary/fmt/workspace Clippy `-D warnings`; 7 Anchor + 50 CLI + 2 CLI contract + 3 presentation + 21 TUI tests PASS. Release Terminal #92 PASS, including the macOS shared-scheme provider compile/package gate. Process-provider tests prove raw-key pipe transport and preservation of passphrase-required/cancel/fatal outcomes.
+- Remaining acceptance: rerun the development installer on a real Mac so Xcode registers/provisions that Mac, then complete physical user-context Touch ID/Face ID/system-password enable/release tests. Windows and Linux providers remain separate later platform slices.
 
 Active Anchor native-plugin checkpoint:
 
