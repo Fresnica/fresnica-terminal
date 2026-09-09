@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use fresnica_client::{SystemAuthRelease, SystemAuthSlot, SYSTEM_AUTH_UNLOCK_KEY_LENGTH};
 use windows::core::{factory, HSTRING, PCWSTR, PWSTR};
-use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
+use windows::Security::Credentials::UI::{
+    UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
+};
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
@@ -55,7 +57,9 @@ impl DeviceUnlockBackend for WindowsDeviceUnlockBackend {
     }
 
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String> {
-        self.store.enroll(slot, unlock_key)
+        self.store.enroll(slot, unlock_key)?;
+        warn_if_windows_hello_unavailable();
+        Ok(())
     }
 
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
@@ -130,12 +134,20 @@ impl DeviceAuthenticator for WindowsHelloAuthenticator {
         let outcome = match result {
             UserConsentVerificationResult::Verified => DeviceAuthenticationOutcome::Authenticated,
             UserConsentVerificationResult::Canceled => DeviceAuthenticationOutcome::Cancelled,
-            UserConsentVerificationResult::DeviceNotPresent
-            | UserConsentVerificationResult::NotConfiguredForUser
-            | UserConsentVerificationResult::DisabledByPolicy
-            | UserConsentVerificationResult::DeviceBusy
-            | UserConsentVerificationResult::RetriesExhausted => {
-                DeviceAuthenticationOutcome::PassphraseRequired
+            UserConsentVerificationResult::DeviceNotPresent => {
+                return windows_hello_unavailable("verification device not present")
+            }
+            UserConsentVerificationResult::NotConfiguredForUser => {
+                return windows_hello_unavailable("not configured for the current user")
+            }
+            UserConsentVerificationResult::DisabledByPolicy => {
+                return windows_hello_unavailable("disabled by policy")
+            }
+            UserConsentVerificationResult::DeviceBusy => {
+                return windows_hello_unavailable("verification device is busy")
+            }
+            UserConsentVerificationResult::RetriesExhausted => {
+                return windows_hello_unavailable("verification retries exhausted")
             }
             other => {
                 return Err(format!(
@@ -163,6 +175,42 @@ fn verification_window() -> Option<windows::Win32::Foundation::HWND> {
 fn windows_hello_unavailable(reason: &str) -> Result<DeviceAuthenticationOutcome, String> {
     eprintln!("Windows Hello unavailable ({reason}); Fresnica Passphrase required.");
     Ok(DeviceAuthenticationOutcome::PassphraseRequired)
+}
+
+fn warn_if_windows_hello_unavailable() {
+    let _runtime = match WindowsRuntime::initialize() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!(
+                "Warning: Device Unlock was enabled, but Windows Hello availability could not be checked ({error}). Transactions may require the Fresnica Passphrase."
+            );
+            return;
+        }
+    };
+    match UserConsentVerifier::CheckAvailabilityAsync().and_then(|operation| operation.join()) {
+        Ok(UserConsentVerifierAvailability::Available) => {}
+        Ok(availability) => eprintln!(
+            "Warning: Device Unlock was enabled, but Windows Hello is currently unavailable ({}). Transactions may require the Fresnica Passphrase until Windows Hello becomes available.",
+            windows_hello_availability_reason(availability)
+        ),
+        Err(error) => eprintln!(
+            "Warning: Device Unlock was enabled, but Windows Hello availability could not be checked ({error}). Transactions may require the Fresnica Passphrase."
+        ),
+    }
+}
+
+fn windows_hello_availability_reason(availability: UserConsentVerifierAvailability) -> String {
+    match availability {
+        UserConsentVerifierAvailability::DeviceNotPresent => {
+            "verification device not present".to_owned()
+        }
+        UserConsentVerifierAvailability::NotConfiguredForUser => {
+            "not configured for the current user".to_owned()
+        }
+        UserConsentVerifierAvailability::DisabledByPolicy => "disabled by policy".to_owned(),
+        UserConsentVerifierAvailability::DeviceBusy => "verification device is busy".to_owned(),
+        other => format!("status {}", other.0),
+    }
 }
 
 struct WindowsRuntime;
