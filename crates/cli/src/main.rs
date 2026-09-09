@@ -15,8 +15,10 @@ mod system_auth;
 mod system_auth_linux;
 #[cfg(target_os = "macos")]
 mod system_auth_macos;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 mod system_auth_process;
+#[cfg(target_os = "windows")]
+mod system_auth_windows;
 mod transaction_flow;
 mod trust;
 mod wallet;

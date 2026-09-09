@@ -14,10 +14,10 @@ pub(crate) trait SystemAuthBackend: Send + Sync {
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 struct UnavailableSystemAuthBackend;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 impl SystemAuthBackend for UnavailableSystemAuthBackend {
     fn available(&self) -> bool {
         false
@@ -50,7 +50,12 @@ fn default_backend() -> Arc<dyn SystemAuthBackend> {
     crate::system_auth_macos::backend()
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_os = "windows")]
+fn default_backend() -> Arc<dyn SystemAuthBackend> {
+    crate::system_auth_windows::backend()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn default_backend() -> Arc<dyn SystemAuthBackend> {
     Arc::new(UnavailableSystemAuthBackend)
 }
