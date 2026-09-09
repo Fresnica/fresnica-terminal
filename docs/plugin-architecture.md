@@ -83,9 +83,9 @@ A plugin that needs an on-chain write proposes intent/material back to Fresnica.
 
 Host-owned transaction policy may cross the plugin process boundary without becoming plugin authority. The validated example is Classic transaction lifetime: an explicit `--tx-timeout` is supplied to `fresnica-*` so a later Fresnica-owned payment proposal uses the same reviewed TimeBounds.
 
-Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/passkey-style signers are not plugins.
+Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/secure-enclave/passkey-style signers are not plugins.
 
-System Auth Providers are a third extension class: they authorize local use of an existing protected software signer and may release only its exact-envelope `WalletUnlockKey` to Fresnica after platform authentication. They do not sign arbitrary payloads and are not ordinary plugins or Signer Providers. The macOS implementation is a reserved first-party companion at a fixed sibling app-bundle path; `fresnica-system-auth-provider` is excluded from plugin discovery. Linux likewise uses a separately installed root-owned provider at the fixed `/usr/libexec/fresnica-system-auth-provider` path, with per-release polkit `auth_self` authorization for the exact caller process. Windows uses an administrator-installed provider at a fixed `%ProgramFiles%\Fresnica\SystemAuth` path plus a narrow LocalSystem broker; release is gated by a fresh Win32 WebAuthn/Windows Hello platform assertion that the broker verifies before returning an unlock key. None of these high-trust providers is selected merely from `PATH`.
+Device Unlock is not an extension class or plugin. It is built into the Fresnica CLI and uses only the current OS user's native secure store to release an exact-envelope `WalletUnlockKey` for an already-protected local software signer. It never installs a root helper, privileged daemon, Windows service, or PATH-discovered executable.
 
 ## Anchor protocol placement
 

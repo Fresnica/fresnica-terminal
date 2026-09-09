@@ -6,29 +6,37 @@ use fresnica_client::{
     SystemAuthRelease, SystemAuthSlot, SystemAuthUnlockProvider, WalletStorage,
 };
 
-pub(crate) trait SystemAuthBackend: Send + Sync {
-    fn available(&self) -> bool;
-    fn has(&self, slot: &SystemAuthSlot) -> Result<bool, String>;
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeviceUnlockState {
+    Unavailable,
+    Disabled,
+    Locked,
+    Ready,
+}
+
+pub(crate) trait DeviceUnlockBackend: Send + Sync {
+    fn provider_name(&self) -> &'static str;
+    fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease;
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-struct UnavailableSystemAuthBackend;
-
+struct UnavailableDeviceUnlockBackend;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-impl SystemAuthBackend for UnavailableSystemAuthBackend {
-    fn available(&self) -> bool {
-        false
+impl DeviceUnlockBackend for UnavailableDeviceUnlockBackend {
+    fn provider_name(&self) -> &'static str {
+        "Unavailable"
     }
 
-    fn has(&self, _slot: &SystemAuthSlot) -> Result<bool, String> {
-        Ok(false)
+    fn state(&self, _slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
+        Ok(DeviceUnlockState::Unavailable)
     }
 
     fn enroll(&self, _slot: &SystemAuthSlot, _unlock_key: &[u8]) -> Result<(), String> {
-        Err("system authentication is unavailable on this platform".to_owned())
+        Err("device unlock is unavailable on this platform".to_owned())
     }
 
     fn release(&self, _slot: &SystemAuthSlot) -> SystemAuthRelease {
@@ -41,54 +49,66 @@ impl SystemAuthBackend for UnavailableSystemAuthBackend {
 }
 
 #[cfg(target_os = "linux")]
-fn default_backend() -> Arc<dyn SystemAuthBackend> {
-    crate::system_auth_linux::backend()
+fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
+    crate::device_unlock_linux::backend()
 }
-
 #[cfg(target_os = "macos")]
-fn default_backend() -> Arc<dyn SystemAuthBackend> {
-    crate::system_auth_macos::backend()
+fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
+    crate::device_unlock_macos::backend()
 }
 
 #[cfg(target_os = "windows")]
-fn default_backend() -> Arc<dyn SystemAuthBackend> {
-    crate::system_auth_windows::backend()
+fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
+    crate::device_unlock_windows::backend()
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn default_backend() -> Arc<dyn SystemAuthBackend> {
-    Arc::new(UnavailableSystemAuthBackend)
+fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
+    Arc::new(UnavailableDeviceUnlockBackend)
 }
 
 pub(crate) fn command(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     match arguments {
-        [command, name] if command == "enable" => enable(storage, name, default_backend()),
-        [command, name] if command == "disable" => disable(storage, name, default_backend()),
         [command, name] if command == "status" => status(storage, name, default_backend()),
-        _ => Err("usage: fresnica wallet system-auth enable|disable|status NAME".to_owned()),
+        [command, name] if matches!(command.as_str(), "enable" | "disable") => {
+            if !io::stdin().is_terminal() {
+                return Err(format!(
+                    "device-unlock {command} requires an interactive terminal"
+                ));
+            }
+            if command == "enable" {
+                enable(storage, name, default_backend())
+            } else {
+                disable(storage, name, default_backend())
+            }
+        }
+        _ => Err("usage: fresnica wallet device-unlock enable|disable|status NAME".to_owned()),
     }
 }
 
 fn enable(
     storage: &WalletStorage,
     name: &str,
-    backend: Arc<dyn SystemAuthBackend>,
+    backend: Arc<dyn DeviceUnlockBackend>,
 ) -> Result<(), String> {
-    if !backend.available() {
-        return Err("system authentication is unavailable on this platform".to_owned());
-    }
     let record = storage.load(name)?;
     let slot = system_auth_slot(&record)?;
-    if backend.has(&slot)? {
-        return Err(format!(
-            "system authentication is already enabled for wallet \"{}\"",
-            record.name
-        ));
+    match backend.state(&slot)? {
+        DeviceUnlockState::Unavailable => {
+            return Err("device unlock is unavailable on this platform".to_owned())
+        }
+        DeviceUnlockState::Locked | DeviceUnlockState::Ready => {
+            return Err(format!(
+                "device unlock is already enabled for wallet \"{}\"",
+                record.name
+            ))
+        }
+        DeviceUnlockState::Disabled => {}
     }
     let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
     enable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
     println!(
-        "System authentication enabled for wallet \"{}\" on this device.",
+        "Device unlock enabled for wallet \"{}\" on this device.",
         record.name
     );
     Ok(())
@@ -96,33 +116,35 @@ fn enable(
 
 fn enable_with_passphrase(
     record: &fresnica_client::WalletRecord,
-    backend: &dyn SystemAuthBackend,
+    backend: &dyn DeviceUnlockBackend,
     passphrase: &str,
 ) -> Result<(), String> {
     let enrollment = prepare_system_auth_enrollment(record, passphrase)?;
     backend.enroll(&enrollment.slot, enrollment.unlock_key())
 }
-
 fn disable(
     storage: &WalletStorage,
     name: &str,
-    backend: Arc<dyn SystemAuthBackend>,
+    backend: Arc<dyn DeviceUnlockBackend>,
 ) -> Result<(), String> {
-    if !backend.available() {
-        return Err("system authentication is unavailable on this platform".to_owned());
-    }
     let record = storage.load(name)?;
     let slot = system_auth_slot(&record)?;
-    if !backend.has(&slot)? {
-        return Err(format!(
-            "system authentication is not enabled for wallet \"{}\"",
-            record.name
-        ));
+    match backend.state(&slot)? {
+        DeviceUnlockState::Unavailable => {
+            return Err("device unlock is unavailable on this platform".to_owned())
+        }
+        DeviceUnlockState::Disabled => {
+            return Err(format!(
+                "device unlock is not enabled for wallet \"{}\"",
+                record.name
+            ))
+        }
+        DeviceUnlockState::Locked | DeviceUnlockState::Ready => {}
     }
     let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
     disable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
     println!(
-        "System authentication disabled for wallet \"{}\" on this device.",
+        "Device unlock disabled for wallet \"{}\" on this device.",
         record.name
     );
     Ok(())
@@ -130,7 +152,7 @@ fn disable(
 
 fn disable_with_passphrase(
     record: &fresnica_client::WalletRecord,
-    backend: &dyn SystemAuthBackend,
+    backend: &dyn DeviceUnlockBackend,
     passphrase: &str,
 ) -> Result<(), String> {
     verify_passcode(record, passphrase)?;
@@ -140,41 +162,42 @@ fn disable_with_passphrase(
 fn status(
     storage: &WalletStorage,
     name: &str,
-    backend: Arc<dyn SystemAuthBackend>,
+    backend: Arc<dyn DeviceUnlockBackend>,
 ) -> Result<(), String> {
     let record = storage.load(name)?;
     if record.watch_only() || record.secret.is_none() {
-        println!("System authentication: not applicable (no software signer)");
-        return Ok(());
-    }
-    if !backend.available() {
-        println!("System authentication: unavailable on this platform");
+        println!("Device unlock: not applicable (no software signer)");
         return Ok(());
     }
     let slot = system_auth_slot(&record)?;
-    println!(
-        "System authentication: {}",
-        if backend.has(&slot)? {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
+    let state = backend.state(&slot)?;
+    println!("Device unlock: {}", state_label(state));
+    if state != DeviceUnlockState::Unavailable {
+        println!("Provider: {}", backend.provider_name());
+    }
     Ok(())
 }
 
+fn state_label(state: DeviceUnlockState) -> &'static str {
+    match state {
+        DeviceUnlockState::Unavailable => "unavailable",
+        DeviceUnlockState::Disabled => "disabled",
+        DeviceUnlockState::Locked => "locked",
+        DeviceUnlockState::Ready => "ready",
+    }
+}
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
     providers_for_backend(client, default_backend(), io::stdin().is_terminal())
 }
 
-pub(crate) fn providers_for_backend(
+fn providers_for_backend(
     client: &FresnicaClient,
-    backend: Arc<dyn SystemAuthBackend>,
+    backend: Arc<dyn DeviceUnlockBackend>,
     interactive: bool,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
-    if !interactive || !backend.available() {
+    if !interactive {
         return Ok(Vec::new());
     }
 
@@ -184,7 +207,10 @@ pub(crate) fn providers_for_backend(
             continue;
         }
         let slot = system_auth_slot(&record)?;
-        if !backend.has(&slot)? {
+        if !matches!(
+            backend.state(&slot)?,
+            DeviceUnlockState::Locked | DeviceUnlockState::Ready
+        ) {
             continue;
         }
         let expected_slot = slot.clone();
@@ -194,9 +220,23 @@ pub(crate) fn providers_for_backend(
             move |requested_slot| {
                 if requested_slot != &expected_slot {
                     return SystemAuthRelease::Failed(
-                        "system-auth enrollment is stale for the current signer envelope"
+                        "device-unlock enrollment is stale for the current signer envelope"
                             .to_owned(),
                     );
+                }
+                match provider_backend.state(requested_slot) {
+                    Ok(DeviceUnlockState::Ready) => eprintln!(
+                        "Device unlock: ready ({})",
+                        provider_backend.provider_name()
+                    ),
+                    Ok(DeviceUnlockState::Locked) => eprintln!(
+                        "Device unlock: locked; requesting {} unlock...",
+                        provider_backend.provider_name()
+                    ),
+                    Ok(DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable) => {
+                        return SystemAuthRelease::PassphraseRequired
+                    }
+                    Err(error) => return SystemAuthRelease::Failed(error),
                 }
                 provider_backend.release(requested_slot)
             },
@@ -231,13 +271,18 @@ mod tests {
         }
     }
 
-    impl SystemAuthBackend for FakeBackend {
-        fn available(&self) -> bool {
-            true
+    impl DeviceUnlockBackend for FakeBackend {
+        fn provider_name(&self) -> &'static str {
+            "Fake Device Store"
         }
-
-        fn has(&self, slot: &SystemAuthSlot) -> Result<bool, String> {
-            Ok(self.values.lock().unwrap().contains_key(&slot.storage_id()))
+        fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
+            Ok(
+                if self.values.lock().unwrap().contains_key(&slot.storage_id()) {
+                    DeviceUnlockState::Ready
+                } else {
+                    DeviceUnlockState::Disabled
+                },
+            )
         }
 
         fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String> {
@@ -260,7 +305,7 @@ mod tests {
 
     fn client() -> (FresnicaClient, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!(
-            "fresnica-terminal-system-auth-{}-{}",
+            "fresnica-terminal-device-unlock-{}-{}",
             std::process::id(),
             std::thread::current().name().unwrap_or("test")
         ));
@@ -288,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn noninteractive_invocation_never_activates_system_auth() {
+    fn noninteractive_invocation_never_activates_device_unlock() {
         let (client, root) = client();
         let record =
             wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
@@ -304,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn enrollment_and_removal_require_the_fresh_fresnica_passphrase() {
+    fn enrollment_and_removal_require_fresh_fresnica_passphrase() {
         let (client, root) = client();
         let record =
             wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
@@ -313,21 +358,20 @@ mod tests {
         let slot = system_auth_slot(&record).unwrap();
 
         assert!(enable_with_passphrase(&record, backend.as_ref(), "wrong passphrase").is_err());
-        assert!(!backend.has(&slot).unwrap());
+        assert_eq!(backend.state(&slot).unwrap(), DeviceUnlockState::Disabled);
 
         enable_with_passphrase(&record, backend.as_ref(), PASSCODE).unwrap();
-        assert!(backend.has(&slot).unwrap());
-
+        assert_eq!(backend.state(&slot).unwrap(), DeviceUnlockState::Ready);
         assert!(disable_with_passphrase(&record, backend.as_ref(), "wrong passphrase").is_err());
-        assert!(backend.has(&slot).unwrap());
+        assert_eq!(backend.state(&slot).unwrap(), DeviceUnlockState::Ready);
 
         disable_with_passphrase(&record, backend.as_ref(), PASSCODE).unwrap();
-        assert!(!backend.has(&slot).unwrap());
+        assert_eq!(backend.state(&slot).unwrap(), DeviceUnlockState::Disabled);
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn changed_envelope_does_not_reuse_old_enrollment() {
+    fn changed_envelope_does_not_reuse_device_unlock_enrollment() {
         let (client, root) = client();
         let record =
             wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();

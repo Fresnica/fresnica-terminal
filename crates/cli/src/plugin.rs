@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const PREFIX: &str = "fresnica-";
-const RESERVED_NATIVE_EXECUTABLES: [&str; 2] = ["fresnica-tui", "fresnica-system-auth-provider"];
+const RESERVED_NATIVE_EXECUTABLES: [&str; 1] = ["fresnica-tui"];
 
 pub struct NativeHostContext<'a> {
     pub home: &'a Path,
@@ -264,7 +264,6 @@ mod tests {
         let root = temporary_directory("companion-tui");
         create_test_plugin(&root, "fresnica-anchor");
         create_test_plugin(&root, "fresnica-tui");
-        create_test_plugin(&root, "fresnica-system-auth-provider");
         let path = env::join_paths([&root]).unwrap();
 
         assert_eq!(list_plugins(Some(&path)), vec!["anchor"]);

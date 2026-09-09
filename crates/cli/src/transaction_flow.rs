@@ -118,12 +118,12 @@ pub fn with_software_signer_authorization<T>(
     client: &FresnicaClient,
     mut authorize: impl FnMut(Option<&str>, &[SystemAuthUnlockProvider]) -> Result<T, String>,
 ) -> Result<T, String> {
-    let system_auth_providers = crate::system_auth::one_shot_providers(client)?;
+    let device_unlock_providers = crate::device_unlock::one_shot_providers(client)?;
     submit_with_authorization_sources(
-        &system_auth_providers,
+        &device_unlock_providers,
         &[],
         || crate::prompt_hidden("Fresnica passphrase: "),
-        |passphrase, system_auth, _| authorize(passphrase, system_auth),
+        |passphrase, device_unlock, _| authorize(passphrase, device_unlock),
     )
 }
 
@@ -136,9 +136,9 @@ pub fn submit_with_classic_signers<T>(
     ) -> Result<T, String>,
 ) -> Result<T, String> {
     let external_providers = crate::ledger::external_signing_providers(client)?;
-    let system_auth_providers = crate::system_auth::one_shot_providers(client)?;
+    let device_unlock_providers = crate::device_unlock::one_shot_providers(client)?;
     submit_with_authorization_sources(
-        &system_auth_providers,
+        &device_unlock_providers,
         &external_providers,
         || crate::prompt_hidden("Fresnica passphrase: "),
         submit,
@@ -146,7 +146,7 @@ pub fn submit_with_classic_signers<T>(
 }
 
 fn submit_with_authorization_sources<T>(
-    system_auth_providers: &[SystemAuthUnlockProvider],
+    device_unlock_providers: &[SystemAuthUnlockProvider],
     external_providers: &[ExternalEd25519SigningProvider],
     mut prompt_passphrase: impl FnMut() -> Result<Zeroizing<String>, String>,
     mut submit: impl FnMut(
@@ -155,15 +155,21 @@ fn submit_with_authorization_sources<T>(
         &[ExternalEd25519SigningProvider],
     ) -> Result<T, String>,
 ) -> Result<T, String> {
-    match submit(None, system_auth_providers, external_providers) {
+    match submit(None, device_unlock_providers, external_providers) {
         Err(error) if error == LOCAL_SOFTWARE_PASSPHRASE_REQUIRED => {
             let passphrase = prompt_passphrase()?;
             // A fresh passphrase is the higher-authority fallback. Do not also
-            // invoke device System Auth for other selected software signers.
-            submit(Some(passphrase.as_str()), &[], external_providers)
+            // use Device Unlock for other selected software signers.
+            submit(Some(passphrase.as_str()), &[], external_providers).map_err(device_unlock_error)
         }
-        result => result,
+        result => result.map_err(device_unlock_error),
     }
+}
+
+fn device_unlock_error(error: String) -> String {
+    error
+        .replace("System authentication", "Device unlock")
+        .replace("system-auth", "device-unlock")
 }
 
 pub fn confirm_submission() -> Result<bool, String> {
@@ -192,7 +198,7 @@ mod tests {
     const SIGNER: &str = "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR";
 
     #[test]
-    fn passphrase_fallback_drops_system_auth_providers() {
+    fn passphrase_fallback_drops_device_unlock_providers() {
         let system =
             SystemAuthUnlockProvider::new(SIGNER, |_| SystemAuthRelease::Cancelled).unwrap();
         let mut attempts = 0usize;
@@ -200,16 +206,16 @@ mod tests {
             &[system],
             &[],
             || Ok(Zeroizing::new("correct horse battery staple".to_owned())),
-            |passphrase, system_auth, external| {
+            |passphrase, device_unlock, external| {
                 attempts += 1;
                 assert!(external.is_empty());
                 if attempts == 1 {
                     assert!(passphrase.is_none());
-                    assert_eq!(system_auth.len(), 1);
+                    assert_eq!(device_unlock.len(), 1);
                     Err(LOCAL_SOFTWARE_PASSPHRASE_REQUIRED.to_owned())
                 } else {
                     assert_eq!(passphrase, Some("correct horse battery staple"));
-                    assert!(system_auth.is_empty());
+                    assert!(device_unlock.is_empty());
                     Ok("submitted")
                 }
             },
@@ -220,21 +226,21 @@ mod tests {
     }
 
     #[test]
-    fn system_auth_failure_does_not_silently_downgrade_to_passphrase() {
+    fn device_unlock_failure_does_not_silently_downgrade_to_passphrase() {
         let system =
             SystemAuthUnlockProvider::new(SIGNER, |_| SystemAuthRelease::Cancelled).unwrap();
         let error = submit_with_authorization_sources::<()>(
             &[system],
             &[],
             || panic!("provider failure must not prompt for passphrase"),
-            |passphrase, system_auth, _| {
+            |passphrase, device_unlock, _| {
                 assert!(passphrase.is_none());
-                assert_eq!(system_auth.len(), 1);
+                assert_eq!(device_unlock.len(), 1);
                 Err("System authentication for signer failed: cancelled".to_owned())
             },
         )
         .unwrap_err();
-        assert!(error.contains("cancelled"));
+        assert_eq!(error, "Device unlock for signer failed: cancelled");
     }
 
     #[test]

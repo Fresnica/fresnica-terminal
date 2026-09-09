@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/anchor-plugin", "crates/presentation", "crates/tui", "crates/system-auth-linux-provider", "crates/system-auth-windows-provider"]
+members = ["crates/cli", "crates/anchor-plugin", "crates/presentation", "crates/tui"]
 resolver = "2"
 
 [workspace.dependencies.fresnica-client]

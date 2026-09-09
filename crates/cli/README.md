@@ -50,9 +50,9 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `wallet attach-secret NAME`
 - `wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]`
 - `wallet detach-signer NAME`
-- `wallet system-auth enable NAME`
-- `wallet system-auth disable NAME`
-- `wallet system-auth status NAME`
+- `wallet device-unlock enable NAME`
+- `wallet device-unlock disable NAME`
+- `wallet device-unlock status NAME`
 - `wallet testnet-fund [--wallet NAME]` (`wallet fund` is an alias)
 - `wallet reveal [NAME]`
 - `wallet backup NAME PATH`
@@ -91,15 +91,9 @@ app at `m/44'/148'/N'` (default `N=0`) and persist only public provider metadata
 wallet record. `wallet detach-ledger` removes only that metadata. `wallet detach-signer` removes
 only local protected software signing material after passphrase verification.
 
-System Auth is an optional device-local convenience for an exact protected software signer; the strong Fresnica Passphrase remains the protection/recovery root. Enable/disable require a fresh Passphrase. Interactive CLI signing may then use one-shot OS authentication for Payment, Trustline, SDEX, Anchor SEP-10/host payments, detached Classic Soroban authorization, and the final Soroban envelope. Non-TTY CLI invocation never activates System Auth. OS biometric retries and device-credential fallback remain provider policy; explicit authentication exhaustion may fall back to a fresh Fresnica Passphrase, user cancellation aborts the operation, and stale/invalid signer-envelope or unlock-key state fails closed. Reveal/Export remain fresh-Passphrase-only.
+Device Unlock is an optional convenience for protected software signers. It stores only the exact-envelope 32-byte wallet unlock key in the current OS user's secure store; the Fresnica Passphrase remains the recovery and protection root. Enable/disable require a fresh Passphrase, while Reveal/Export and protection changes never accept Device Unlock. Non-TTY CLI invocations do not activate it.
 
-macOS uses a reserved first-party companion provider located beside `fresnica`, not a PATH plugin. The provider owns Data Protection Keychain / LocalAuthentication and receives only an exact slot id plus the verified 32-byte `WalletUnlockKey` over private pipes. Production packaging requires an Apple-signed app-like wrapper with the required provisioning profile; the source/compile gate is present but an unsigned helper is intentionally not shipped as if it were functional.
-
-For physical macOS development acceptance, `scripts/install-macos-system-auth-development.sh UPSTREAM_DIR DESTINATION_DIR` prepares the app-like Xcode target from the exact pinned upstream Apple sources, uses the local Apple Development identity with Xcode automatic provisioning, verifies the embedded macOS provisioning profile and keychain access-group entitlement, and installs `FresnicaSystemAuth.app` beside the selected `fresnica` binary. Development signing is intentionally separate from later Developer ID distribution/notarization.
-
-Linux uses a separately installed high-trust provider at the fixed path `/usr/libexec/fresnica-system-auth-provider`; it is never discovered from `PATH`. The provider is root-owned/setuid, namespaces 32-byte unlock-key records by the real caller UID under root-only `/var/lib/fresnica-system-auth`, and performs release only after polkit authorizes the exact calling process with `pid,start-time,uid`. The installed `com.fresnica.system-auth.release` action uses `auth_self` only for active local sessions and deliberately does not use the temporary-authorization `*_keep` modes. No suitable local authentication agent or an authorization denial returns explicit Fresnica Passphrase fallback; dismissing the OS prompt maps to cancellation; malformed provider/storage state fails closed. Root CLI sessions do not claim System Auth. Build `fresnica-system-auth-provider`, then run `scripts/install-linux-system-auth-provider.sh PROVIDER_BINARY` as root to install the provider and policy.
-
-Windows uses an administrator-installed high-trust provider at `%ProgramFiles%\Fresnica\SystemAuth\fresnica-system-auth-provider.exe` plus a `FresnicaSystemAuth` LocalSystem service; neither is PATH-discovered or an ordinary plugin. The service identifies the named-pipe client's real Windows SID, rejects any client executable outside the fixed provider path, protects enrollment state with LocalSystem-scoped DPAPI under `%ProgramData%\Fresnica\SystemAuth`, and releases an exact 32-byte unlock key only after a Win32 WebAuthn platform assertion for the exact stored credential passes RP, user-presence/user-verification and RSA-2048/RS256 signature verification. The Win32 WebAuthn path is used because it is designed for desktop applications and does not rely on UWP package identity. DPAPI is storage protection only, never authentication proof. Unavailable platform authentication maps to fresh Fresnica Passphrase fallback; user dismissal maps to cancellation; malformed state, credential mismatch, or invalid proof fails closed. `scripts/install-windows-system-auth-development.ps1` installs and ACLs the provider/service for physical development acceptance.
+Fresnica stays portable: there is no privileged helper, daemon, service, polkit policy, or administrator install. macOS uses the user's legacy Login Keychain, Linux uses the desktop Secret Service (for example GNOME Keyring or KWallet), and Windows uses the current user's Credential Manager. `device-unlock status` reports `disabled`, `locked`, `ready`, or `unavailable` without intentionally unlocking the store. On macOS/Linux a locked store is unlocked by the OS-native prompt when signing actually needs the key; an already-unlocked store is reported as `ready` and is used directly. Windows Credential Manager has no equivalent vault-lock state in this baseline, so an existing credential is `ready`.
 
 Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
 Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
@@ -190,7 +184,7 @@ Human help sanitizes control characters from untrusted on-chain documentation be
 
 Fresnica uses the executable-dispatch idea proven by Stellar CLI, but the product namespace is intentionally Fresnica-only. Unknown commands resolve by longest command chain to `fresnica-<command-chain>` executables on PATH. `stellar-*` and legacy `soroban-*` executables are not auto-dispatched: they use a different developer-tool identity/config model and would create a misleading wallet-context expectation under the `fresnica` command.
 
-For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` and the reserved `fresnica-system-auth-provider` companion are not plugins.
+For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` is a reserved companion binary, not a plugin.
 
 Installed Fresnica plugins can be inspected with:
 
