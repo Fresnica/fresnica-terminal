@@ -2,9 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use fresnica_client::{SystemAuthRelease, SystemAuthSlot, SYSTEM_AUTH_UNLOCK_KEY_LENGTH};
 use windows::core::{factory, HSTRING, PCWSTR, PWSTR};
-use windows::Security::Credentials::UI::{
-    UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
-};
+use windows::Security::Credentials::UI::{UserConsentVerificationResult, UserConsentVerifier};
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
@@ -92,37 +90,42 @@ impl DeviceAuthenticator for WindowsHelloAuthenticator {
             return Ok(DeviceAuthenticationOutcome::Authenticated);
         }
 
+        // Desktop verification intentionally goes straight through
+        // IUserConsentVerifierInterop. Do not gate it with the UWP-style
+        // CheckAvailabilityAsync path before requesting verification.
         let _runtime = match WindowsRuntime::initialize() {
             Ok(runtime) => runtime,
-            Err(_) => return windows_hello_unavailable(),
+            Err(error) => return windows_hello_unavailable(&error),
         };
-        let availability = match UserConsentVerifier::CheckAvailabilityAsync()
-            .and_then(|operation| operation.join())
-        {
-            Ok(availability) => availability,
-            Err(_) => return windows_hello_unavailable(),
-        };
-        if availability != UserConsentVerifierAvailability::Available {
-            return windows_hello_unavailable();
-        }
-
         let Some(window) = verification_window() else {
-            return windows_hello_unavailable();
+            return windows_hello_unavailable("no active terminal window handle");
         };
         let interop: IUserConsentVerifierInterop =
             match factory::<UserConsentVerifier, IUserConsentVerifierInterop>() {
                 Ok(interop) => interop,
-                Err(_) => return windows_hello_unavailable(),
+                Err(error) => {
+                    return windows_hello_unavailable(&format!(
+                        "unable to open desktop verification API: {error}"
+                    ))
+                }
             };
         let operation: IAsyncOperation<UserConsentVerificationResult> = match unsafe {
             interop.RequestVerificationForWindowAsync(window, &HSTRING::from(AUTH_MESSAGE))
         } {
             Ok(operation) => operation,
-            Err(_) => return windows_hello_unavailable(),
+            Err(error) => {
+                return windows_hello_unavailable(&format!(
+                    "unable to request desktop verification: {error}"
+                ))
+            }
         };
         let result = match operation.join() {
             Ok(result) => result,
-            Err(_) => return windows_hello_unavailable(),
+            Err(error) => {
+                return windows_hello_unavailable(&format!(
+                    "desktop verification did not complete: {error}"
+                ))
+            }
         };
         let outcome = match result {
             UserConsentVerificationResult::Verified => DeviceAuthenticationOutcome::Authenticated,
@@ -157,8 +160,8 @@ fn verification_window() -> Option<windows::Win32::Foundation::HWND> {
     (!console.0.is_null()).then_some(console)
 }
 
-fn windows_hello_unavailable() -> Result<DeviceAuthenticationOutcome, String> {
-    eprintln!("Windows Hello unavailable; Fresnica Passphrase required.");
+fn windows_hello_unavailable(reason: &str) -> Result<DeviceAuthenticationOutcome, String> {
+    eprintln!("Windows Hello unavailable ({reason}); Fresnica Passphrase required.");
     Ok(DeviceAuthenticationOutcome::PassphraseRequired)
 }
 
