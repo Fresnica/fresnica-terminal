@@ -1630,6 +1630,8 @@ dependencies = [
  "tokio",
  "ureq",
  "windows",
+ "windows-future",
+ "zbus",
  "zeroize",
 ]
 

@@ -144,7 +144,9 @@ impl DeviceSecretStore for MacKeychainStore {
         let keychain = default_keychain()?;
         let (password, _) = match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
             Ok(value) => value,
-            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(DeviceSecretRead::Missing),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
+                return Ok(DeviceSecretRead::Missing)
+            }
             Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
                 return Ok(DeviceSecretRead::Cancelled)
             }

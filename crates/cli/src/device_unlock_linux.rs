@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use fresnica_client::{SystemAuthRelease, SystemAuthSlot, SYSTEM_AUTH_UNLOCK_KEY_LENGTH};
 use secret_service::blocking::{Collection, SecretService};
 use secret_service::{EncryptionType, Error as SecretServiceError};
+use zbus::blocking::{Connection, Proxy};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zeroize::Zeroize;
 
 use crate::device_unlock::{
@@ -16,6 +18,10 @@ const COLLECTION_LABEL: &str = "Fresnica Device Unlock";
 const COLLECTION_ALIAS: &str = "fresnica-device-unlock";
 const ITEM_LABEL: &str = "Fresnica Device Unlock";
 const CONTENT_TYPE: &str = "application/octet-stream";
+const SECRET_SERVICE_NAME: &str = "org.freedesktop.secrets";
+const SECRET_SERVICE_PATH: &str = "/org/freedesktop/secrets";
+const SECRET_SERVICE_INTERFACE: &str = "org.freedesktop.Secret.Service";
+const SECRET_PROMPT_INTERFACE: &str = "org.freedesktop.Secret.Prompt";
 
 pub(crate) fn backend() -> Arc<dyn DeviceUnlockBackend> {
     Arc::new(LinuxDeviceUnlockBackend {
@@ -107,10 +113,12 @@ impl DeviceAuthenticator for LinuxSecretServiceAuthenticator {
         if !collection
             .is_locked()
             .map_err(|error| format!("unable to query Fresnica keyring state: {error}"))?
+            && !lock_without_prompt(&collection.collection_path)?
         {
-            collection
-                .lock()
-                .map_err(|error| format!("unable to lock Fresnica keyring: {error}"))?;
+            eprintln!(
+                "Desktop authentication cannot relock the Fresnica keyring without a prompt; Fresnica Passphrase required."
+            );
+            return Ok(DeviceAuthenticationOutcome::PassphraseRequired);
         }
         if !collection
             .is_locked()
@@ -118,14 +126,25 @@ impl DeviceAuthenticator for LinuxSecretServiceAuthenticator {
         {
             return Err("desktop secret service did not lock the Fresnica keyring".to_owned());
         }
-        match collection.unlock() {
-            Ok(()) => {}
-            Err(SecretServiceError::Prompt) => {
-                return Ok(DeviceAuthenticationOutcome::Cancelled)
+
+        let outcome = unlock_with_required_prompt(&collection.collection_path)?;
+        if outcome == DeviceAuthenticationOutcome::PassphraseRequired {
+            eprintln!(
+                "Desktop authentication did not provide a user prompt; Fresnica Passphrase required."
+            );
+        }
+        if outcome != DeviceAuthenticationOutcome::Authenticated {
+            if !collection
+                .is_locked()
+                .map_err(|error| format!("unable to query Fresnica keyring state: {error}"))?
+                && !lock_without_prompt(&collection.collection_path)?
+            {
+                return Err(
+                    "desktop secret service could not relock the Fresnica keyring without a prompt"
+                        .to_owned(),
+                );
             }
-            Err(error) => {
-                return Err(format!("unable to unlock Fresnica keyring: {error}"))
-            }
+            return Ok(outcome);
         }
         if collection
             .is_locked()
@@ -200,9 +219,12 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
             )
             .map_err(|error| format!("unable to store device unlock key: {error}"))?;
         delete_legacy_default_items(&service, &collection, &slot_id)?;
-        collection
-            .lock()
-            .map_err(|error| format!("unable to lock Fresnica keyring after enrollment: {error}"))?;
+        if !lock_without_prompt(&collection.collection_path)? {
+            return Err(
+                "desktop secret service could not lock the Fresnica keyring without a prompt"
+                    .to_owned(),
+            );
+        }
         Ok(())
     }
 
@@ -235,9 +257,7 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
             .map_err(|error| format!("unable to read device unlock key: {error}"))?;
         if secret.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
             secret.zeroize();
-            return Err(
-                "desktop secret service returned an invalid device unlock key".to_owned(),
-            );
+            return Err("desktop secret service returned an invalid device unlock key".to_owned());
         }
         Ok(DeviceSecretRead::Secret(secret))
     }
@@ -267,6 +287,76 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
     }
 }
 
+fn lock_without_prompt(collection_path: &OwnedObjectPath) -> Result<bool, String> {
+    let connection = Connection::session()
+        .map_err(|error| format!("unable to connect to desktop session bus: {error}"))?;
+    let service = Proxy::new(
+        &connection,
+        SECRET_SERVICE_NAME,
+        SECRET_SERVICE_PATH,
+        SECRET_SERVICE_INTERFACE,
+    )
+    .map_err(|error| format!("unable to open Secret Service interface: {error}"))?;
+    let objects = vec![collection_path.clone()];
+    let (locked, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) = service
+        .call("Lock", &objects)
+        .map_err(|error| format!("unable to request Fresnica keyring lock: {error}"))?;
+    Ok(!locked.is_empty() && prompt.as_str() == "/")
+}
+
+fn unlock_with_required_prompt(
+    collection_path: &OwnedObjectPath,
+) -> Result<DeviceAuthenticationOutcome, String> {
+    let connection = Connection::session()
+        .map_err(|error| format!("unable to connect to desktop session bus: {error}"))?;
+    let service = Proxy::new(
+        &connection,
+        SECRET_SERVICE_NAME,
+        SECRET_SERVICE_PATH,
+        SECRET_SERVICE_INTERFACE,
+    )
+    .map_err(|error| format!("unable to open Secret Service interface: {error}"))?;
+    let objects = vec![collection_path.clone()];
+    let (unlocked, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) = service
+        .call("Unlock", &objects)
+        .map_err(|error| format!("unable to request Fresnica keyring unlock: {error}"))?;
+
+    if !unlocked.is_empty() {
+        return Ok(DeviceAuthenticationOutcome::PassphraseRequired);
+    }
+    if prompt.as_str() == "/" {
+        return Err(
+            "desktop secret service neither prompted nor unlocked the Fresnica keyring".to_owned(),
+        );
+    }
+
+    let prompt_proxy = Proxy::new(
+        &connection,
+        SECRET_SERVICE_NAME,
+        prompt.as_str(),
+        SECRET_PROMPT_INTERFACE,
+    )
+    .map_err(|error| format!("unable to open Secret Service prompt: {error}"))?;
+    let mut completed = prompt_proxy
+        .receive_signal("Completed")
+        .map_err(|error| format!("unable to receive Secret Service prompt result: {error}"))?;
+    let _: () = prompt_proxy
+        .call("Prompt", &"")
+        .map_err(|error| format!("unable to display Secret Service prompt: {error}"))?;
+    let message = completed.next().ok_or_else(|| {
+        "desktop secret service prompt disconnected before authentication completed".to_owned()
+    })?;
+    let (dismissed, _result): (bool, OwnedValue) = message
+        .body()
+        .deserialize()
+        .map_err(|error| format!("unable to decode Secret Service prompt result: {error}"))?;
+    if dismissed {
+        Ok(DeviceAuthenticationOutcome::Cancelled)
+    } else {
+        Ok(DeviceAuthenticationOutcome::Authenticated)
+    }
+}
+
 fn connect() -> Result<SecretService<'static>, String> {
     SecretService::connect(EncryptionType::Dh)
         .map_err(|error| format!("desktop secret service is unavailable: {error}"))
@@ -282,10 +372,12 @@ fn relock_collection() -> Result<(), String> {
     if !collection
         .is_locked()
         .map_err(|error| format!("unable to query Fresnica keyring state: {error}"))?
+        && !lock_without_prompt(&collection.collection_path)?
     {
-        collection
-            .lock()
-            .map_err(|error| format!("unable to lock Fresnica keyring: {error}"))?;
+        return Err(
+            "desktop secret service could not relock the Fresnica keyring without a prompt"
+                .to_owned(),
+        );
     }
     Ok(())
 }

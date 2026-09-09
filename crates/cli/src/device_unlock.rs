@@ -28,6 +28,7 @@ pub(crate) trait DeviceAuthenticator: Send + Sync {
     fn authenticate(&self) -> Result<DeviceAuthenticationOutcome, String>;
 }
 
+#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DeviceSecretRead {
     Secret(Vec<u8>),
