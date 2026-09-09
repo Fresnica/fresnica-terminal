@@ -2,7 +2,7 @@
 
 Test build only. Use Testnet and a disposable or low-value software wallet.
 
-Product checkpoint: `a224a02ea6a1e42f76c734ae26728f473f0d159b` on `feat/terminal-device-auth-cross-platform`.
+Product checkpoint: `fd2ef75e77360ed4034dabedb81d4c18772701ac` on `feat/terminal-device-auth-cross-platform`.
 
 ## Scope
 
