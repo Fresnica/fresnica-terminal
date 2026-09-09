@@ -46,12 +46,44 @@ product_dir="$work/product"
 obj_root="$work/obj"
 
 destination_arch="$(uname -m)"
-echo "Provisioning destination: this Mac ($destination_arch)"
+provisioning_udid="$(system_profiler SPHardwareDataType \
+  | sed -nE 's/^[[:space:]]*Provisioning UDID:[[:space:]]*//p' \
+  | head -n 1)"
+if [[ -z "$provisioning_udid" ]]; then
+  provisioning_udid="$(system_profiler SPHardwareDataType \
+    | sed -nE 's/^[[:space:]]*Hardware UUID:[[:space:]]*//p' \
+    | head -n 1)"
+fi
 
-xcodebuild \
+destinations="$(xcodebuild \
   -project "$work/FresnicaSystemAuth.xcodeproj" \
   -scheme FresnicaSystemAuth \
-  -destination "platform=macOS,arch=$destination_arch" \
+  -showdestinations 2>/dev/null || true)"
+destination_id="$(printf '%s\n' "$destinations" | awk -v arch="$destination_arch" '
+  index($0, "platform:macOS") && index($0, "arch:" arch) && $0 !~ /name:Any Mac/ {
+    if (match($0, /id:[^,}]+/)) {
+      id = substr($0, RSTART + 3, RLENGTH - 3)
+      gsub(/^[ \t]+|[ \t]+$/, "", id)
+      print id
+      exit
+    }
+  }
+')"
+if [[ -z "$destination_id" ]]; then
+  echo "Xcode did not expose this Mac as a concrete build destination." >&2
+  printf '%s\n' "$destinations" >&2
+  exit 2
+fi
+
+echo "Provisioning destination: this Mac ($destination_arch, Xcode id $destination_id)"
+if [[ -n "$provisioning_udid" ]]; then
+  echo "Provisioning UDID: $provisioning_udid"
+fi
+
+if ! xcodebuild \
+  -project "$work/FresnicaSystemAuth.xcodeproj" \
+  -scheme FresnicaSystemAuth \
+  -destination "platform=macOS,id=$destination_id" \
   -configuration Release \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
@@ -61,7 +93,17 @@ xcodebuild \
   PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" \
   CONFIGURATION_BUILD_DIR="$product_dir" \
   OBJROOT="$obj_root" \
-  build
+  build; then
+  echo "Xcode could not build/provision the System Auth companion." >&2
+  if [[ -n "$provisioning_udid" ]]; then
+    echo "If Xcode reported that the team has no devices or no Mac App Development profile," >&2
+    echo "register this Mac in Apple Developer -> Certificates, Identifiers & Profiles -> Devices:" >&2
+    echo "  platform: macOS" >&2
+    echo "  device id: $provisioning_udid" >&2
+    echo "Then rerun this installer; automatic signing can create/update the development profile." >&2
+  fi
+  exit 1
+fi
 
 app="$product_dir/FresnicaSystemAuth.app"
 provider="$app/Contents/MacOS/fresnica-system-auth-provider"
