@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "macOS System Auth provider must be compiled on macOS." >&2
+  exit 2
+fi
+
+upstream="${1:?usage: build-macos-system-auth-provider.sh UPSTREAM_DIR OUTPUT_DIR}"
+output="${2:?usage: build-macos-system-auth-provider.sh UPSTREAM_DIR OUTPUT_DIR}"
+mkdir -p "$output"
+output="$(cd "$output" && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_root="$output/xcode-project"
+product_dir="$output/product"
+obj_root="$output/obj"
+
+"$script_dir/prepare-macos-system-auth-development-project.sh" \
+  "$upstream" "$project_root" >/dev/null
+
+xcodebuild \
+  -project "$project_root/FresnicaSystemAuth.xcodeproj" \
+  -scheme FresnicaSystemAuth \
+  -configuration Release \
+  CODE_SIGNING_ALLOWED=NO \
+  CONFIGURATION_BUILD_DIR="$product_dir" \
+  OBJROOT="$obj_root" \
+  build >&2
+
+app="$product_dir/FresnicaSystemAuth.app"
+if [[ ! -d "$app" ]]; then
+  echo "Xcode did not produce FresnicaSystemAuth.app at $app" >&2
+  find "$output" -maxdepth 4 -type d -name 'FresnicaSystemAuth.app' -print >&2 || true
+  exit 1
+fi
+printf '%s\n' "$app"

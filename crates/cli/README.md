@@ -50,6 +50,9 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `wallet attach-secret NAME`
 - `wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]`
 - `wallet detach-signer NAME`
+- `wallet system-auth enable NAME`
+- `wallet system-auth disable NAME`
+- `wallet system-auth status NAME`
 - `wallet testnet-fund [--wallet NAME]` (`wallet fund` is an alias)
 - `wallet reveal [NAME]`
 - `wallet backup NAME PATH`
@@ -87,6 +90,12 @@ changing wallet identity. Software signer attachment passes the existing G addre
 app at `m/44'/148'/N'` (default `N=0`) and persist only public provider metadata in the existing
 wallet record. `wallet detach-ledger` removes only that metadata. `wallet detach-signer` removes
 only local protected software signing material after passphrase verification.
+
+System Auth is an optional device-local convenience for an exact protected software signer; the strong Fresnica Passphrase remains the protection/recovery root. Enable/disable require a fresh Passphrase. Interactive CLI signing may then use one-shot OS authentication for Payment, Trustline, SDEX, Anchor SEP-10/host payments, detached Classic Soroban authorization, and the final Soroban envelope. Non-TTY CLI invocation never activates System Auth. OS biometric retries and device-credential fallback remain provider policy; explicit authentication exhaustion may fall back to a fresh Fresnica Passphrase, user cancellation aborts the operation, and stale/invalid signer-envelope or unlock-key state fails closed. Reveal/Export remain fresh-Passphrase-only.
+
+macOS uses a reserved first-party companion provider located beside `fresnica`, not a PATH plugin. The provider owns Data Protection Keychain / LocalAuthentication and receives only an exact slot id plus the verified 32-byte `WalletUnlockKey` over private pipes. Production packaging requires an Apple-signed app-like wrapper with the required provisioning profile; the source/compile gate is present but an unsigned helper is intentionally not shipped as if it were functional. Linux external System Auth providers remain future explicitly trusted providers, never ordinary `fresnica-*` plugins.
+
+For physical macOS development acceptance, `scripts/install-macos-system-auth-development.sh UPSTREAM_DIR DESTINATION_DIR` prepares the app-like Xcode target from the exact pinned upstream Apple sources, uses the local Apple Development identity with Xcode automatic provisioning, verifies the embedded macOS provisioning profile and keychain access-group entitlement, and installs `FresnicaSystemAuth.app` beside the selected `fresnica` binary. Development signing is intentionally separate from later Developer ID distribution/notarization.
 
 Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
 Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
@@ -177,7 +186,7 @@ Human help sanitizes control characters from untrusted on-chain documentation be
 
 Fresnica uses the executable-dispatch idea proven by Stellar CLI, but the product namespace is intentionally Fresnica-only. Unknown commands resolve by longest command chain to `fresnica-<command-chain>` executables on PATH. `stellar-*` and legacy `soroban-*` executables are not auto-dispatched: they use a different developer-tool identity/config model and would create a misleading wallet-context expectation under the `fresnica` command.
 
-For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` is a reserved companion binary, not a plugin.
+For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` and the reserved `fresnica-system-auth-provider` companion are not plugins.
 
 Installed Fresnica plugins can be inspected with:
 

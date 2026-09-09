@@ -83,7 +83,9 @@ A plugin that needs an on-chain write proposes intent/material back to Fresnica.
 
 Host-owned transaction policy may cross the plugin process boundary without becoming plugin authority. The validated example is Classic transaction lifetime: an explicit `--tx-timeout` is supplied to `fresnica-*` so a later Fresnica-owned payment proposal uses the same reviewed TimeBounds.
 
-Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/secure-enclave/passkey-style signers are not plugins.
+Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/passkey-style signers are not plugins.
+
+System Auth Providers are a third extension class: they authorize local use of an existing protected software signer and may release only its exact-envelope `WalletUnlockKey` to Fresnica after platform authentication. They do not sign arbitrary payloads and are not ordinary plugins or Signer Providers. The first macOS implementation is a reserved first-party companion at a fixed sibling app-bundle path; `fresnica-system-auth-provider` is excluded from plugin discovery. Future Linux providers require explicit trust/registration and must never be selected merely from `PATH`.
 
 ## Anchor protocol placement
 

@@ -1,14 +1,14 @@
 # Fresnica Terminal Current State
 
-Status: **v0.3.0 release candidate: architecture stack converged; Ledger Classic, Anchor native plugin, legacy SEP-6 compatibility and configurable Classic lifetime are validated; Fresnica-native plugins are the only product plugin namespace; Main/release integration pending final gate**.
+Status: **v0.3.0 released; one-shot System Auth is the active post-release slice. Shared Classic/Soroban signing coordination and the macOS high-trust provider path are implemented and physically accepted on a real Mac.**
 
-Last verified: 2026-09-08.
+Last verified: 2026-09-09.
 
 ## Source of truth
 
-- Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
-- Current Terminal release branch: `feat/terminal-classic-tx-timeout`; v0.3.0 convergence RC before final Main repin: `82951714eabbaf5c400cdc6c5fe3ded0e67c7eaf`. Repository HEAD is authoritative for the final repin commit.
-- Current exact upstream pin: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c` on `main`; tree `2092f301a74addcd6a844aa3083a5b0e79bb7805`. Upstream integration PR #180 was squash-merged with a GitHub-verified signature; Main bundle #66 passed.
+- Current Terminal `main`: `d32e0755e39018ee04a5a30f86102e6d9c9539e9`; released preview `v0.3.0`. Main CI #109 and Release Terminal #86 passed.
+- Active Terminal branch: `feat/terminal-system-auth`; current checkpoint `2ce06047c77c44ed2dce0c6e2d70099994031757`; exact upstream pin `ecdc6bf77741949e4f7043153143824ae78a1b44`.
+- Released upstream Main baseline: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. Active upstream System Auth branch `feat/system-auth-sdk-boundary`: Rust runtime/product `f8434d8ecfcc5c3ab7d7f61f4566cd79f1cb50d8`; current Apple/provider head `ecdc6bf77741949e4f7043153143824ae78a1b44`.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
@@ -21,6 +21,18 @@ Last verified: 2026-09-08.
 - Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts. Durable plugin namespace/trust decisions are authoritative in [`docs/plugin-architecture.md`](plugin-architecture.md); this CURRENT file records implementation state only.
+
+Active System Auth architecture checkpoint:
+
+- Strong Passphrase remains the wallet protection/recovery root; the 15-scalar minimum is unchanged. `wallet system-auth enable|disable NAME` require a fresh Passphrase. Reveal/Export remain fresh-Passphrase-only.
+- Upstream runtime `f8434d8...` exposes exact-envelope `SystemAuthSlot`, structured final outcomes (`UnlockKey`, `PassphraseRequired`, `Cancelled`, fail-closed error), Classic signing coordination, Soroban detached-G authorization and final envelope signing, plus the Apple provider entrypoint. Core and SDK APIs did not change.
+- Terminal `2ce0604...` uses the same one-shot source for Payment, Trustline, SDEX, Anchor SEP-10/host payments and contract writes, and adds the signed macOS companion development path. Non-TTY invocation never activates System Auth; no CLI session/cache exists.
+- OS/provider owns biometric retry and biometric -> device credential fallback. Explicit authentication exhaustion/unavailability may request a fresh Fresnica Passphrase; user cancellation aborts without a surprise password prompt; stale signer/envelope, wrong unlock key, malformed provider output or provider-integrity failure fail closed. Passphrase fallback drops System Auth providers for the retry.
+- Exact enrollment identity remains `signer public key + SHA-256(canonical protected envelope)`, so re-protection/passphrase rotation cannot silently reuse enrollment.
+- macOS uses a reserved high-trust sibling `FresnicaSystemAuth.app`, not PATH discovery. Only slot id is passed as argv; the verified 32-byte unlock key travels over private stdin/stdout pipes. The provider receives no Passphrase, mnemonic, S-key or generic signing authority. `fresnica-system-auth-provider` is reserved from ordinary plugin discovery.
+- Apple provider policy is `deviceOwnerAuthentication` / `userPresence`, allowing OS biometric retries and device-passcode fallback. The EC domain key is created and retrieved in the Data Protection Keychain and is gated by `userPresence`. The development wrapper uses a shared Xcode scheme, resolves the concrete local Mac destination ID, prints the Provisioning UDID, and requests Xcode automatic device registration/provisioning; unsigned builds never claim functional System Auth.
+- Validation: upstream Required CI #144 PASS; latest Terminal local boundary, workspace tests (7 Anchor + 50 CLI + 2 CLI contract + 3 presentation + 21 TUI) and workspace Clippy `-D warnings` PASS. Release Terminal #92 PASS, including the macOS shared-scheme provider compile/package gate. Process-provider tests prove raw-key pipe transport and preservation of passphrase-required/cancel/fatal outcomes. On 2026-09-09 the development installer completed successfully on a physical Mac after the concrete-destination provisioning fix. User-executed physical acceptance proved: enrollment with fresh Fresnica Passphrase; `status` without authentication; routine Testnet signing with Touch ID; biometric failure transitioning to the macOS password fallback; successful signing with the macOS password; cancellation from the password prompt aborting with `System authentication cancelled` rather than silently downgrading to Fresnica Passphrase; and the full `disable -> status disabled -> re-enable -> sign` lifecycle, with signing restored after re-enrollment.
+- macOS System Auth physical acceptance is complete for this milestone. Exact-envelope re-protection invalidation remains covered by unit tests; Terminal has no passphrase-rotation/re-protection command, so no artificial acceptance-only product surface was added. Windows and Linux providers remain separate later platform slices.
 
 Active Anchor native-plugin checkpoint:
 

@@ -13,6 +13,8 @@ on:
       - "Cargo.lock"
       - "FRESNICA_REV"
       - "crates/**"
+      - "scripts/*macos-system-auth*.sh"
+      - "scripts/macos-system-auth-development/**"
 
 permissions:
   contents: write
@@ -181,6 +183,13 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout pinned Fresnica source for macOS System Auth provider
+        if: matrix.asset_os == 'macos'
+        uses: actions/checkout@v4
+        with:
+          repository: Fresnica/fresnica
+          ref: ${{ needs.prepare.outputs.fresnica_rev }}
+          path: upstream-system-auth
       - name: Install native Rust toolchain
         if: ${{ !matrix.cross_windows }}
         uses: dtolnay/rust-toolchain@stable
@@ -262,6 +271,22 @@ jobs:
           cargo build --release --locked -p fresnica-cli --bin fresnica
           cargo build --release --locked -p fresnica-anchor-plugin --bin fresnica-anchor
           cargo build --release --locked -p fresnica-tui --bin fresnica-tui
+      - name: Compile macOS System Auth provider
+        if: matrix.asset_os == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(bash scripts/build-macos-system-auth-provider.sh upstream-system-auth build/system-auth)"
+          provider="$app/Contents/MacOS/fresnica-system-auth-provider"
+          test -x "$provider"
+          set +e
+          "$provider" probe >/dev/null 2>&1
+          status=$?
+          set -e
+          if [[ "$status" -ne 0 && "$status" -ne 10 ]]; then
+            echo "macOS System Auth provider probe failed with exit $status" >&2
+            exit 1
+          fi
       - name: Build Windows MSVC binaries
         if: matrix.cross_windows
         shell: bash
