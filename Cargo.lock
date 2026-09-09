@@ -1463,6 +1463,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fresnica-system-auth-linux-provider"
+version = "0.3.0"
+dependencies = [
+ "sha2 0.10.9",
+ "zeroize",
+]
+
+[[package]]
 name = "fresnica-terminal-presentation"
 version = "0.3.0"
 dependencies = [

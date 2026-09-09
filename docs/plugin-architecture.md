@@ -85,7 +85,7 @@ Host-owned transaction policy may cross the plugin process boundary without beco
 
 Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/passkey-style signers are not plugins.
 
-System Auth Providers are a third extension class: they authorize local use of an existing protected software signer and may release only its exact-envelope `WalletUnlockKey` to Fresnica after platform authentication. They do not sign arbitrary payloads and are not ordinary plugins or Signer Providers. The first macOS implementation is a reserved first-party companion at a fixed sibling app-bundle path; `fresnica-system-auth-provider` is excluded from plugin discovery. Future Linux providers require explicit trust/registration and must never be selected merely from `PATH`.
+System Auth Providers are a third extension class: they authorize local use of an existing protected software signer and may release only its exact-envelope `WalletUnlockKey` to Fresnica after platform authentication. They do not sign arbitrary payloads and are not ordinary plugins or Signer Providers. The macOS implementation is a reserved first-party companion at a fixed sibling app-bundle path; `fresnica-system-auth-provider` is excluded from plugin discovery. Linux likewise uses a separately installed root-owned provider at the fixed `/usr/libexec/fresnica-system-auth-provider` path, with per-release polkit `auth_self` authorization for the exact caller process; it is never selected merely from `PATH`.
 
 ## Anchor protocol placement
 

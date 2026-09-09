@@ -11,9 +11,11 @@ mod plugin_host;
 mod read_commands;
 mod send;
 mod system_auth;
+#[cfg(target_os = "linux")]
+mod system_auth_linux;
 #[cfg(target_os = "macos")]
 mod system_auth_macos;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod system_auth_process;
 mod transaction_flow;
 mod trust;
