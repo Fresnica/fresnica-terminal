@@ -1,6 +1,6 @@
 # Fresnica Terminal Linux System Auth 实机验收
 
-适用测试包：`x86_64` Linux，产品代码基线 `40c54873ad8543c68434c029958e5f4a39d5a348`。
+适用测试包：`x86_64` Linux。打包源树 `40c54873ad8543c68434c029958e5f4a39d5a348`；System Auth 产品代码 checkpoint `9dc54225846e9f192153c329b348613128ef0b5b`。
 
 ## 目标
 
