@@ -29,6 +29,7 @@ pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Resul
     let submission = match device_choice {
         Some(choice) => submit_with_classic_signers_choice(
             client,
+            &prepared.review.ledger_authorization,
             choice,
             |passcode, system_auth, providers| {
                 client.submit_offer_with_providers(&prepared, passcode, system_auth, providers)

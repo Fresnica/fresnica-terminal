@@ -242,18 +242,27 @@ fn prompt_device_unlock_choice(
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
-    providers_for_backend(client, default_backend(), io::stdin().is_terminal(), None)
+    providers_for_backend(
+        client,
+        default_backend(),
+        io::stdin().is_terminal(),
+        None,
+        None,
+    )
 }
 
 pub(crate) fn one_shot_providers_with_choice(
     client: &FresnicaClient,
+    authorization: &LedgerAuthorizationSnapshot,
     choice: DeviceUnlockChoice,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
+    let local_keys = authorization_local_keys(authorization);
     providers_for_backend(
         client,
         default_backend(),
         io::stdin().is_terminal(),
         Some(choice),
+        Some(&local_keys),
     )
 }
 
@@ -344,6 +353,7 @@ fn providers_for_backend(
     backend: Arc<dyn DeviceUnlockBackend>,
     interactive: bool,
     preset_choice: Option<DeviceUnlockChoice>,
+    allowed_keys: Option<&BTreeSet<String>>,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
     if !interactive {
         return Ok(Vec::new());
@@ -355,11 +365,18 @@ fn providers_for_backend(
         if record.watch_only() || record.secret.is_none() {
             continue;
         }
+        if let Some(allowed_keys) = allowed_keys {
+            if !allowed_keys.contains(&record.address) {
+                continue;
+            }
+        }
         let slot = system_auth_slot(&record)?;
-        if !matches!(
-            backend.state(&slot)?,
-            DeviceUnlockState::Locked | DeviceUnlockState::Ready
-        ) {
+        if allowed_keys.is_none()
+            && !matches!(
+                backend.state(&slot)?,
+                DeviceUnlockState::Locked | DeviceUnlockState::Ready
+            )
+        {
             continue;
         }
         let expected_slot = slot.clone();
@@ -374,37 +391,38 @@ fn providers_for_backend(
                             .to_owned(),
                     );
                 }
-                let state = match provider_backend.state(requested_slot) {
-                    Ok(DeviceUnlockState::Ready) => DeviceUnlockState::Ready,
-                    Ok(DeviceUnlockState::Locked) => DeviceUnlockState::Locked,
-                    Ok(DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable) => {
-                        return SystemAuthRelease::PassphraseRequired
+                let preset = provider_choice.lock().ok().and_then(|choice| *choice);
+                let (state, choice) = if let Some(choice) = preset {
+                    (None, choice)
+                } else {
+                    let state = match provider_backend.state(requested_slot) {
+                        Ok(DeviceUnlockState::Ready) => DeviceUnlockState::Ready,
+                        Ok(DeviceUnlockState::Locked) => DeviceUnlockState::Locked,
+                        Ok(DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable) => {
+                            return SystemAuthRelease::PassphraseRequired
+                        }
+                        Err(error) => return SystemAuthRelease::Failed(error),
+                    };
+                    let selected = match prompt_device_unlock_choice(
+                        state,
+                        provider_backend.provider_name(),
+                    ) {
+                        Ok(selected) => selected,
+                        Err(error) => return SystemAuthRelease::Failed(error),
+                    };
+                    match provider_choice.lock() {
+                        Ok(mut choice) => *choice = Some(selected),
+                        Err(_) => {
+                            return SystemAuthRelease::Failed(
+                                "device unlock choice state is unavailable".to_owned(),
+                            )
+                        }
                     }
-                    Err(error) => return SystemAuthRelease::Failed(error),
-                };
-                let choice = match provider_choice.lock() {
-                    Ok(mut choice) => match *choice {
-                        Some(choice) => choice,
-                        None => match prompt_device_unlock_choice(
-                            state,
-                            provider_backend.provider_name(),
-                        ) {
-                            Ok(selected) => {
-                                *choice = Some(selected);
-                                selected
-                            }
-                            Err(error) => return SystemAuthRelease::Failed(error),
-                        },
-                    },
-                    Err(_) => {
-                        return SystemAuthRelease::Failed(
-                            "device unlock choice state is unavailable".to_owned(),
-                        )
-                    }
+                    (Some(state), selected)
                 };
                 match choice {
                     DeviceUnlockChoice::UseDevice => {
-                        if state == DeviceUnlockState::Locked {
+                        if state == Some(DeviceUnlockState::Locked) {
                             println!("Requesting {} unlock...", provider_backend.provider_name());
                         }
                         provider_backend.release(requested_slot)
@@ -499,7 +517,7 @@ mod tests {
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
-        let providers = providers_for_backend(&client, backend, true, None).unwrap();
+        let providers = providers_for_backend(&client, backend, true, None, None).unwrap();
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].public_key(), record.address);
         std::fs::remove_dir_all(root).unwrap();
@@ -515,7 +533,7 @@ mod tests {
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
-        assert!(providers_for_backend(&client, backend, false, None)
+        assert!(providers_for_backend(&client, backend, false, None, None)
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();
@@ -577,7 +595,7 @@ mod tests {
         .unwrap();
         client.storage().save(&changed, false).unwrap();
 
-        assert!(providers_for_backend(&client, backend, true, None)
+        assert!(providers_for_backend(&client, backend, true, None, None)
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();

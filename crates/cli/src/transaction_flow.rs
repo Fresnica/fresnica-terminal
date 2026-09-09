@@ -147,6 +147,7 @@ pub fn submit_with_classic_signers<T>(
 
 pub fn submit_with_classic_signers_choice<T>(
     client: &FresnicaClient,
+    authorization: &LedgerAuthorizationSnapshot,
     choice: crate::device_unlock::DeviceUnlockChoice,
     mut submit: impl FnMut(
         Option<&str>,
@@ -157,7 +158,11 @@ pub fn submit_with_classic_signers_choice<T>(
     let external_providers = crate::ledger::external_signing_providers(client)?;
     match choice {
         crate::device_unlock::DeviceUnlockChoice::UseDevice => {
-            let providers = crate::device_unlock::one_shot_providers_with_choice(client, choice)?;
+            let providers = crate::device_unlock::one_shot_providers_with_choice(
+                client,
+                authorization,
+                choice,
+            )?;
             submit_with_authorization_sources(
                 &providers,
                 &external_providers,

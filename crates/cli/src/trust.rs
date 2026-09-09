@@ -40,6 +40,7 @@ fn review_and_submit(
     let submission = match device_choice {
         Some(choice) => submit_with_classic_signers_choice(
             client,
+            &prepared.review.ledger_authorization,
             choice,
             |passcode, system_auth, providers| {
                 client.submit_trustline_with_providers(prepared, passcode, system_auth, providers)

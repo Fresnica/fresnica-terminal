@@ -55,32 +55,15 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
     }
 
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
-        let mut keychain = match default_keychain() {
+        let keychain = match default_keychain() {
             Ok(keychain) => keychain,
             Err(error) => return SystemAuthRelease::Failed(error),
         };
-        match item_exists(&keychain, slot) {
-            Ok(true) => {}
-            Ok(false) => return SystemAuthRelease::PassphraseRequired,
-            Err(error) => return SystemAuthRelease::Failed(error),
-        }
-        match keychain_unlocked(&keychain) {
-            Ok(true) => {}
-            Ok(false) => {
-                if let Err(error) = keychain.unlock(None) {
-                    return if error.code() == ERR_SEC_USER_CANCELED {
-                        SystemAuthRelease::Cancelled
-                    } else {
-                        SystemAuthRelease::Failed(format!(
-                            "unable to unlock macOS Login Keychain: {error}"
-                        ))
-                    };
-                }
-            }
-            Err(error) => return SystemAuthRelease::Failed(error),
-        }
         let (password, _) = match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
             Ok(value) => value,
+            Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
+                return SystemAuthRelease::Cancelled
+            }
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
                 return SystemAuthRelease::PassphraseRequired
             }
