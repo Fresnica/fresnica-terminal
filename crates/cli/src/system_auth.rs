@@ -14,8 +14,10 @@ pub(crate) trait SystemAuthBackend: Send + Sync {
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
 
+#[cfg(not(target_os = "macos"))]
 struct UnavailableSystemAuthBackend;
 
+#[cfg(not(target_os = "macos"))]
 impl SystemAuthBackend for UnavailableSystemAuthBackend {
     fn available(&self) -> bool {
         false
