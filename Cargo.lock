@@ -1615,6 +1615,7 @@ dependencies = [
 name = "fresnica-cli"
 version = "0.3.0"
 dependencies = [
+ "core-foundation",
  "fresnica-client",
  "fresnica-terminal-presentation",
  "rpassword",

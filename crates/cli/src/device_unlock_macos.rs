@@ -1,12 +1,10 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 
+use core_foundation::base::TCFType;
 use fresnica_client::{SystemAuthRelease, SystemAuthSlot, SYSTEM_AUTH_UNLOCK_KEY_LENGTH};
 use security_framework::item::{ItemClass, ItemSearchOptions};
 use security_framework::os::macos::keychain::SecKeychain;
-use security_framework::passwords::{
-    delete_generic_password, generic_password, set_generic_password, PasswordOptions,
-};
 use zeroize::Zeroize;
 
 use crate::device_unlock::{DeviceUnlockBackend, DeviceUnlockState};
@@ -27,16 +25,18 @@ pub(crate) fn backend() -> Arc<dyn DeviceUnlockBackend> {
 }
 
 struct MacDeviceUnlockBackend;
+
 impl DeviceUnlockBackend for MacDeviceUnlockBackend {
     fn provider_name(&self) -> &'static str {
         PROVIDER_NAME
     }
 
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
-        if !item_exists(slot)? {
+        let keychain = default_keychain()?;
+        if !item_exists(&keychain, slot)? {
             return Ok(DeviceUnlockState::Disabled);
         }
-        match keychain_unlocked() {
+        match keychain_unlocked(&keychain) {
             Ok(true) => Ok(DeviceUnlockState::Ready),
             Ok(false) => Ok(DeviceUnlockState::Locked),
             Err(_) => Ok(DeviceUnlockState::Unavailable),
@@ -47,28 +47,26 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
         if unlock_key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
             return Err("device unlock requires exactly 32 key bytes".to_owned());
         }
-        ensure_keychain_unlocked()?;
-        set_generic_password(SERVICE, &slot.storage_id(), unlock_key)
+        let mut keychain = default_keychain()?;
+        ensure_keychain_unlocked(&mut keychain)?;
+        keychain
+            .set_generic_password(SERVICE, &slot.storage_id(), unlock_key)
             .map_err(|error| format!("unable to store device unlock key: {error}"))
     }
 
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
-        match item_exists(slot) {
+        let mut keychain = match default_keychain() {
+            Ok(keychain) => keychain,
+            Err(error) => return SystemAuthRelease::Failed(error),
+        };
+        match item_exists(&keychain, slot) {
             Ok(true) => {}
             Ok(false) => return SystemAuthRelease::PassphraseRequired,
             Err(error) => return SystemAuthRelease::Failed(error),
         }
-        match keychain_unlocked() {
+        match keychain_unlocked(&keychain) {
             Ok(true) => {}
             Ok(false) => {
-                let mut keychain = match SecKeychain::default() {
-                    Ok(keychain) => keychain,
-                    Err(error) => {
-                        return SystemAuthRelease::Failed(format!(
-                            "unable to open macOS Login Keychain: {error}"
-                        ))
-                    }
-                };
                 if let Err(error) = keychain.unlock(None) {
                     return if error.code() == ERR_SEC_USER_CANCELED {
                         SystemAuthRelease::Cancelled
@@ -81,9 +79,8 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
             }
             Err(error) => return SystemAuthRelease::Failed(error),
         }
-        let options = PasswordOptions::new_generic_password(SERVICE, &slot.storage_id());
-        let mut key = match generic_password(options) {
-            Ok(key) => key,
+        let (password, _) = match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
+            Ok(value) => value,
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
                 return SystemAuthRelease::PassphraseRequired
             }
@@ -93,6 +90,7 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
                 ))
             }
         };
+        let mut key = password.as_ref().to_vec();
         if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
             key.zeroize();
             return SystemAuthRelease::Failed(
@@ -103,21 +101,30 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
     }
 
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String> {
-        if !item_exists(slot)? {
+        let mut keychain = default_keychain()?;
+        if !item_exists(&keychain, slot)? {
             return Ok(());
         }
-        ensure_keychain_unlocked()?;
-        match delete_generic_password(SERVICE, &slot.storage_id()) {
-            Ok(()) => Ok(()),
+        ensure_keychain_unlocked(&mut keychain)?;
+        match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
+            Ok((_, item)) => {
+                item.delete();
+                Ok(())
+            }
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(error) => Err(format!("unable to remove device unlock key: {error}")),
         }
     }
 }
 
-fn item_exists(slot: &SystemAuthSlot) -> Result<bool, String> {
+fn default_keychain() -> Result<SecKeychain, String> {
+    SecKeychain::default().map_err(|error| format!("unable to open macOS Login Keychain: {error}"))
+}
+
+fn item_exists(keychain: &SecKeychain, slot: &SystemAuthSlot) -> Result<bool, String> {
     let mut search = ItemSearchOptions::new();
     search
+        .keychains(std::slice::from_ref(keychain))
         .class(ItemClass::generic_password())
         .service(SERVICE)
         .account(&slot.storage_id())
@@ -126,13 +133,15 @@ fn item_exists(slot: &SystemAuthSlot) -> Result<bool, String> {
     match search.search() {
         Ok(results) => Ok(!results.is_empty()),
         Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(false),
-        Err(error) => Err(format!("unable to query macOS Keychain: {error}")),
+        Err(error) => Err(format!("unable to query macOS Login Keychain: {error}")),
     }
 }
 
-fn keychain_unlocked() -> Result<bool, String> {
+fn keychain_unlocked(keychain: &SecKeychain) -> Result<bool, String> {
     let mut status = 0u32;
-    let result = unsafe { SecKeychainGetStatus(std::ptr::null_mut(), &mut status) };
+    let result = unsafe {
+        SecKeychainGetStatus(keychain.as_concrete_TypeRef().cast::<c_void>(), &mut status)
+    };
     if result != 0 {
         return Err(format!(
             "unable to query macOS Login Keychain status: {result}"
@@ -141,12 +150,10 @@ fn keychain_unlocked() -> Result<bool, String> {
     Ok(status & K_SEC_UNLOCK_STATE_STATUS != 0)
 }
 
-fn ensure_keychain_unlocked() -> Result<(), String> {
-    if keychain_unlocked()? {
+fn ensure_keychain_unlocked(keychain: &mut SecKeychain) -> Result<(), String> {
+    if keychain_unlocked(keychain)? {
         return Ok(());
     }
-    let mut keychain = SecKeychain::default()
-        .map_err(|error| format!("unable to open macOS Login Keychain: {error}"))?;
     keychain.unlock(None).map_err(|error| {
         if error.code() == ERR_SEC_USER_CANCELED {
             "device unlock cancelled".to_owned()

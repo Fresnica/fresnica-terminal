@@ -1,9 +1,11 @@
+use std::collections::BTreeSet;
 use std::io::{self, IsTerminal, Write};
 use std::sync::{Arc, Mutex};
 
 use fresnica_client::{
     prepare_system_auth_enrollment, system_auth_slot, verify_passcode, FresnicaClient,
-    SystemAuthRelease, SystemAuthSlot, SystemAuthUnlockProvider, WalletStorage,
+    LedgerAuthorizationSnapshot, LedgerSignerAvailability, SystemAuthRelease, SystemAuthSlot,
+    SystemAuthUnlockProvider, WalletStorage,
 };
 
 #[allow(dead_code)]
@@ -188,7 +190,7 @@ fn state_label(state: DeviceUnlockState) -> &'static str {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DeviceUnlockChoice {
+pub(crate) enum DeviceUnlockChoice {
     UseDevice,
     UsePassphrase,
     Cancel,
@@ -240,20 +242,115 @@ fn prompt_device_unlock_choice(
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
-    providers_for_backend(client, default_backend(), io::stdin().is_terminal())
+    providers_for_backend(client, default_backend(), io::stdin().is_terminal(), None)
+}
+
+pub(crate) fn one_shot_providers_with_choice(
+    client: &FresnicaClient,
+    choice: DeviceUnlockChoice,
+) -> Result<Vec<SystemAuthUnlockProvider>, String> {
+    providers_for_backend(
+        client,
+        default_backend(),
+        io::stdin().is_terminal(),
+        Some(choice),
+    )
+}
+
+pub(crate) fn transaction_choice(
+    client: &FresnicaClient,
+    authorization: &LedgerAuthorizationSnapshot,
+    assume_yes: bool,
+) -> Result<Option<DeviceUnlockChoice>, String> {
+    if !io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    let local_keys = authorization_local_keys(authorization);
+    if local_keys.is_empty() {
+        return Ok(None);
+    }
+    let backend = default_backend();
+    let mut state = None;
+    for record in client.wallets()? {
+        if !local_keys.contains(&record.address) || record.watch_only() || record.secret.is_none() {
+            continue;
+        }
+        match backend.state(&system_auth_slot(&record)?)? {
+            DeviceUnlockState::Ready => {
+                state = Some(DeviceUnlockState::Ready);
+                break;
+            }
+            DeviceUnlockState::Locked => state = Some(DeviceUnlockState::Locked),
+            DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => {}
+        }
+    }
+    let Some(state) = state else {
+        return Ok(None);
+    };
+    println!(
+        "Device unlock: {} ({})",
+        state_label(state),
+        backend.provider_name()
+    );
+    if assume_yes {
+        return Ok(Some(DeviceUnlockChoice::UseDevice));
+    }
+    let prompt = match state {
+        DeviceUnlockState::Ready => {
+            "[Enter] Sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
+        }
+        DeviceUnlockState::Locked => {
+            "[Enter] Unlock, sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
+        }
+        DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => unreachable!(),
+    };
+    loop {
+        print!("{prompt}");
+        io::stdout()
+            .flush()
+            .map_err(|error| format!("unable to write device unlock prompt: {error}"))?;
+        let mut answer = String::new();
+        let read = io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| format!("unable to read device unlock choice: {error}"))?;
+        if read == 0 {
+            return Ok(Some(DeviceUnlockChoice::Cancel));
+        }
+        if let Some(choice) = parse_device_unlock_choice(&answer) {
+            return Ok(Some(choice));
+        }
+        println!("Enter p or c, or press Enter to use device unlock.");
+    }
+}
+
+fn authorization_local_keys(authorization: &LedgerAuthorizationSnapshot) -> BTreeSet<String> {
+    let account_keys = authorization.accounts.iter().flat_map(|account| {
+        account
+            .signers
+            .iter()
+            .filter(|signer| signer.availability == LedgerSignerAvailability::LocalEd25519)
+            .map(|signer| signer.condition.key.clone())
+    });
+    let extra_keys = authorization
+        .extra_signers
+        .iter()
+        .filter(|signer| signer.availability == LedgerSignerAvailability::LocalEd25519)
+        .map(|signer| signer.condition.key.clone());
+    account_keys.chain(extra_keys).collect()
 }
 
 fn providers_for_backend(
     client: &FresnicaClient,
     backend: Arc<dyn DeviceUnlockBackend>,
     interactive: bool,
+    preset_choice: Option<DeviceUnlockChoice>,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
     if !interactive {
         return Ok(Vec::new());
     }
 
     let mut providers = Vec::new();
-    let shared_choice = Arc::new(Mutex::new(None));
+    let shared_choice = Arc::new(Mutex::new(preset_choice));
     for record in client.wallets()? {
         if record.watch_only() || record.secret.is_none() {
             continue;
@@ -402,7 +499,7 @@ mod tests {
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
-        let providers = providers_for_backend(&client, backend, true).unwrap();
+        let providers = providers_for_backend(&client, backend, true, None).unwrap();
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].public_key(), record.address);
         std::fs::remove_dir_all(root).unwrap();
@@ -418,7 +515,7 @@ mod tests {
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
-        assert!(providers_for_backend(&client, backend, false)
+        assert!(providers_for_backend(&client, backend, false, None)
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();
@@ -480,7 +577,7 @@ mod tests {
         .unwrap();
         client.storage().save(&changed, false).unwrap();
 
-        assert!(providers_for_backend(&client, backend, true)
+        assert!(providers_for_backend(&client, backend, true, None)
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();
