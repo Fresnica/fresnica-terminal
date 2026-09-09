@@ -11,6 +11,7 @@
 ## 环境要求
 
 - x86_64 Linux 桌面系统，`uname -m` 应为 `x86_64`。
+- 系统需要 `libudev.so.1`（常见桌面发行版通常已安装）。
 - 当前会话必须是本地桌面登录会话，并有可工作的 polkit authentication agent。
 - 普通用户可以使用 `sudo`，但只有安装步骤使用 `sudo`；所有 Fresnica 钱包和交易命令必须以普通用户执行。
 - 准备一个受 Fresnica Passphrase 保护的 Testnet software wallet，以及另一个 Testnet 收款地址。
