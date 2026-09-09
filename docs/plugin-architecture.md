@@ -85,6 +85,8 @@ Host-owned transaction policy may cross the plugin process boundary without beco
 
 Signer Providers remain a separate, higher-trust extension model coordinated by Fresnica. Ledger/HSM/secure-enclave/passkey-style signers are not plugins.
 
+Device Unlock is not an extension class or plugin. It is built into the Fresnica CLI and uses only the current OS user's native secure store to release an exact-envelope `WalletUnlockKey` for an already-protected local software signer. It never installs a root helper, privileged daemon, Windows service, or PATH-discovered executable.
+
 ## Anchor protocol placement
 
 SEP-24 and SEP-6 are complementary product paths, not simply new versus old:

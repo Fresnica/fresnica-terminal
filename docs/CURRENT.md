@@ -1,14 +1,14 @@
 # Fresnica Terminal Current State
 
-Status: **v0.3.0 release candidate: architecture stack converged; Ledger Classic, Anchor native plugin, legacy SEP-6 compatibility and configurable Classic lifetime are validated; Fresnica-native plugins are the only product plugin namespace; Main/release integration pending final gate**.
+Status: **v0.3.0 released; portable Device Unlock is the active post-release slice. The product target is one user-space binary per platform with no privileged helper, daemon, service, administrator install, or paid-signing dependency.**
 
-Last verified: 2026-09-08.
+Last verified: 2026-09-09.
 
 ## Source of truth
 
-- Current Terminal `main`: `ba7e24bbd3e6f527d4d56029a572ac8d6851015c`.
-- Current Terminal release branch: `feat/terminal-classic-tx-timeout`; v0.3.0 convergence RC before final Main repin: `82951714eabbaf5c400cdc6c5fe3ded0e67c7eaf`. Repository HEAD is authoritative for the final repin commit.
-- Current exact upstream pin: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c` on `main`; tree `2092f301a74addcd6a844aa3083a5b0e79bb7805`. Upstream integration PR #180 was squash-merged with a GitHub-verified signature; Main bundle #66 passed.
+- Current Terminal `main`: `d32e0755e39018ee04a5a30f86102e6d9c9539e9`; released preview `v0.3.0`. Main CI #109 and Release Terminal #86 passed.
+- Active Terminal branch: `feat/terminal-device-unlock`; portable Device Unlock product checkpoint `ad02cf5f867f3fb5b67008284dc076c208fb919f`; exact upstream pin `ecdc6bf77741949e4f7043153143824ae78a1b44`. Repository HEAD is authoritative for docs-only follow-up state.
+- Released upstream Main baseline: `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. Active upstream System Auth branch `feat/system-auth-sdk-boundary`: Rust runtime/product `f8434d8ecfcc5c3ab7d7f61f4566cd79f1cb50d8`; current Apple/provider head `ecdc6bf77741949e4f7043153143824ae78a1b44`.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
@@ -21,6 +21,20 @@ Last verified: 2026-09-08.
 - Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts. Durable plugin namespace/trust decisions are authoritative in [`docs/plugin-architecture.md`](plugin-architecture.md); this CURRENT file records implementation state only.
+
+Active Device Unlock architecture checkpoint:
+
+- The Fresnica Passphrase remains the protection/recovery root. Device Unlock is convenience-only for routine use of an existing protected software signer; enable/disable require a fresh Passphrase, and Reveal/Export/protection changes remain fresh-Passphrase-only.
+- The exact-envelope contract from upstream `ecdc6bf...` is retained internally: signer public key + SHA-256(canonical protected envelope) selects one 32-byte `WalletUnlockKey`. Re-protection therefore invalidates old Device Unlock state without changing Core cryptography.
+- Terminal exposes `wallet device-unlock enable|disable|status NAME`. Interactive signing can use the stored exact-envelope key for Payment, Trustline, SDEX, Anchor and contract flows through the existing provider boundary. Non-TTY CLI invocation never activates Device Unlock; there is no CLI session/cache.
+- Product architecture is portable and user-space only. macOS uses the user's legacy Login Keychain, Linux uses the desktop Secret Service (GNOME Keyring/KWallet class implementations), and Windows uses the current user's Credential Manager. No platform installs Fresnica-owned privileged infrastructure.
+- State is explicit: `unavailable`, `disabled`, `locked`, `ready`. For Payment, Trustline and DEX writes, Device Unlock state and signing method are now resolved before the final submission step: `ready` offers `Sign and submit`, Fresnica Passphrase, or Cancel; `locked` offers `Unlock, sign and submit`, Fresnica Passphrase, or Cancel. There is no second post-Submit signing-method prompt. macOS/Linux request OS-native unlock only when a selected Device Unlock key is actually released. Windows Credential Manager has no equivalent vault-lock state in this baseline, so an existing credential is `ready`.
+- Final transaction UX combines authorization and execution: when a relevant signer has Device Unlock, the post-review prompt is `[Enter] Sign and submit` for `ready` or `[Enter] Unlock, sign and submit` for `locked`, with `p` for fresh Fresnica Passphrase and `c` for fail-closed cancellation. The separate `Submit this transaction?` prompt remains only when no Device Unlock choice applies.
+- macOS physical testing proved `ready`, `locked`, and successful locked-keychain payment submission, then exposed repeated Keychain authorization caused by post-choice provider state rechecks plus a multi-step routine release. Product checkpoint `9e479ea3263d972dc46c981b1667317dabd4c031` removes redundant post-choice state reads and reduces routine release to one direct Login Keychain password read, leaving required unlock UI to macOS. Physical confirmation of the reduced prompt count remains open.
+- Portable Device Unlock tester guides are `docs/testing/linux-device-unlock-acceptance.md` and `docs/testing/windows-device-unlock-acceptance.md`; both explicitly test normal-user, single-binary operation and reject legacy helper/service/admin behavior.
+- Provider cancellation fails closed; unavailable/missing device storage falls back to the fresh Fresnica Passphrase path. Terminal translates the retained upstream `SystemAuth*` implementation terminology at the product boundary instead of renaming stable SDK/Core types in this slice.
+- Historical strong System Auth implementations remain preserved on `feat/terminal-system-auth`, `feat/terminal-system-auth-linux`, and `feat/terminal-system-auth-windows` as architecture/security proofs. Their signed macOS companion, Linux setuid+polkit helper, and Windows LocalSystem service are intentionally not part of the Device Unlock product architecture.
+- Validation for product checkpoint `ad02cf5...` plus the current UX correction: boundary pin PASS; fmt + `git diff --check` PASS; workspace tests PASS (7 Anchor + 49 CLI + 2 CLI contract + 3 presentation + 21 TUI); workspace Clippy `-D warnings` PASS; Windows x64 MSVC all-target check PASS. The exact current `device_unlock_macos.rs` passes an isolated `x86_64-apple-darwin` type-check harness with `-D warnings`. Physical macOS Testnet evidence proves the original Login Keychain `ready` path can sign and submit, and exposed two UX/runtime issues now corrected in source: signing-method choice is moved before final submission for Payment/Trustline/DEX, and all macOS enrollment/status/release/delete operations are pinned to the same explicit default file-based Login Keychain instead of mixing `SecItem` shim discovery with legacy keychain status. The corrected macOS `ready` and `locked` flows still require physical re-acceptance; Linux and Windows desktop/runtime Device Unlock remain unclaimed.
 
 Active Anchor native-plugin checkpoint:
 

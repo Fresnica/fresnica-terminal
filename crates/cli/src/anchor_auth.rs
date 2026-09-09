@@ -33,7 +33,7 @@ pub(crate) fn authenticate_anchor_sep10(
     });
     let excluded = BTreeSet::from([challenge.server_signing_key().to_owned()]);
     crate::diagnostics::stage("anchor SEP-10: sign required local or external conditions");
-    submit_with_classic_signers(client, |passcode, providers| {
+    submit_with_classic_signers(client, |passcode, system_auth, providers| {
         sign_needed_with_ed25519_providers(
             client.storage(),
             &authorization,
@@ -43,6 +43,7 @@ pub(crate) fn authenticate_anchor_sep10(
             network,
             &mut envelope,
             passcode,
+            system_auth,
             providers,
         )
     })?;

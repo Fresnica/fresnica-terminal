@@ -6,7 +6,9 @@ use fresnica_client::{
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
 
-use crate::transaction_flow::confirm_submission;
+use crate::transaction_flow::{
+    confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
+};
 
 const USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
 
@@ -89,10 +91,15 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         }
     }
 
-    crate::diagnostics::stage("contract: authorize and sign");
-    let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-    client.authorize_contract_invoke(&mut prepared, passcode.as_str())?;
-    client.sign_contract_invoke(&mut prepared, passcode.as_str())?;
+    crate::diagnostics::stage("contract: authorize detached Soroban entries");
+    with_software_signer_authorization(client, |passphrase, system_auth| {
+        client.authorize_contract_invoke_with_system_auth(&mut prepared, passphrase, system_auth)
+    })?;
+
+    crate::diagnostics::stage("contract: sign transaction envelope");
+    submit_with_classic_signers(client, |passphrase, system_auth, external| {
+        client.sign_contract_invoke_with_providers(&mut prepared, passphrase, system_auth, external)
+    })?;
 
     crate::diagnostics::stage("contract: submit and reconcile");
     let submission = runtime.block_on(client.submit_contract_invoke(&prepared))?;

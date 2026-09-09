@@ -50,6 +50,9 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `wallet attach-secret NAME`
 - `wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]`
 - `wallet detach-signer NAME`
+- `wallet device-unlock enable NAME`
+- `wallet device-unlock disable NAME`
+- `wallet device-unlock status NAME`
 - `wallet testnet-fund [--wallet NAME]` (`wallet fund` is an alias)
 - `wallet reveal [NAME]`
 - `wallet backup NAME PATH`
@@ -87,6 +90,10 @@ changing wallet identity. Software signer attachment passes the existing G addre
 app at `m/44'/148'/N'` (default `N=0`) and persist only public provider metadata in the existing
 wallet record. `wallet detach-ledger` removes only that metadata. `wallet detach-signer` removes
 only local protected software signing material after passphrase verification.
+
+Device Unlock is an optional convenience for protected software signers. It stores only the exact-envelope 32-byte wallet unlock key in the current OS user's secure store; the Fresnica Passphrase remains the recovery and protection root. Enable/disable require a fresh Passphrase, while Reveal/Export and protection changes never accept Device Unlock. Non-TTY CLI invocations do not activate it.
+
+Fresnica stays portable: there is no privileged helper, daemon, service, polkit policy, or administrator install. macOS uses the user's legacy Login Keychain, Linux uses the desktop Secret Service (for example GNOME Keyring or KWallet), and Windows uses the current user's Credential Manager. `device-unlock status` reports `disabled`, `locked`, `ready`, or `unavailable` without intentionally unlocking the store. On macOS/Linux a locked store is unlocked by the OS-native prompt when signing actually needs the key; an already-unlocked store is reported as `ready` and is used directly. Windows Credential Manager has no equivalent vault-lock state in this baseline, so an existing credential is `ready`.
 
 Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
 Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
