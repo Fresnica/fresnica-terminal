@@ -8,7 +8,10 @@ use security_framework::item::{ItemClass, ItemSearchOptions};
 use security_framework::os::macos::keychain::SecKeychain;
 use zeroize::Zeroize;
 
-use crate::device_unlock::{DeviceUnlockBackend, DeviceUnlockState};
+use crate::device_unlock::{
+    DeviceAuthenticationOutcome, DeviceAuthenticator, DeviceSecretRead, DeviceSecretStore,
+    DeviceUnlockBackend, DeviceUnlockState,
+};
 
 const PROVIDER_NAME: &str = "macOS Login Keychain";
 const SERVICE: &str = "com.fresnica.device-unlock";
@@ -29,26 +32,91 @@ extern "C" {
 
 pub(crate) fn backend() -> Arc<dyn DeviceUnlockBackend> {
     Arc::new(MacDeviceUnlockBackend {
-        authenticated: Mutex::new(false),
+        authenticator: MacDeviceAuthenticator {
+            authenticated: Mutex::new(false),
+        },
+        store: MacKeychainStore,
     })
 }
 
 struct MacDeviceUnlockBackend {
+    authenticator: MacDeviceAuthenticator,
+    store: MacKeychainStore,
+}
+
+struct MacDeviceAuthenticator {
     authenticated: Mutex<bool>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MacAuthenticationOutcome {
-    Authenticated,
-    Cancelled,
-    PassphraseRequired,
-}
+struct MacKeychainStore;
 
 impl DeviceUnlockBackend for MacDeviceUnlockBackend {
     fn provider_name(&self) -> &'static str {
         PROVIDER_NAME
     }
 
+    fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
+        self.store.state(slot)
+    }
+
+    fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String> {
+        self.store.enroll(slot, unlock_key)
+    }
+
+    fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
+        match self.authenticator.authenticate() {
+            Ok(DeviceAuthenticationOutcome::Authenticated) => {}
+            Ok(DeviceAuthenticationOutcome::Cancelled) => return SystemAuthRelease::Cancelled,
+            Ok(DeviceAuthenticationOutcome::PassphraseRequired) => {
+                return SystemAuthRelease::PassphraseRequired
+            }
+            Err(error) => return SystemAuthRelease::Failed(error),
+        }
+        match self.store.read(slot) {
+            Ok(DeviceSecretRead::Secret(key)) => SystemAuthRelease::UnlockKey(key),
+            Ok(DeviceSecretRead::Missing) => SystemAuthRelease::PassphraseRequired,
+            Ok(DeviceSecretRead::Cancelled) => SystemAuthRelease::Cancelled,
+            Err(error) => SystemAuthRelease::Failed(error),
+        }
+    }
+
+    fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String> {
+        self.store.delete(slot)
+    }
+}
+
+impl DeviceAuthenticator for MacDeviceAuthenticator {
+    fn authenticate(&self) -> Result<DeviceAuthenticationOutcome, String> {
+        let mut authenticated = self
+            .authenticated
+            .lock()
+            .map_err(|_| "macOS device authentication state is unavailable".to_owned())?;
+        if *authenticated {
+            return Ok(DeviceAuthenticationOutcome::Authenticated);
+        }
+
+        let mut keychain = default_keychain()?;
+        let outcome = if keychain_unlocked(&keychain)? {
+            local_authenticate()?
+        } else {
+            match keychain.unlock(None) {
+                Ok(()) => DeviceAuthenticationOutcome::Authenticated,
+                Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
+                    DeviceAuthenticationOutcome::Cancelled
+                }
+                Err(error) => {
+                    return Err(format!("unable to unlock macOS Login Keychain: {error}"))
+                }
+            }
+        };
+        if outcome == DeviceAuthenticationOutcome::Authenticated {
+            *authenticated = true;
+        }
+        Ok(outcome)
+    }
+}
+
+impl DeviceSecretStore for MacKeychainStore {
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
         let keychain = default_keychain()?;
         if !item_exists(&keychain, slot)? {
@@ -72,42 +140,22 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
             .map_err(|error| format!("unable to store device unlock key: {error}"))
     }
 
-    fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
-        match self.authenticate_once() {
-            Ok(MacAuthenticationOutcome::Authenticated) => {}
-            Ok(MacAuthenticationOutcome::Cancelled) => return SystemAuthRelease::Cancelled,
-            Ok(MacAuthenticationOutcome::PassphraseRequired) => {
-                return SystemAuthRelease::PassphraseRequired
-            }
-            Err(error) => return SystemAuthRelease::Failed(error),
-        }
-
-        let keychain = match default_keychain() {
-            Ok(keychain) => keychain,
-            Err(error) => return SystemAuthRelease::Failed(error),
-        };
+    fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
+        let keychain = default_keychain()?;
         let (password, _) = match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
             Ok(value) => value,
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(DeviceSecretRead::Missing),
             Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
-                return SystemAuthRelease::Cancelled
+                return Ok(DeviceSecretRead::Cancelled)
             }
-            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
-                return SystemAuthRelease::PassphraseRequired
-            }
-            Err(error) => {
-                return SystemAuthRelease::Failed(format!(
-                    "unable to read device unlock key: {error}"
-                ))
-            }
+            Err(error) => return Err(format!("unable to read device unlock key: {error}")),
         };
         let mut key = password.as_ref().to_vec();
         if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
             key.zeroize();
-            return SystemAuthRelease::Failed(
-                "macOS Keychain returned an invalid device unlock key".to_owned(),
-            );
+            return Err("macOS Keychain returned an invalid device unlock key".to_owned());
         }
-        SystemAuthRelease::UnlockKey(key)
+        Ok(DeviceSecretRead::Secret(key))
     }
 
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String> {
@@ -127,46 +175,15 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
     }
 }
 
-impl MacDeviceUnlockBackend {
-    fn authenticate_once(&self) -> Result<MacAuthenticationOutcome, String> {
-        let mut authenticated = self
-            .authenticated
-            .lock()
-            .map_err(|_| "macOS device authentication state is unavailable".to_owned())?;
-        if *authenticated {
-            return Ok(MacAuthenticationOutcome::Authenticated);
-        }
-
-        let mut keychain = default_keychain()?;
-        let outcome = if keychain_unlocked(&keychain)? {
-            local_authenticate()?
-        } else {
-            match keychain.unlock(None) {
-                Ok(()) => MacAuthenticationOutcome::Authenticated,
-                Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
-                    MacAuthenticationOutcome::Cancelled
-                }
-                Err(error) => {
-                    return Err(format!("unable to unlock macOS Login Keychain: {error}"))
-                }
-            }
-        };
-        if outcome == MacAuthenticationOutcome::Authenticated {
-            *authenticated = true;
-        }
-        Ok(outcome)
-    }
-}
-
-fn local_authenticate() -> Result<MacAuthenticationOutcome, String> {
+fn local_authenticate() -> Result<DeviceAuthenticationOutcome, String> {
     let mut error_code = 0 as c_long;
     let result = unsafe {
         fresnica_macos_authenticate(LOCAL_AUTH_REASON.as_ptr().cast::<c_char>(), &mut error_code)
     };
     match result {
-        MAC_AUTH_AUTHENTICATED => Ok(MacAuthenticationOutcome::Authenticated),
-        MAC_AUTH_CANCELLED => Ok(MacAuthenticationOutcome::Cancelled),
-        MAC_AUTH_UNAVAILABLE => Ok(MacAuthenticationOutcome::PassphraseRequired),
+        MAC_AUTH_AUTHENTICATED => Ok(DeviceAuthenticationOutcome::Authenticated),
+        MAC_AUTH_CANCELLED => Ok(DeviceAuthenticationOutcome::Cancelled),
+        MAC_AUTH_UNAVAILABLE => Ok(DeviceAuthenticationOutcome::PassphraseRequired),
         MAC_AUTH_FAILED => Err(format!(
             "macOS device authentication failed (LAError {error_code})"
         )),

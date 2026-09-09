@@ -17,6 +17,31 @@ pub(crate) enum DeviceUnlockState {
     Ready,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeviceAuthenticationOutcome {
+    Authenticated,
+    Cancelled,
+    PassphraseRequired,
+}
+
+pub(crate) trait DeviceAuthenticator: Send + Sync {
+    fn authenticate(&self) -> Result<DeviceAuthenticationOutcome, String>;
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DeviceSecretRead {
+    Secret(Vec<u8>),
+    Missing,
+    Cancelled,
+}
+
+pub(crate) trait DeviceSecretStore: Send + Sync {
+    fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
+    fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
+    fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String>;
+    fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
+}
+
 pub(crate) trait DeviceUnlockBackend: Send + Sync {
     fn provider_name(&self) -> &'static str;
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
@@ -212,11 +237,8 @@ fn prompt_device_unlock_choice(
     println!("Device unlock: {} ({provider_name})", state_label(state));
     loop {
         let prompt = match state {
-            DeviceUnlockState::Ready => {
-                "Sign with device unlock? [Y]es / [p]assphrase / [c]ancel: "
-            }
-            DeviceUnlockState::Locked => {
-                "Unlock this device to sign? [Y]es / [p]assphrase / [c]ancel: "
+            DeviceUnlockState::Ready | DeviceUnlockState::Locked => {
+                "Authenticate with this device? [Y]es / [p]assphrase / [c]ancel: "
             }
             DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => {
                 return Ok(DeviceUnlockChoice::UsePassphrase)
@@ -305,11 +327,8 @@ pub(crate) fn transaction_choice(
         return Ok(Some(DeviceUnlockChoice::UseDevice));
     }
     let prompt = match state {
-        DeviceUnlockState::Ready => {
-            "[Enter] Sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
-        }
-        DeviceUnlockState::Locked => {
-            "[Enter] Unlock, sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
+        DeviceUnlockState::Ready | DeviceUnlockState::Locked => {
+            "[Enter] Authenticate, sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
         }
         DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => unreachable!(),
     };
@@ -392,8 +411,8 @@ fn providers_for_backend(
                     );
                 }
                 let preset = provider_choice.lock().ok().and_then(|choice| *choice);
-                let (state, choice) = if let Some(choice) = preset {
-                    (None, choice)
+                let choice = if let Some(choice) = preset {
+                    choice
                 } else {
                     let state = match provider_backend.state(requested_slot) {
                         Ok(DeviceUnlockState::Ready) => DeviceUnlockState::Ready,
@@ -418,15 +437,10 @@ fn providers_for_backend(
                             )
                         }
                     }
-                    (Some(state), selected)
+                    selected
                 };
                 match choice {
-                    DeviceUnlockChoice::UseDevice => {
-                        if state == Some(DeviceUnlockState::Locked) {
-                            println!("Requesting {} unlock...", provider_backend.provider_name());
-                        }
-                        provider_backend.release(requested_slot)
-                    }
+                    DeviceUnlockChoice::UseDevice => provider_backend.release(requested_slot),
                     DeviceUnlockChoice::UsePassphrase => SystemAuthRelease::PassphraseRequired,
                     DeviceUnlockChoice::Cancel => SystemAuthRelease::Cancelled,
                 }
