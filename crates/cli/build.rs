@@ -24,7 +24,16 @@ fn main() {
 
     run(
         Command::new("xcrun")
-            .args(["--sdk", "macosx", "clang", "-fobjc-arc", "-fblocks", "-arch", arch, "-c"])
+            .args([
+                "--sdk",
+                "macosx",
+                "clang",
+                "-fobjc-arc",
+                "-fblocks",
+                "-arch",
+                arch,
+                "-c",
+            ])
             .arg(&source)
             .arg("-o")
             .arg(&object),

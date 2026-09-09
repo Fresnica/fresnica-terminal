@@ -161,10 +161,7 @@ impl MacDeviceUnlockBackend {
 fn local_authenticate() -> Result<MacAuthenticationOutcome, String> {
     let mut error_code = 0 as c_long;
     let result = unsafe {
-        fresnica_macos_authenticate(
-            LOCAL_AUTH_REASON.as_ptr().cast::<c_char>(),
-            &mut error_code,
-        )
+        fresnica_macos_authenticate(LOCAL_AUTH_REASON.as_ptr().cast::<c_char>(), &mut error_code)
     };
     match result {
         MAC_AUTH_AUTHENTICATED => Ok(MacAuthenticationOutcome::Authenticated),
