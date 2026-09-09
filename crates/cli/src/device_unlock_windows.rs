@@ -14,6 +14,7 @@ use windows::Win32::System::Console::GetConsoleWindow;
 use windows::Win32::System::WinRT::{
     IUserConsentVerifierInterop, RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED,
 };
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows_future::IAsyncOperation;
 use zeroize::Zeroize;
 
@@ -105,10 +106,9 @@ impl DeviceAuthenticator for WindowsHelloAuthenticator {
             return windows_hello_unavailable();
         }
 
-        let window = unsafe { GetConsoleWindow() };
-        if window.0.is_null() {
+        let Some(window) = verification_window() else {
             return windows_hello_unavailable();
-        }
+        };
         let interop: IUserConsentVerifierInterop =
             match factory::<UserConsentVerifier, IUserConsentVerifierInterop>() {
                 Ok(interop) => interop,
@@ -146,6 +146,15 @@ impl DeviceAuthenticator for WindowsHelloAuthenticator {
         }
         Ok(outcome)
     }
+}
+
+fn verification_window() -> Option<windows::Win32::Foundation::HWND> {
+    let foreground = unsafe { GetForegroundWindow() };
+    if !foreground.0.is_null() {
+        return Some(foreground);
+    }
+    let console = unsafe { GetConsoleWindow() };
+    (!console.0.is_null()).then_some(console)
 }
 
 fn windows_hello_unavailable() -> Result<DeviceAuthenticationOutcome, String> {
