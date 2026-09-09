@@ -2,7 +2,7 @@
 
 Test build only. Use Testnet and a disposable or low-value software wallet.
 
-Product checkpoint: `e4a74499043267982daf791acff718567c7da08d` on `feat/terminal-device-auth-cross-platform`.
+Product checkpoint: `003e56aeb6adaa9fcd553f11247cc00cda798ed9` on `feat/terminal-device-auth-cross-platform`.
 
 ## Scope
 
@@ -39,7 +39,7 @@ An enrollment created by the previous Credential Manager test build uses the sam
 & $BIN --home $HOME_DIR --network testnet wallet device-unlock status $WALLET
 ```
 
-Enable requires the fresh Fresnica Passphrase. It must not show UAC, request Administrator privileges, install a service, or copy a helper.
+Enable requires the fresh Fresnica Passphrase. It must not show UAC, request Administrator privileges, install a service, or copy a helper. After storing the enrollment, Fresnica performs a non-blocking Windows Hello availability check. If Windows reports Hello unavailable/not configured, Fresnica must warn immediately that enrollment was saved but transactions may require the Fresnica Passphrase. This warning must not fail or remove enrollment.
 
 An enrolled credential is normally reported as:
 
@@ -79,7 +79,7 @@ Repeat the payment. The second transaction must request Windows Hello again; the
 - `p` uses a fresh Fresnica Passphrase instead of Windows Hello.
 - `c` cancels before Windows Hello and does not sign or submit.
 - Cancel the Windows Hello dialog: Fresnica must abort/fail closed and must not silently ask for the Passphrase.
-- If Hello is unavailable or unsupported, Fresnica explicitly prints `Windows Hello unavailable; Fresnica Passphrase required.` and then uses the fresh Passphrase path. It must never silently read Credential Manager.
+- If Hello is unavailable or unsupported, Fresnica explicitly prints `Windows Hello unavailable (<reason>); Fresnica Passphrase required.` and then uses the fresh Passphrase path. It must never silently read Credential Manager. Report the exact `<reason>`.
 - No UAC, service, helper, or Administrator flow may appear.
 
 Now repeat with `-y`:
