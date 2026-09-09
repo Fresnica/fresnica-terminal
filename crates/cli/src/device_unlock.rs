@@ -1,5 +1,5 @@
-use std::io::{self, IsTerminal};
-use std::sync::Arc;
+use std::io::{self, IsTerminal, Write};
+use std::sync::{Arc, Mutex};
 
 use fresnica_client::{
     prepare_system_auth_enrollment, system_auth_slot, verify_passcode, FresnicaClient,
@@ -186,6 +186,57 @@ fn state_label(state: DeviceUnlockState) -> &'static str {
         DeviceUnlockState::Ready => "ready",
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeviceUnlockChoice {
+    UseDevice,
+    UsePassphrase,
+    Cancel,
+}
+
+fn parse_device_unlock_choice(answer: &str) -> Option<DeviceUnlockChoice> {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "" | "y" | "yes" => Some(DeviceUnlockChoice::UseDevice),
+        "p" | "passphrase" => Some(DeviceUnlockChoice::UsePassphrase),
+        "c" | "cancel" | "n" | "no" => Some(DeviceUnlockChoice::Cancel),
+        _ => None,
+    }
+}
+
+fn prompt_device_unlock_choice(
+    state: DeviceUnlockState,
+    provider_name: &str,
+) -> Result<DeviceUnlockChoice, String> {
+    println!("Device unlock: {} ({provider_name})", state_label(state));
+    loop {
+        let prompt = match state {
+            DeviceUnlockState::Ready => {
+                "Sign with device unlock? [Y]es / [p]assphrase / [c]ancel: "
+            }
+            DeviceUnlockState::Locked => {
+                "Unlock this device to sign? [Y]es / [p]assphrase / [c]ancel: "
+            }
+            DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => {
+                return Ok(DeviceUnlockChoice::UsePassphrase)
+            }
+        };
+        print!("{prompt}");
+        io::stdout()
+            .flush()
+            .map_err(|error| format!("unable to write device unlock prompt: {error}"))?;
+        let mut answer = String::new();
+        let read = io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| format!("unable to read device unlock choice: {error}"))?;
+        if read == 0 {
+            return Ok(DeviceUnlockChoice::Cancel);
+        }
+        if let Some(choice) = parse_device_unlock_choice(&answer) {
+            return Ok(choice);
+        }
+        println!("Enter y, p, or c.");
+    }
+}
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
@@ -202,6 +253,7 @@ fn providers_for_backend(
     }
 
     let mut providers = Vec::new();
+    let shared_choice = Arc::new(Mutex::new(None));
     for record in client.wallets()? {
         if record.watch_only() || record.secret.is_none() {
             continue;
@@ -215,6 +267,7 @@ fn providers_for_backend(
         }
         let expected_slot = slot.clone();
         let provider_backend = Arc::clone(&backend);
+        let provider_choice = Arc::clone(&shared_choice);
         providers.push(SystemAuthUnlockProvider::new(
             &record.address,
             move |requested_slot| {
@@ -224,21 +277,44 @@ fn providers_for_backend(
                             .to_owned(),
                     );
                 }
-                match provider_backend.state(requested_slot) {
-                    Ok(DeviceUnlockState::Ready) => eprintln!(
-                        "Device unlock: ready ({})",
-                        provider_backend.provider_name()
-                    ),
-                    Ok(DeviceUnlockState::Locked) => eprintln!(
-                        "Device unlock: locked; requesting {} unlock...",
-                        provider_backend.provider_name()
-                    ),
+                let state = match provider_backend.state(requested_slot) {
+                    Ok(DeviceUnlockState::Ready) => DeviceUnlockState::Ready,
+                    Ok(DeviceUnlockState::Locked) => DeviceUnlockState::Locked,
                     Ok(DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable) => {
                         return SystemAuthRelease::PassphraseRequired
                     }
                     Err(error) => return SystemAuthRelease::Failed(error),
+                };
+                let choice = match provider_choice.lock() {
+                    Ok(mut choice) => match *choice {
+                        Some(choice) => choice,
+                        None => match prompt_device_unlock_choice(
+                            state,
+                            provider_backend.provider_name(),
+                        ) {
+                            Ok(selected) => {
+                                *choice = Some(selected);
+                                selected
+                            }
+                            Err(error) => return SystemAuthRelease::Failed(error),
+                        },
+                    },
+                    Err(_) => {
+                        return SystemAuthRelease::Failed(
+                            "device unlock choice state is unavailable".to_owned(),
+                        )
+                    }
+                };
+                match choice {
+                    DeviceUnlockChoice::UseDevice => {
+                        if state == DeviceUnlockState::Locked {
+                            println!("Requesting {} unlock...", provider_backend.provider_name());
+                        }
+                        provider_backend.release(requested_slot)
+                    }
+                    DeviceUnlockChoice::UsePassphrase => SystemAuthRelease::PassphraseRequired,
+                    DeviceUnlockChoice::Cancel => SystemAuthRelease::Cancelled,
                 }
-                provider_backend.release(requested_slot)
             },
         )?);
     }
@@ -368,6 +444,23 @@ mod tests {
         disable_with_passphrase(&record, backend.as_ref(), PASSCODE).unwrap();
         assert_eq!(backend.state(&slot).unwrap(), DeviceUnlockState::Disabled);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn device_unlock_choice_requires_explicit_supported_input() {
+        assert_eq!(
+            parse_device_unlock_choice(""),
+            Some(DeviceUnlockChoice::UseDevice)
+        );
+        assert_eq!(
+            parse_device_unlock_choice("p"),
+            Some(DeviceUnlockChoice::UsePassphrase)
+        );
+        assert_eq!(
+            parse_device_unlock_choice("cancel"),
+            Some(DeviceUnlockChoice::Cancel)
+        );
+        assert_eq!(parse_device_unlock_choice("maybe"), None);
     }
 
     #[test]
