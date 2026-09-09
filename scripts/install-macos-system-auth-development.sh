@@ -45,9 +45,13 @@ trap 'rm -rf "$work"' EXIT
 product_dir="$work/product"
 obj_root="$work/obj"
 
+destination_arch="$(uname -m)"
+echo "Provisioning destination: this Mac ($destination_arch)"
+
 xcodebuild \
   -project "$work/FresnicaSystemAuth.xcodeproj" \
-  -target FresnicaSystemAuth \
+  -scheme FresnicaSystemAuth \
+  -destination "platform=macOS,arch=$destination_arch" \
   -configuration Release \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \

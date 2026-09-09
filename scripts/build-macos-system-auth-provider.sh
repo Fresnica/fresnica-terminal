@@ -20,7 +20,7 @@ obj_root="$output/obj"
 
 xcodebuild \
   -project "$project_root/FresnicaSystemAuth.xcodeproj" \
-  -target FresnicaSystemAuth \
+  -scheme FresnicaSystemAuth \
   -configuration Release \
   CODE_SIGNING_ALLOWED=NO \
   CONFIGURATION_BUILD_DIR="$product_dir" \
