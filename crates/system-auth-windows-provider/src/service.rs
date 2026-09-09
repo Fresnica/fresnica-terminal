@@ -440,7 +440,33 @@ mod windows_service_impl {
         fn delete_signer(&self, sid: &str, slot: &str) -> Result<bool, String> {
             let path = self.signer_path(sid, slot);
             match fs::remove_file(&path) {
-                Ok(()) => Ok(true),
+                Ok(()) => {
+                    let dir = self.sid_dir(sid);
+                    let mut has_signers = false;
+                    for entry in fs::read_dir(&dir).map_err(|error| {
+                        format!("unable to inspect Windows System Auth state: {error}")
+                    })? {
+                        let entry = entry.map_err(|error| {
+                            format!("unable to inspect Windows System Auth state: {error}")
+                        })?;
+                        if entry.file_name().to_string_lossy().starts_with("signer-") {
+                            has_signers = true;
+                            break;
+                        }
+                    }
+                    if !has_signers {
+                        match fs::remove_file(self.domain_path(sid)) {
+                            Ok(()) => {}
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                            Err(error) => {
+                                return Err(format!(
+                                    "unable to remove unused Windows System Auth domain state: {error}"
+                                ));
+                            }
+                        }
+                    }
+                    Ok(true)
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
                 Err(error) => Err(format!(
                     "unable to remove Windows System Auth signer state {}: {error}",

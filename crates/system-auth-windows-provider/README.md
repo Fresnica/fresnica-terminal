@@ -21,4 +21,4 @@ Build both binaries with the Windows MSVC target, then run the development insta
   -ServiceBinary .\target\x86_64-pc-windows-msvc\release\fresnica-system-auth-service.exe
 ```
 
-The installer ACLs the program directory read/execute for ordinary users and writable only by SYSTEM/Administrators; the state directory remains SYSTEM/Administrators only. Physical Windows Hello success/cancel/fallback behavior still requires a real interactive Windows session.
+The installer ACLs the program directory read/execute for ordinary users and writable only by SYSTEM/Administrators; the state directory remains SYSTEM/Administrators only. Removing the last signer enrollment also drops Fresnica's stored domain metadata, so `disable -> re-enable` can recover by creating a fresh Windows Hello credential if the prior platform credential was externally invalidated. Physical Windows Hello success/cancel/fallback and this recovery path still require a real interactive Windows session.
