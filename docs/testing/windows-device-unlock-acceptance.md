@@ -2,7 +2,7 @@
 
 Test build only. Use Testnet and a disposable or low-value software wallet.
 
-Product checkpoint: `fd2ef75e77360ed4034dabedb81d4c18772701ac` on `feat/terminal-device-auth-cross-platform`.
+Product checkpoint: `e4a74499043267982daf791acff718567c7da08d` on `feat/terminal-device-auth-cross-platform`.
 
 ## Scope
 
@@ -91,7 +91,7 @@ Now repeat with `-y`:
 
 `-y` may skip Fresnica's text confirmation but **must not skip Windows Hello verification**.
 
-If Windows Hello never appears when Enter is selected, report whether the command was run in Windows Terminal, classic console host, PowerShell, or Command Prompt. Window ownership remains part of physical acceptance.
+If Windows Hello never appears when Enter is selected, copy the full `Windows Hello unavailable (...)` reason and report whether the command was run in Windows Terminal, classic console host, PowerShell, or Command Prompt. This build calls the desktop `IUserConsentVerifierInterop` request directly and does not preflight it through `CheckAvailabilityAsync`.
 
 ## Lifecycle
 
