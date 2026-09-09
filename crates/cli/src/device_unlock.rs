@@ -46,6 +46,9 @@ pub(crate) trait DeviceSecretStore: Send + Sync {
 pub(crate) trait DeviceUnlockBackend: Send + Sync {
     fn provider_name(&self) -> &'static str;
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
+    fn authorize_enrollment(&self) -> Result<(), String> {
+        Ok(())
+    }
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease;
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
@@ -133,6 +136,7 @@ fn enable(
         }
         DeviceUnlockState::Disabled => {}
     }
+    backend.authorize_enrollment()?;
     let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
     enable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
     println!(
