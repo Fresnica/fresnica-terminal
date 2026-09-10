@@ -15,7 +15,6 @@ use crate::device_unlock::{
 
 const PROVIDER_NAME: &str = "Fresnica Secret Service collection";
 const COLLECTION_LABEL: &str = "Fresnica Device Unlock";
-const COLLECTION_ALIAS: &str = "fresnica-device-unlock";
 const ITEM_LABEL: &str = "Fresnica Device Unlock";
 const CONTENT_TYPE: &str = "application/octet-stream";
 const SECRET_SERVICE_NAME: &str = "org.freedesktop.secrets";
@@ -112,16 +111,9 @@ impl DeviceAuthenticator for LinuxSecretServiceAuthenticator {
             Ok(service) => service,
             Err(_) => return Ok(DeviceAuthenticationOutcome::PassphraseRequired),
         };
-        let collection = match service.get_collection_by_alias(COLLECTION_ALIAS) {
-            Ok(collection) => collection,
-            Err(SecretServiceError::NoResult) => {
-                return Ok(DeviceAuthenticationOutcome::PassphraseRequired)
-            }
-            Err(error) => {
-                return Err(format!(
-                    "unable to open Fresnica device-unlock collection: {error}"
-                ))
-            }
+        let collection = match find_dedicated_collection(&service)? {
+            Some(collection) => collection,
+            None => return Ok(DeviceAuthenticationOutcome::PassphraseRequired),
         };
 
         if !collection
@@ -178,10 +170,9 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
             Ok(service) => service,
             Err(_) => return Ok(DeviceUnlockState::Unavailable),
         };
-        let collection = match service.get_collection_by_alias(COLLECTION_ALIAS) {
-            Ok(collection) => collection,
-            Err(SecretServiceError::NoResult) => return Ok(DeviceUnlockState::Disabled),
-            Err(_) => return Ok(DeviceUnlockState::Unavailable),
+        let collection = match find_dedicated_collection(&service)? {
+            Some(collection) => collection,
+            None => return Ok(DeviceUnlockState::Disabled),
         };
         let slot_id = slot.storage_id();
         let items = collection
@@ -205,16 +196,11 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
             return Err("device unlock requires exactly 32 key bytes".to_owned());
         }
         let service = connect()?;
-        let collection = match service.get_collection_by_alias(COLLECTION_ALIAS) {
-            Ok(collection) => collection,
-            Err(SecretServiceError::NoResult) => service
-                .create_collection(COLLECTION_LABEL, COLLECTION_ALIAS)
+        let collection = match find_dedicated_collection(&service)? {
+            Some(collection) => collection,
+            None => service
+                .create_collection(COLLECTION_LABEL, "")
                 .map_err(map_collection_create_error)?,
-            Err(error) => {
-                return Err(format!(
-                    "unable to open Fresnica device-unlock collection: {error}"
-                ))
-            }
         };
         if collection
             .is_locked()
@@ -244,14 +230,9 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
 
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
         let service = connect()?;
-        let collection = match service.get_collection_by_alias(COLLECTION_ALIAS) {
-            Ok(collection) => collection,
-            Err(SecretServiceError::NoResult) => return Ok(DeviceSecretRead::Missing),
-            Err(error) => {
-                return Err(format!(
-                    "unable to open Fresnica device-unlock collection: {error}"
-                ))
-            }
+        let collection = match find_dedicated_collection(&service)? {
+            Some(collection) => collection,
+            None => return Ok(DeviceSecretRead::Missing),
         };
         if collection
             .is_locked()
@@ -279,7 +260,7 @@ impl DeviceSecretStore for LinuxSecretServiceStore {
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String> {
         let service = connect()?;
         let slot_id = slot.storage_id();
-        if let Ok(collection) = service.get_collection_by_alias(COLLECTION_ALIAS) {
+        if let Some(collection) = find_dedicated_collection(&service)? {
             if collection
                 .is_locked()
                 .map_err(|error| format!("unable to query Fresnica keyring state: {error}"))?
@@ -376,27 +357,46 @@ fn connect() -> Result<SecretService<'static>, String> {
         .map_err(|error| format!("desktop secret service is unavailable: {error}"))
 }
 
+fn find_dedicated_collection<'a>(
+    service: &'a SecretService<'a>,
+) -> Result<Option<Collection<'a>>, String> {
+    let collections = service
+        .get_all_collections()
+        .map_err(|error| format!("unable to list desktop keyring collections: {error}"))?;
+    let mut found = None;
+    for collection in collections {
+        let label = collection
+            .get_label()
+            .map_err(|error| format!("unable to read desktop keyring label: {error}"))?;
+        if label == COLLECTION_LABEL {
+            if found.is_some() {
+                return Err(
+                    "multiple Fresnica Device Unlock collections found; refusing ambiguous keyring"
+                        .to_owned(),
+                );
+            }
+            found = Some(collection);
+        }
+    }
+    Ok(found)
+}
+
 fn ensure_dedicated_collection() -> Result<(), String> {
     let service = connect()?;
-    let result = match service.get_collection_by_alias(COLLECTION_ALIAS) {
-        Ok(_) => Ok(()),
-        Err(SecretServiceError::NoResult) => service
-            .create_collection(COLLECTION_LABEL, COLLECTION_ALIAS)
-            .map(|_| ())
-            .map_err(map_collection_create_error),
-        Err(error) => Err(format!(
-            "unable to open Fresnica device-unlock collection: {error}"
-        )),
-    };
-    result
+    if find_dedicated_collection(&service)?.is_some() {
+        return Ok(());
+    }
+    service
+        .create_collection(COLLECTION_LABEL, "")
+        .map(|_| ())
+        .map_err(map_collection_create_error)
 }
 
 fn relock_collection() -> Result<(), String> {
     let service = connect()?;
-    let collection = match service.get_collection_by_alias(COLLECTION_ALIAS) {
-        Ok(collection) => collection,
-        Err(SecretServiceError::NoResult) => return Ok(()),
-        Err(error) => return Err(format!("unable to open Fresnica keyring: {error}")),
+    let collection = match find_dedicated_collection(&service)? {
+        Some(collection) => collection,
+        None => return Ok(()),
     };
     if !collection
         .is_locked()
