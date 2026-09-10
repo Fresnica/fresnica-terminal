@@ -2,7 +2,7 @@
 
 Test build only. Use Testnet and a disposable or low-value software wallet.
 
-Product checkpoint: `fd2ef75e77360ed4034dabedb81d4c18772701ac` on `feat/terminal-device-auth-cross-platform`.
+Product checkpoint: `6e692871e8a4598d97147d666f16301abc973f4b` on `feat/terminal-device-auth-cross-platform`.
 
 ## Scope
 
@@ -32,7 +32,7 @@ HOME_DIR="$HOME/.fresnica-device-unlock-test"
 WALLET="du-a"
 ```
 
-If this wallet was enrolled with the earlier test build that stored the key in the default/login collection, enroll it again with this binary. The new enrollment creates the dedicated Fresnica collection and removes the legacy matching item.
+For this acceptance test, start with Device Unlock disabled. If this wallet was enrolled with an earlier test build, disable it first or use a fresh test wallet/home. The new enrollment creates/uses the dedicated Fresnica collection and removes any legacy matching item from the default collection.
 
 ## Enable
 
@@ -44,9 +44,9 @@ If this wallet was enrolled with the earlier test build that stored the key in t
   wallet device-unlock enable "$WALLET"
 ```
 
-Enable must require the fresh Fresnica Passphrase. The Secret Service may show setup/unlock UI while creating the dedicated collection; Fresnica must not request privileged installation.
+Enable is now a hard authenticator gate. Fresnica first ensures the dedicated collection exists, silently locks it if needed, and performs the same raw Secret Service `Unlock` used for transactions. A real Secret Service-owned prompt must complete before Fresnica asks for the fresh Fresnica Passphrase or stores the unlock key. If the service unlocks silently, no prompt is available, or the prompt is cancelled, enable must fail and no unlock key may be stored. On a first failed attempt an empty `Fresnica Device Unlock` collection may remain; this is not an enabled wallet and avoids triggering an extra cleanup prompt. Fresnica must not request privileged installation.
 
-After enrollment, status should be `locked` or `ready` with provider `Fresnica Secret Service collection`.
+After successful enrollment, status should be `locked` or `ready` with provider `Fresnica Secret Service collection`.
 
 ## Transaction authentication
 
@@ -101,6 +101,6 @@ Disable requires the fresh Fresnica Passphrase. Status must become `disabled`.
 
 ## Report
 
-Please report distro/version, desktop environment, Secret Service implementation, enable status, whether a dedicated `Fresnica Device Unlock` collection appeared, authentication prompt count per transaction, Enter/`p`/`c` results, `-y` result, disable/re-enable result, and exact output for failures.
+Please report distro/version, desktop environment, Secret Service implementation, enable-time prompt count/result, whether a dedicated `Fresnica Device Unlock` collection appeared, status after enable, authentication prompt count per transaction, Enter/`p`/`c` results, `-y` result, disable/re-enable result, and exact output for failures.
 
 Never send a mnemonic, S-key, Fresnica Passphrase, keyring password, or unlock-key material.
