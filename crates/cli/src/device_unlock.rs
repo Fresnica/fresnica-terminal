@@ -20,6 +20,7 @@ pub(crate) enum DeviceUnlockState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DeviceAuthenticationOutcome {
     Authenticated,
+    #[allow(dead_code)]
     Cancelled,
     PassphraseRequired,
 }
