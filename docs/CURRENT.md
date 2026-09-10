@@ -2,7 +2,7 @@
 
 Status: **v0.3.0 released; portable Device Unlock is the active post-release slice. The product target is one user-space binary per platform with no privileged helper, daemon, service, administrator install, or paid-signing dependency.**
 
-Last verified: 2026-09-09.
+Last verified: 2026-09-10.
 
 ## Source of truth
 
@@ -34,7 +34,7 @@ Active Device Unlock architecture checkpoint:
 - Linux stores the key in a dedicated `Fresnica Device Unlock` Secret Service collection, not the user's default/login collection. Physical testing exposed that some Secret Service implementations reject custom aliases with `Only the 'default' alias is supported`. Product `1b8cc2f...` removes the custom-alias dependency: it creates the dedicated collection with the spec-defined empty alias and later enumerates collections by exact label; multiple matching labels fail closed. The enrollment hard gate is unchanged: `enable` runs `silent lock -> raw Unlock -> real Secret Service Prompt -> Completed` before asking for the Fresnica Passphrase or storing any unlock key.
 - Linux enrollment migrates the exact matching legacy default-collection item into the dedicated collection and locks it after setup. Secret Service implementations that cannot supply a real per-transaction Prompt do not qualify for Device Authentication; they remain usable through the Fresnica Passphrase path.
 - Provider cancellation remains distinct from unavailability: cancellation aborts with no surprise fallback; only unavailable/not-supported authentication may offer Passphrase. The retained upstream `SystemAuth*` names are implementation terminology and remain unchanged in this slice.
-- Focused VPS gate for Linux unaliased-collection product `1b8cc2f...`: repository boundary PASS; rustfmt + `git diff --check` PASS; CLI tests 49/49 + CLI contract 2/2 PASS; Linux CLI Clippy `-D warnings` and native release PASS. Exact-head CI/Release packaging remains the final gate before retest. The preceding Linux hard-gate product `6e69287...` passed Release Terminal #113 but failed physical collection creation on a Secret Service implementation that supports only the `default` alias.
+- Focused VPS gate for Linux unaliased-collection product `1b8cc2f...`: repository boundary PASS; rustfmt + `git diff --check` PASS; CLI tests 49/49 + CLI contract 2/2 PASS; Linux CLI Clippy `-D warnings` and native release PASS. Release Terminal #116 for exact product `1b8cc2f...` also PASS: validate, Linux x64, macOS ARM64, Windows x64 and Windows smoke; Linux artifact digest `sha256:271dcf1961a7cc1a8909aaa25bcf530748de36f1d1e8dd0f7b763013f7652a32`. The preceding Linux hard-gate product `6e69287...` passed Release Terminal #113 but failed physical collection creation on GNOME Keyring because it supports only the `default` alias; empty alias is now used instead.
 - Physical acceptance is PASS for Windows Hello and remains OPEN only for Linux dedicated-collection Secret Service Prompt behavior. Tester guides are `docs/testing/windows-device-unlock-acceptance.md` and `docs/testing/linux-device-unlock-acceptance.md`.
 - Historical strong System Auth branches remain architecture/security proofs only. Their signed macOS companion, Linux setuid+polkit helper and Windows LocalSystem service are not part of the portable Device Authentication product.
 
