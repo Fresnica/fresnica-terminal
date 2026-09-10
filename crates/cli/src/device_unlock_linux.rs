@@ -58,6 +58,20 @@ impl DeviceUnlockBackend for LinuxDeviceUnlockBackend {
         self.store.state(slot)
     }
 
+    fn authorize_enrollment(&self) -> Result<(), String> {
+        ensure_dedicated_collection()?;
+        match self.authenticator.authenticate()? {
+            DeviceAuthenticationOutcome::Authenticated => Ok(()),
+            DeviceAuthenticationOutcome::Cancelled => {
+                Err("desktop authentication cancelled; Device Unlock was not enabled".to_owned())
+            }
+            DeviceAuthenticationOutcome::PassphraseRequired => Err(
+                "desktop authentication did not provide a usable prompt; Device Unlock was not enabled"
+                    .to_owned(),
+            ),
+        }
+    }
+
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String> {
         self.store.enroll(slot, unlock_key)
     }
@@ -360,6 +374,21 @@ fn unlock_with_required_prompt(
 fn connect() -> Result<SecretService<'static>, String> {
     SecretService::connect(EncryptionType::Dh)
         .map_err(|error| format!("desktop secret service is unavailable: {error}"))
+}
+
+fn ensure_dedicated_collection() -> Result<(), String> {
+    let service = connect()?;
+    let result = match service.get_collection_by_alias(COLLECTION_ALIAS) {
+        Ok(_) => Ok(()),
+        Err(SecretServiceError::NoResult) => service
+            .create_collection(COLLECTION_LABEL, COLLECTION_ALIAS)
+            .map(|_| ())
+            .map_err(map_collection_create_error),
+        Err(error) => Err(format!(
+            "unable to open Fresnica device-unlock collection: {error}"
+        )),
+    };
+    result
 }
 
 fn relock_collection() -> Result<(), String> {
