@@ -283,7 +283,9 @@ fn providers_for_backend(
         let slot = system_auth_slot(&record)?;
         if !matches!(
             backend.state(&slot)?,
-            DeviceUnlockState::Locked | DeviceUnlockState::Ready
+            DeviceUnlockState::Locked
+                | DeviceUnlockState::Ready
+                | DeviceUnlockState::NeedsReauthorization
         ) {
             continue;
         }
