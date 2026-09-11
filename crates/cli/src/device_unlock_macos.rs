@@ -86,15 +86,6 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
             }
             Err(error) => return SystemAuthRelease::Failed(error),
         }
-        match self.store.state(slot) {
-            Ok(DeviceUnlockState::NeedsReauthorization) => {
-                if let Err(error) = self.store.update_enrollment(slot) {
-                    return SystemAuthRelease::Failed(error);
-                }
-            }
-            Ok(_) => {}
-            Err(error) => return SystemAuthRelease::Failed(error),
-        }
         match self.store.read(slot) {
             Ok(DeviceSecretRead::Secret(key)) => SystemAuthRelease::UnlockKey(key),
             Ok(DeviceSecretRead::Missing) => SystemAuthRelease::PassphraseRequired,
@@ -174,14 +165,35 @@ impl DeviceSecretStore for MacKeychainStore {
     }
 
     fn update_enrollment(&self, slot: &SystemAuthSlot) -> Result<(), String> {
-        let key = match self.read(slot)? {
-            DeviceSecretRead::Secret(key) => key,
-            DeviceSecretRead::Missing => {
-                return Err("device unlock enrollment is missing".to_owned())
-            }
-            DeviceSecretRead::Cancelled => return Err("device unlock update cancelled".to_owned()),
-        };
-        self.enroll(slot, &key)
+        let mut keychain = default_keychain()?;
+        ensure_keychain_unlocked(&mut keychain)?;
+        let (password, _) = keychain
+            .find_generic_password(SERVICE, &slot.storage_id())
+            .map_err(|error| {
+                format!("unable to read device unlock enrollment for migration: {error}")
+            })?;
+        let key = password.as_ref();
+        if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
+            return Err("macOS Keychain returned an invalid device unlock key".to_owned());
+        }
+        write_enrollment_items(&mut keychain, slot, key)
+    }
+
+    fn write_enrollment_items(
+        keychain: &mut SecKeychain,
+        slot: &SystemAuthSlot,
+        unlock_key: &[u8],
+    ) -> Result<(), String> {
+        keychain
+            .set_generic_password(SERVICE, &slot.storage_id(), unlock_key)
+            .map_err(|error| format!("unable to migrate device unlock key: {error}"))?;
+        keychain
+            .set_generic_password(
+                METADATA_SERVICE,
+                &slot.storage_id(),
+                env!("CARGO_PKG_VERSION").as_bytes(),
+            )
+            .map_err(|error| format!("unable to migrate device unlock metadata: {error}"))
     }
 
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
