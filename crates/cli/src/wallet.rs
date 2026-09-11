@@ -3,7 +3,28 @@ use std::io::{self, Write};
 use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
 use zeroize::Zeroizing;
 
-use crate::{device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden, HELP};
+use crate::{device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden};
+
+const WALLET_HELP: &str = r#"Wallet commands:
+  fresnica wallet list
+  fresnica wallet use NAME
+  fresnica wallet create NAME [--index N] [--language LANGUAGE] [--strength BITS]
+  fresnica wallet import-secret NAME
+  fresnica wallet import-mnemonic NAME [--index N] [--language LANGUAGE]
+  fresnica wallet import-watch NAME G...
+  fresnica wallet import-ledger NAME [--hd-path N]
+  fresnica wallet attach-ledger NAME [--hd-path N]
+  fresnica wallet detach-ledger NAME
+  fresnica wallet attach-secret NAME
+  fresnica wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]
+  fresnica wallet detach-signer NAME
+  fresnica wallet device-unlock enable|disable|status NAME
+  fresnica wallet testnet-fund [--wallet NAME]
+  fresnica wallet reveal [NAME]
+  fresnica wallet backup NAME PATH [--force]
+  fresnica wallet restore PATH [--name NAME]
+  fresnica wallet delete NAME
+"#;
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     let wallet_name = match arguments {
@@ -25,7 +46,7 @@ pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Res
         if record.watch_only() {
             "none"
         } else {
-            "Fresnica passphrase envelope v1"
+            "Fresnica passphrase"
         }
     );
     println!(
@@ -50,8 +71,13 @@ pub(crate) fn command_wallet(
     arguments: &[String],
 ) -> Result<(), String> {
     let Some(command) = arguments.first().map(String::as_str) else {
-        return Err("wallet command is required\n\nSee `fresnica --help`.".to_owned());
+        print!("{WALLET_HELP}");
+        return Ok(());
     };
+    if matches!(command, "--help" | "-h") && arguments.len() == 1 {
+        print!("{WALLET_HELP}");
+        return Ok(());
+    }
     match command {
         "list" if arguments.len() == 1 => wallet_list(storage),
         "use" if arguments.len() == 2 => {
@@ -82,7 +108,7 @@ pub(crate) fn command_wallet(
         "restore" => wallet_restore(storage, &arguments[1..]),
         "delete" if arguments.len() == 2 => wallet_delete(storage, &arguments[1]),
         _ => Err(format!(
-            "unknown or invalid wallet command: {command}\n\n{HELP}"
+            "unknown or invalid wallet command: {command}\n\n{WALLET_HELP}"
         )),
     }
 }
@@ -543,8 +569,26 @@ fn parse_mnemonic_options(
 
 fn prompt_new_passcode() -> Result<Zeroizing<String>, String> {
     let passcode = prompt_hidden("Create Fresnica passphrase: ")?;
-    let confirmation = prompt_hidden("Confirm Fresnica passphrase: ")?;
     wallet_ops::validate_new_passphrase(&passcode)?;
+    if wallet_ops::new_passphrase_is_short(&passcode) {
+        eprintln!(
+            "Warning: this passphrase is shorter than the recommended {} characters.",
+            wallet_ops::RECOMMENDED_FRESNICA_PASSPHRASE_CHARS
+        );
+        eprintln!("If your wallet data is stolen, a short passphrase is easier to guess offline.");
+        print!("Use this passphrase anyway? [y/N] ");
+        io::stdout()
+            .flush()
+            .map_err(|error| format!("unable to write prompt: {error}"))?;
+        let mut answer = String::new();
+        io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| format!("unable to read confirmation: {error}"))?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            return Err("passphrase creation cancelled".to_owned());
+        }
+    }
+    let confirmation = prompt_hidden("Confirm Fresnica passphrase: ")?;
     if passcode.as_str() != confirmation.as_str() {
         return Err("Fresnica passphrases do not match".to_owned());
     }

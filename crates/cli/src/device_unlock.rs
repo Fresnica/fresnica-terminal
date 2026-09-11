@@ -1,11 +1,11 @@
-use std::collections::BTreeSet;
-use std::io::{self, IsTerminal, Write};
-use std::sync::{Arc, Mutex};
+#[cfg(target_os = "macos")]
+use std::io::Write;
+use std::io::{self, IsTerminal};
+use std::sync::{Arc, OnceLock};
 
 use fresnica_client::{
     prepare_system_auth_enrollment, system_auth_slot, verify_passcode, FresnicaClient,
-    LedgerAuthorizationSnapshot, LedgerSignerAvailability, SystemAuthRelease, SystemAuthSlot,
-    SystemAuthUnlockProvider, WalletStorage,
+    SystemAuthRelease, SystemAuthSlot, SystemAuthUnlockProvider, WalletStorage,
 };
 
 #[allow(dead_code)]
@@ -15,12 +15,51 @@ pub(crate) enum DeviceUnlockState {
     Disabled,
     Locked,
     Ready,
+    NeedsReauthorization,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DeviceAuthenticationOutcome {
+    Authenticated,
+    #[allow(dead_code)]
+    Cancelled,
+    PassphraseRequired,
+}
+
+pub(crate) trait DeviceAuthenticator: Send + Sync {
+    fn authenticate(&self) -> Result<DeviceAuthenticationOutcome, String>;
+}
+
+#[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DeviceSecretRead {
+    Secret(Vec<u8>),
+    Missing,
+    Cancelled,
+}
+
+pub(crate) trait DeviceSecretStore: Send + Sync {
+    fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
+    fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
+    fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String>;
+    fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
 
 pub(crate) trait DeviceUnlockBackend: Send + Sync {
     fn provider_name(&self) -> &'static str;
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
+    fn prepare_system_support(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn authorize_enrollment(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn cleanup_system_support_if_unused(&self) -> Result<(), String> {
+        Ok(())
+    }
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
+    #[cfg(target_os = "macos")]
+    fn reauthorize(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String>;
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease;
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
@@ -52,16 +91,19 @@ impl DeviceUnlockBackend for UnavailableDeviceUnlockBackend {
 
 #[cfg(target_os = "linux")]
 fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
-    crate::device_unlock_linux::backend()
+    static BACKEND: OnceLock<Arc<dyn DeviceUnlockBackend>> = OnceLock::new();
+    Arc::clone(BACKEND.get_or_init(crate::device_unlock_linux::backend))
 }
 #[cfg(target_os = "macos")]
 fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
-    crate::device_unlock_macos::backend()
+    static BACKEND: OnceLock<Arc<dyn DeviceUnlockBackend>> = OnceLock::new();
+    Arc::clone(BACKEND.get_or_init(crate::device_unlock_macos::backend))
 }
 
 #[cfg(target_os = "windows")]
 fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
-    crate::device_unlock_windows::backend()
+    static BACKEND: OnceLock<Arc<dyn DeviceUnlockBackend>> = OnceLock::new();
+    Arc::clone(BACKEND.get_or_init(crate::device_unlock_windows::backend))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -95,25 +137,44 @@ fn enable(
 ) -> Result<(), String> {
     let record = storage.load(name)?;
     let slot = system_auth_slot(&record)?;
-    match backend.state(&slot)? {
-        DeviceUnlockState::Unavailable => {
-            return Err("device unlock is unavailable on this platform".to_owned())
+    let result = (|| {
+        backend.prepare_system_support()?;
+        match backend.state(&slot)? {
+            DeviceUnlockState::Unavailable => {
+                return Err("device unlock is unavailable on this platform".to_owned())
+            }
+            DeviceUnlockState::Locked
+            | DeviceUnlockState::Ready
+            | DeviceUnlockState::NeedsReauthorization => {
+                return Err(format!(
+                    "device unlock is already enabled for wallet \"{}\"",
+                    record.name
+                ))
+            }
+            DeviceUnlockState::Disabled => {}
         }
-        DeviceUnlockState::Locked | DeviceUnlockState::Ready => {
-            return Err(format!(
-                "device unlock is already enabled for wallet \"{}\"",
-                record.name
-            ))
-        }
-        DeviceUnlockState::Disabled => {}
+        backend.authorize_enrollment()?;
+        let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
+        enable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
+        println!(
+            "Device unlock enabled for wallet \"{}\" on this device.",
+            record.name
+        );
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => Err(rollback_failed_enable(backend.as_ref(), error)),
     }
-    let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
-    enable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
-    println!(
-        "Device unlock enabled for wallet \"{}\" on this device.",
-        record.name
-    );
-    Ok(())
+}
+
+fn rollback_failed_enable(backend: &dyn DeviceUnlockBackend, error: String) -> String {
+    match backend.cleanup_system_support_if_unused() {
+        Ok(()) => error,
+        Err(cleanup_error) => {
+            format!("{error}; Device Unlock system support rollback failed: {cleanup_error}")
+        }
+    }
 }
 
 fn enable_with_passphrase(
@@ -141,10 +202,18 @@ fn disable(
                 record.name
             ))
         }
-        DeviceUnlockState::Locked | DeviceUnlockState::Ready => {}
+        DeviceUnlockState::Locked
+        | DeviceUnlockState::Ready
+        | DeviceUnlockState::NeedsReauthorization => {}
     }
     let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
     disable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
+    backend.cleanup_system_support_if_unused().map_err(|error| {
+        format!(
+            "device unlock was disabled for wallet \"{}\", but system support cleanup failed: {error}",
+            record.name
+        )
+    })?;
     println!(
         "Device unlock disabled for wallet \"{}\" on this device.",
         record.name
@@ -177,6 +246,37 @@ fn status(
     if state != DeviceUnlockState::Unavailable {
         println!("Provider: {}", backend.provider_name());
     }
+
+    #[cfg(target_os = "macos")]
+    if state == DeviceUnlockState::NeedsReauthorization && io::stdin().is_terminal() {
+        if !confirm_reauthorization()? {
+            return Ok(());
+        }
+        match backend.reauthorize(&slot)? {
+            DeviceSecretRead::Secret(mut key) => {
+                use zeroize::Zeroize;
+                key.zeroize();
+                let updated = backend.state(&slot)?;
+                if !matches!(
+                    updated,
+                    DeviceUnlockState::Ready | DeviceUnlockState::Locked
+                ) {
+                    return Err(format!(
+                        "Device Unlock authorization update did not complete: {}",
+                        state_label(updated)
+                    ));
+                }
+                println!("Device unlock authorization updated.");
+                println!("Device unlock: {}", state_label(updated));
+            }
+            DeviceSecretRead::Missing => {
+                return Err("Device Unlock enrollment is missing".to_owned())
+            }
+            DeviceSecretRead::Cancelled => {
+                return Err("Device Unlock authorization update cancelled".to_owned())
+            }
+        }
+    }
     Ok(())
 }
 
@@ -186,202 +286,119 @@ fn state_label(state: DeviceUnlockState) -> &'static str {
         DeviceUnlockState::Disabled => "disabled",
         DeviceUnlockState::Locked => "locked",
         DeviceUnlockState::Ready => "ready",
+        DeviceUnlockState::NeedsReauthorization => "needs-reauthorization",
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DeviceUnlockChoice {
-    UseDevice,
-    UsePassphrase,
-    Cancel,
-}
-
-fn parse_device_unlock_choice(answer: &str) -> Option<DeviceUnlockChoice> {
-    match answer.trim().to_ascii_lowercase().as_str() {
-        "" | "y" | "yes" => Some(DeviceUnlockChoice::UseDevice),
-        "p" | "passphrase" => Some(DeviceUnlockChoice::UsePassphrase),
-        "c" | "cancel" | "n" | "no" => Some(DeviceUnlockChoice::Cancel),
-        _ => None,
-    }
-}
-
-fn prompt_device_unlock_choice(
-    state: DeviceUnlockState,
-    provider_name: &str,
-) -> Result<DeviceUnlockChoice, String> {
-    println!("Device unlock: {} ({provider_name})", state_label(state));
-    loop {
-        let prompt = match state {
-            DeviceUnlockState::Ready => {
-                "Sign with device unlock? [Y]es / [p]assphrase / [c]ancel: "
-            }
-            DeviceUnlockState::Locked => {
-                "Unlock this device to sign? [Y]es / [p]assphrase / [c]ancel: "
-            }
-            DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => {
-                return Ok(DeviceUnlockChoice::UsePassphrase)
-            }
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn versioned_enrollment_state(
+    enrollment_exists: bool,
+    current_version: bool,
+    recovery_exists: bool,
+    store_unlocked: Option<bool>,
+) -> DeviceUnlockState {
+    if !enrollment_exists {
+        return if recovery_exists {
+            DeviceUnlockState::NeedsReauthorization
+        } else {
+            DeviceUnlockState::Disabled
         };
-        print!("{prompt}");
-        io::stdout()
-            .flush()
-            .map_err(|error| format!("unable to write device unlock prompt: {error}"))?;
-        let mut answer = String::new();
-        let read = io::stdin()
-            .read_line(&mut answer)
-            .map_err(|error| format!("unable to read device unlock choice: {error}"))?;
-        if read == 0 {
-            return Ok(DeviceUnlockChoice::Cancel);
-        }
-        if let Some(choice) = parse_device_unlock_choice(&answer) {
-            return Ok(choice);
-        }
-        println!("Enter y, p, or c.");
+    }
+    if !current_version {
+        return DeviceUnlockState::NeedsReauthorization;
+    }
+    match store_unlocked {
+        Some(true) => DeviceUnlockState::Ready,
+        Some(false) => DeviceUnlockState::Locked,
+        None => DeviceUnlockState::Unavailable,
     }
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) fn confirm_reauthorization() -> Result<bool, String> {
+    print!("Fresnica was updated. Update Device Unlock authorization? [Y/n] ");
+    io::stdout()
+        .flush()
+        .map_err(|error| format!("unable to write Device Unlock update prompt: {error}"))?;
+    let mut answer = String::new();
+    let bytes_read = io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("unable to read Device Unlock update confirmation: {error}"))?;
+    if bytes_read == 0 {
+        return Err("Device Unlock authorization update cancelled".to_owned());
+    }
+    Ok(reauthorization_accepted(&answer))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn reauthorization_accepted(answer: &str) -> bool {
+    matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "" | "y" | "yes"
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn complete_reauthorization(
+    confirm: impl FnOnce() -> Result<bool, String>,
+    migrate: impl FnOnce() -> Result<DeviceSecretRead, String>,
+    remember_authenticated: impl FnOnce() -> Result<(), String>,
+) -> SystemAuthRelease {
+    match confirm() {
+        Ok(true) => {}
+        Ok(false) => {
+            return SystemAuthRelease::Failed(
+                "Device Unlock authorization update declined".to_owned(),
+            )
+        }
+        Err(error) => return SystemAuthRelease::Failed(error),
+    }
+    match migrate() {
+        Ok(DeviceSecretRead::Secret(mut key)) => match remember_authenticated() {
+            Ok(()) => SystemAuthRelease::UnlockKey(key),
+            Err(error) => {
+                use zeroize::Zeroize;
+                key.zeroize();
+                SystemAuthRelease::Failed(error)
+            }
+        },
+        Ok(DeviceSecretRead::Missing) => SystemAuthRelease::PassphraseRequired,
+        Ok(DeviceSecretRead::Cancelled) => SystemAuthRelease::Cancelled,
+        Err(error) => SystemAuthRelease::Failed(error),
+    }
+}
+
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
-    providers_for_backend(
-        client,
-        default_backend(),
-        io::stdin().is_terminal(),
-        None,
-        None,
-    )
-}
-
-pub(crate) fn one_shot_providers_with_choice(
-    client: &FresnicaClient,
-    authorization: &LedgerAuthorizationSnapshot,
-    choice: DeviceUnlockChoice,
-) -> Result<Vec<SystemAuthUnlockProvider>, String> {
-    let local_keys = authorization_local_keys(authorization);
-    providers_for_backend(
-        client,
-        default_backend(),
-        io::stdin().is_terminal(),
-        Some(choice),
-        Some(&local_keys),
-    )
-}
-
-pub(crate) fn transaction_choice(
-    client: &FresnicaClient,
-    authorization: &LedgerAuthorizationSnapshot,
-    assume_yes: bool,
-) -> Result<Option<DeviceUnlockChoice>, String> {
-    if !io::stdin().is_terminal() {
-        return Ok(None);
-    }
-    let local_keys = authorization_local_keys(authorization);
-    if local_keys.is_empty() {
-        return Ok(None);
-    }
-    let backend = default_backend();
-    let mut state = None;
-    for record in client.wallets()? {
-        if !local_keys.contains(&record.address) || record.watch_only() || record.secret.is_none() {
-            continue;
-        }
-        match backend.state(&system_auth_slot(&record)?)? {
-            DeviceUnlockState::Ready => {
-                state = Some(DeviceUnlockState::Ready);
-                break;
-            }
-            DeviceUnlockState::Locked => state = Some(DeviceUnlockState::Locked),
-            DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => {}
-        }
-    }
-    let Some(state) = state else {
-        return Ok(None);
-    };
-    println!(
-        "Device unlock: {} ({})",
-        state_label(state),
-        backend.provider_name()
-    );
-    if assume_yes {
-        return Ok(Some(DeviceUnlockChoice::UseDevice));
-    }
-    let prompt = match state {
-        DeviceUnlockState::Ready => {
-            "[Enter] Sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
-        }
-        DeviceUnlockState::Locked => {
-            "[Enter] Unlock, sign and submit / [p] Fresnica Passphrase / [c] Cancel: "
-        }
-        DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable => unreachable!(),
-    };
-    loop {
-        print!("{prompt}");
-        io::stdout()
-            .flush()
-            .map_err(|error| format!("unable to write device unlock prompt: {error}"))?;
-        let mut answer = String::new();
-        let read = io::stdin()
-            .read_line(&mut answer)
-            .map_err(|error| format!("unable to read device unlock choice: {error}"))?;
-        if read == 0 {
-            return Ok(Some(DeviceUnlockChoice::Cancel));
-        }
-        if let Some(choice) = parse_device_unlock_choice(&answer) {
-            return Ok(Some(choice));
-        }
-        println!("Enter p or c, or press Enter to use device unlock.");
-    }
-}
-
-fn authorization_local_keys(authorization: &LedgerAuthorizationSnapshot) -> BTreeSet<String> {
-    let account_keys = authorization.accounts.iter().flat_map(|account| {
-        account
-            .signers
-            .iter()
-            .filter(|signer| signer.availability == LedgerSignerAvailability::LocalEd25519)
-            .map(|signer| signer.condition.key.clone())
-    });
-    let extra_keys = authorization
-        .extra_signers
-        .iter()
-        .filter(|signer| signer.availability == LedgerSignerAvailability::LocalEd25519)
-        .map(|signer| signer.condition.key.clone());
-    account_keys.chain(extra_keys).collect()
+    providers_for_backend(client, default_backend(), io::stdin().is_terminal())
 }
 
 fn providers_for_backend(
     client: &FresnicaClient,
     backend: Arc<dyn DeviceUnlockBackend>,
     interactive: bool,
-    preset_choice: Option<DeviceUnlockChoice>,
-    allowed_keys: Option<&BTreeSet<String>>,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
     if !interactive {
         return Ok(Vec::new());
     }
 
     let mut providers = Vec::new();
-    let shared_choice = Arc::new(Mutex::new(preset_choice));
     for record in client.wallets()? {
         if record.watch_only() || record.secret.is_none() {
             continue;
         }
-        if let Some(allowed_keys) = allowed_keys {
-            if !allowed_keys.contains(&record.address) {
-                continue;
-            }
-        }
         let slot = system_auth_slot(&record)?;
-        if allowed_keys.is_none()
-            && !matches!(
-                backend.state(&slot)?,
-                DeviceUnlockState::Locked | DeviceUnlockState::Ready
-            )
-        {
+        if !matches!(
+            backend.state(&slot)?,
+            DeviceUnlockState::Locked
+                | DeviceUnlockState::Ready
+                | DeviceUnlockState::NeedsReauthorization
+        ) {
             continue;
         }
         let expected_slot = slot.clone();
         let provider_backend = Arc::clone(&backend);
-        let provider_choice = Arc::clone(&shared_choice);
         providers.push(SystemAuthUnlockProvider::new(
             &record.address,
             move |requested_slot| {
@@ -391,45 +408,7 @@ fn providers_for_backend(
                             .to_owned(),
                     );
                 }
-                let preset = provider_choice.lock().ok().and_then(|choice| *choice);
-                let (state, choice) = if let Some(choice) = preset {
-                    (None, choice)
-                } else {
-                    let state = match provider_backend.state(requested_slot) {
-                        Ok(DeviceUnlockState::Ready) => DeviceUnlockState::Ready,
-                        Ok(DeviceUnlockState::Locked) => DeviceUnlockState::Locked,
-                        Ok(DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable) => {
-                            return SystemAuthRelease::PassphraseRequired
-                        }
-                        Err(error) => return SystemAuthRelease::Failed(error),
-                    };
-                    let selected = match prompt_device_unlock_choice(
-                        state,
-                        provider_backend.provider_name(),
-                    ) {
-                        Ok(selected) => selected,
-                        Err(error) => return SystemAuthRelease::Failed(error),
-                    };
-                    match provider_choice.lock() {
-                        Ok(mut choice) => *choice = Some(selected),
-                        Err(_) => {
-                            return SystemAuthRelease::Failed(
-                                "device unlock choice state is unavailable".to_owned(),
-                            )
-                        }
-                    }
-                    (Some(state), selected)
-                };
-                match choice {
-                    DeviceUnlockChoice::UseDevice => {
-                        if state == Some(DeviceUnlockState::Locked) {
-                            println!("Requesting {} unlock...", provider_backend.provider_name());
-                        }
-                        provider_backend.release(requested_slot)
-                    }
-                    DeviceUnlockChoice::UsePassphrase => SystemAuthRelease::PassphraseRequired,
-                    DeviceUnlockChoice::Cancel => SystemAuthRelease::Cancelled,
-                }
+                provider_backend.release(requested_slot)
             },
         )?);
     }
@@ -451,6 +430,8 @@ mod tests {
     #[derive(Default)]
     struct FakeBackend {
         values: Mutex<BTreeMap<String, Vec<u8>>>,
+        cleanup_calls: Mutex<usize>,
+        state_override: Mutex<Option<DeviceUnlockState>>,
     }
 
     impl FakeBackend {
@@ -460,6 +441,10 @@ mod tests {
                 .unwrap()
                 .insert(slot.storage_id(), unlock_key.to_vec());
         }
+
+        fn set_state(&self, state: DeviceUnlockState) {
+            *self.state_override.lock().unwrap() = Some(state);
+        }
     }
 
     impl DeviceUnlockBackend for FakeBackend {
@@ -467,6 +452,9 @@ mod tests {
             "Fake Device Store"
         }
         fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
+            if let Some(state) = *self.state_override.lock().unwrap() {
+                return Ok(state);
+            }
             Ok(
                 if self.values.lock().unwrap().contains_key(&slot.storage_id()) {
                     DeviceUnlockState::Ready
@@ -474,6 +462,11 @@ mod tests {
                     DeviceUnlockState::Disabled
                 },
             )
+        }
+
+        fn cleanup_system_support_if_unused(&self) -> Result<(), String> {
+            *self.cleanup_calls.lock().unwrap() += 1;
+            Ok(())
         }
 
         fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String> {
@@ -508,6 +501,89 @@ mod tests {
     }
 
     #[test]
+    fn failed_enable_rolls_back_unused_system_support() {
+        let backend = FakeBackend::default();
+        let error = rollback_failed_enable(&backend, "authentication cancelled".to_owned());
+        assert_eq!(error, "authentication cancelled");
+        assert_eq!(*backend.cleanup_calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn versioned_enrollment_state_distinguishes_current_stale_and_recovery() {
+        assert_eq!(
+            versioned_enrollment_state(true, true, false, Some(true)),
+            DeviceUnlockState::Ready
+        );
+        assert_eq!(
+            versioned_enrollment_state(true, true, false, Some(false)),
+            DeviceUnlockState::Locked
+        );
+        assert_eq!(
+            versioned_enrollment_state(true, false, false, Some(true)),
+            DeviceUnlockState::NeedsReauthorization
+        );
+        assert_eq!(
+            versioned_enrollment_state(false, false, true, Some(true)),
+            DeviceUnlockState::NeedsReauthorization
+        );
+        assert_eq!(
+            versioned_enrollment_state(false, false, false, Some(true)),
+            DeviceUnlockState::Disabled
+        );
+    }
+
+    #[test]
+    fn reauthorization_consent_defaults_to_yes_and_accepts_explicit_yes() {
+        assert!(reauthorization_accepted(""));
+        assert!(reauthorization_accepted("y"));
+        assert!(reauthorization_accepted("YES"));
+        assert!(!reauthorization_accepted("n"));
+        assert!(!reauthorization_accepted("anything else"));
+    }
+
+    #[test]
+    fn successful_reauthorization_returns_key_and_remembers_authentication() {
+        use std::cell::Cell;
+
+        let migrations = Cell::new(0usize);
+        let remembered = Cell::new(0usize);
+        let release = complete_reauthorization(
+            || Ok(true),
+            || {
+                migrations.set(migrations.get() + 1);
+                Ok(DeviceSecretRead::Secret(vec![7; 32]))
+            },
+            || {
+                remembered.set(remembered.get() + 1);
+                Ok(())
+            },
+        );
+        assert_eq!(release, SystemAuthRelease::UnlockKey(vec![7; 32]));
+        assert_eq!(migrations.get(), 1);
+        assert_eq!(remembered.get(), 1);
+    }
+
+    #[test]
+    fn declined_or_cancelled_reauthorization_fails_closed() {
+        let declined = complete_reauthorization(
+            || Ok(false),
+            || panic!("declined migration must not read the Keychain"),
+            || panic!("declined migration must not cache authentication"),
+        );
+        assert_eq!(
+            declined,
+            SystemAuthRelease::Failed("Device Unlock authorization update declined".to_owned())
+        );
+
+        let cancelled = complete_reauthorization(
+            || Ok(true),
+            || Ok(DeviceSecretRead::Cancelled),
+            || panic!("cancelled migration must not cache authentication"),
+        );
+        assert_eq!(cancelled, SystemAuthRelease::Cancelled);
+    }
+
+    #[test]
     fn enrolled_exact_signer_becomes_one_shot_provider() {
         let (client, root) = client();
         let record =
@@ -517,7 +593,22 @@ mod tests {
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
-        let providers = providers_for_backend(&client, backend, true, None, None).unwrap();
+        let providers = providers_for_backend(&client, backend, true).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].public_key(), record.address);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_enrollment_is_still_offered_for_interactive_migration() {
+        let (client, root) = client();
+        let record =
+            wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
+        client.storage().save(&record, false).unwrap();
+        let backend = Arc::new(FakeBackend::default());
+        backend.set_state(DeviceUnlockState::NeedsReauthorization);
+
+        let providers = providers_for_backend(&client, backend, true).unwrap();
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].public_key(), record.address);
         std::fs::remove_dir_all(root).unwrap();
@@ -533,7 +624,7 @@ mod tests {
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
 
-        assert!(providers_for_backend(&client, backend, false, None, None)
+        assert!(providers_for_backend(&client, backend, false)
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();
@@ -562,23 +653,6 @@ mod tests {
     }
 
     #[test]
-    fn device_unlock_choice_requires_explicit_supported_input() {
-        assert_eq!(
-            parse_device_unlock_choice(""),
-            Some(DeviceUnlockChoice::UseDevice)
-        );
-        assert_eq!(
-            parse_device_unlock_choice("p"),
-            Some(DeviceUnlockChoice::UsePassphrase)
-        );
-        assert_eq!(
-            parse_device_unlock_choice("cancel"),
-            Some(DeviceUnlockChoice::Cancel)
-        );
-        assert_eq!(parse_device_unlock_choice("maybe"), None);
-    }
-
-    #[test]
     fn changed_envelope_does_not_reuse_device_unlock_enrollment() {
         let (client, root) = client();
         let record =
@@ -595,7 +669,7 @@ mod tests {
         .unwrap();
         client.storage().save(&changed, false).unwrap();
 
-        assert!(providers_for_backend(&client, backend, true, None, None)
+        assert!(providers_for_backend(&client, backend, true)
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();

@@ -2,7 +2,6 @@ use fresnica_client::{FresnicaClient, OfferRequest, OfferReview, OfferReviewDeta
 
 use crate::transaction_flow::{
     confirm_submission, render_authorization_review, submit_with_classic_signers,
-    submit_with_classic_signers_choice,
 };
 
 pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
@@ -12,33 +11,14 @@ pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Resul
     let prepared = client.prepare_offer(&request.service)?;
     crate::diagnostics::stage("DEX write: review prepared transaction");
     render_offer_review(&prepared.review);
-    let device_choice = crate::device_unlock::transaction_choice(
-        client,
-        &prepared.review.ledger_authorization,
-        request.yes,
-    )?;
-    if device_choice == Some(crate::device_unlock::DeviceUnlockChoice::Cancel) {
-        println!("Transaction cancelled.");
-        return Ok(());
-    }
-    if device_choice.is_none() && !request.yes && !confirm_submission()? {
+    if !request.yes && !confirm_submission()? {
         println!("Transaction cancelled.");
         return Ok(());
     }
     crate::diagnostics::stage("DEX write: sign and submit");
-    let submission = match device_choice {
-        Some(choice) => submit_with_classic_signers_choice(
-            client,
-            &prepared.review.ledger_authorization,
-            choice,
-            |passcode, system_auth, providers| {
-                client.submit_offer_with_providers(&prepared, passcode, system_auth, providers)
-            },
-        ),
-        None => submit_with_classic_signers(client, |passcode, system_auth, providers| {
-            client.submit_offer_with_providers(&prepared, passcode, system_auth, providers)
-        }),
-    }?;
+    let submission = submit_with_classic_signers(client, |passcode, system_auth, providers| {
+        client.submit_offer_with_providers(&prepared, passcode, system_auth, providers)
+    })?;
     println!("Submitted: {}", submission.hash);
     if let Some(ledger) = submission.ledger {
         println!("Ledger:    {ledger}");

@@ -119,6 +119,10 @@ pub fn with_software_signer_authorization<T>(
     mut authorize: impl FnMut(Option<&str>, &[SystemAuthUnlockProvider]) -> Result<T, String>,
 ) -> Result<T, String> {
     let device_unlock_providers = crate::device_unlock::one_shot_providers(client)?;
+    crate::diagnostics::stage("signing: resolve authorization providers");
+    if !device_unlock_providers.is_empty() {
+        crate::diagnostics::stage("signing: device unlock provider available");
+    }
     submit_with_authorization_sources(
         &device_unlock_providers,
         &[],
@@ -143,39 +147,6 @@ pub fn submit_with_classic_signers<T>(
         || crate::prompt_hidden("Fresnica passphrase: "),
         submit,
     )
-}
-
-pub fn submit_with_classic_signers_choice<T>(
-    client: &FresnicaClient,
-    authorization: &LedgerAuthorizationSnapshot,
-    choice: crate::device_unlock::DeviceUnlockChoice,
-    mut submit: impl FnMut(
-        Option<&str>,
-        &[SystemAuthUnlockProvider],
-        &[ExternalEd25519SigningProvider],
-    ) -> Result<T, String>,
-) -> Result<T, String> {
-    let external_providers = crate::ledger::external_signing_providers(client)?;
-    match choice {
-        crate::device_unlock::DeviceUnlockChoice::UseDevice => {
-            let providers = crate::device_unlock::one_shot_providers_with_choice(
-                client,
-                authorization,
-                choice,
-            )?;
-            submit_with_authorization_sources(
-                &providers,
-                &external_providers,
-                || crate::prompt_hidden("Fresnica passphrase: "),
-                submit,
-            )
-        }
-        crate::device_unlock::DeviceUnlockChoice::UsePassphrase => {
-            let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
-            submit(Some(passphrase.as_str()), &[], &external_providers).map_err(device_unlock_error)
-        }
-        crate::device_unlock::DeviceUnlockChoice::Cancel => Err("Transaction cancelled".to_owned()),
-    }
 }
 
 fn submit_with_authorization_sources<T>(
@@ -206,7 +177,7 @@ fn device_unlock_error(error: String) -> String {
 }
 
 pub fn confirm_submission() -> Result<bool, String> {
-    print!("Submit this transaction? [y/N] ");
+    print!("Sign and submit this transaction? [y/N] ");
     io::stdout()
         .flush()
         .map_err(|error| format!("unable to write prompt: {error}"))?;

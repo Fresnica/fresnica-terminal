@@ -28,98 +28,58 @@ use std::process;
 use fresnica_client::{FresnicaClient, NetworkProfile, WalletStorage};
 use zeroize::Zeroizing;
 
-const HELP: &str = r#"Fresnica native Rust CLI
+const HELP: &str = r#"Fresnica CLI
 
 Usage:
-  fresnica [--home PATH] [--network mainnet|testnet] info [--wallet NAME]
-  fresnica [--home PATH] [--network mainnet|testnet] account [--wallet NAME] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] balance [--wallet NAME] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] history [--wallet NAME] [--limit N] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] asset discover [--limit N] [--cached] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] send AMOUNT ASSET to DESTINATION [--wallet NAME] [--memo TEXT] [-y]
-  fresnica [--home PATH] contact COMMAND ...
-  fresnica [--home PATH] [--network mainnet|testnet] trust add CODE:GISSUER [--limit VALUE] [--wallet NAME] [-y]
-  fresnica [--home PATH] [--network mainnet|testnet] trust limit CODE:GISSUER LIMIT [--wallet NAME] [-y]
-  fresnica [--home PATH] [--network mainnet|testnet] trust remove CODE:GISSUER [--wallet NAME] [-y]
-  fresnica [--home PATH] [--network mainnet|testnet] dex orderbook SELLING BUYING [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] dex offers [--wallet NAME] [--limit N] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...
-  fresnica [--network mainnet|testnet] anchor discover CODE:GISSUER --home-domain DOMAIN [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor withdraw CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor status CODE:GISSUER ID --home-domain DOMAIN [--wallet NAME] [--protocol sep24|sep6] [--pay] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] anchor customer CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--id CUSTOMER_ID] [--transaction ID] [--type TYPE] [--lang LANG] [--input PATH|-] [--json]
-  fresnica [--home PATH] [--network mainnet|testnet] wallet COMMAND ...
-  fresnica plugin ls
+  fresnica [GLOBAL OPTIONS] <COMMAND> [ARGS]
+
+Commands:
+  info       Show local wallet information
+  account    Show current ledger account state
+  balance    Show account balances and liabilities
+  history    Show recent account operations
+  asset      Discover issued assets
+  send       Send a payment
+  trust      Manage issued-asset trustlines
+  dex        Read and trade on the Stellar DEX
+  contract   Invoke Soroban contracts
+  wallet     Manage wallets and signing material
+  contact    Manage contacts
+  plugin     Manage CLI plugins
+  anchor     Stellar Anchor SEP flows (bundled plugin)
 
 Global options:
+  --home PATH                   Override Fresnica home for this invocation
+  --network mainnet|testnet     Select Stellar network
   -v, --verbose                Show safe execution stages and failure context
   -vv                          Also show CLI version, network, and pinned Fresnica source
   --horizon-url URL            Override the Horizon endpoint for this invocation
   --rpc-url URL                Override the Stellar RPC endpoint for this invocation
   --tx-timeout SECONDS         Override the Classic transaction validity window
+  -h, --help                   Show this help
+  -V, --version                Show version information
 
 Environment:
+  FRESNICA_HOME                Default Fresnica home; CLI flag wins
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
   FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
   FRESNICA_TX_TIMEOUT_SECONDS  Default Classic transaction validity window; CLI flag wins
 
-Network commands:
-  account                       Show current ledger account state
-  balance                       Show current account balances and liabilities
-  history                       Show newest account operations (default 20, max 200)
-  asset                         Discover exact issued-asset identities and optional metadata
-  send                          Review, sign through Fresnica SDK/Core, and submit a payment
-  trust                         Add, change, or remove an issued-asset trustline
-  dex                           Read and trade on the Stellar DEX
-  contract                      Invoke deployed contracts through their on-chain interface
-  anchor                        Native plugin for Anchor SEP flows; wallet authorization remains Fresnica-hosted
-
-Plugin commands:
-  plugin ls                     List PATH-discovered Fresnica plugins
-
-Contract invocation:
-  Fresnica options come before `--`; the function and named arguments after `--`
-  are resolved from the deployed contract specification.
-
-Contact commands:
-  list
-  add NAME G... [--memo TEXT]
-  remove NAME
-
-Wallet commands:
-  list
-  use NAME
-  create NAME [--index N] [--language LANGUAGE] [--strength BITS]
-  import-secret NAME
-  import-mnemonic NAME [--index N] [--language LANGUAGE]
-  import-watch NAME G...
-  import-ledger NAME [--hd-path N]  Import connected Ledger account as watch-only signer
-  attach-ledger NAME [--hd-path N]  Bind connected Ledger signer to matching watch-only G address
-  detach-ledger NAME                Remove Ledger provider metadata and keep the G address
-  attach-secret NAME             Add matching S... signing material to watch-only wallet
-  attach-mnemonic NAME [--index N] [--language LANGUAGE]
-  device-unlock enable NAME       Let this OS user unlock the protected software signer
-  device-unlock disable NAME      Remove this device's stored unlock capability
-  device-unlock status NAME       Show disabled, locked, ready, or unavailable without unlocking
-  detach-signer NAME             Remove local signing material and keep the G address
-  testnet-fund [--wallet NAME]   Fund a testnet wallet with Friendbot
-  fund [--wallet NAME]           Alias for testnet-fund
-  reveal [NAME]
-  backup NAME PATH [--force]
-  restore PATH [--name NAME]
-  delete NAME
-
-The native client uses the platform-neutral Fresnica SDK for wallet protection and
-signing, while low-level Stellar/XDR primitives remain in Rust Core. It uses the
-same wallet files and version-1 encrypted backup format as the Python reference
-client. All local software wallets share one Fresnica passphrase while retaining
-independent Core salt/nonce-derived encryption keys.
+More help:
+  fresnica wallet --help       Wallet and signer commands
+  fresnica anchor --help       Anchor plugin commands
 "#;
 
 fn main() {
     let arguments: Vec<String> = env::args().skip(1).collect();
+    #[cfg(target_os = "linux")]
+    if let Some(result) = device_unlock_linux::internal_policy_command(&arguments) {
+        if let Err(error) = result {
+            eprintln!("Error: {error}");
+            process::exit(2);
+        }
+        return;
+    }
     diagnostics::set_verbosity(diagnostics::leading_verbosity(&arguments));
     let global = match GlobalOptions::parse(&arguments) {
         Ok(global) => global,
@@ -406,6 +366,15 @@ mod tests {
         assert_eq!(parse_tx_timeout("900").unwrap(), 900);
         assert!(parse_tx_timeout("0").is_err());
         assert!(parse_tx_timeout("five-minutes").is_err());
+    }
+
+    #[test]
+    fn top_level_help_delegates_anchor_details_to_plugin() {
+        assert!(HELP.contains("anchor     Stellar Anchor SEP flows (bundled plugin)"));
+        assert!(HELP.contains("fresnica anchor --help"));
+        assert!(!HELP.contains("anchor deposit"));
+        assert!(!HELP.contains("anchor withdraw"));
+        assert!(!HELP.contains("anchor customer"));
     }
 
     #[test]

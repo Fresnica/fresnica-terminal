@@ -1,6 +1,6 @@
 [package]
 name = "fresnica-cli"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Native command-line client for the Fresnica Stellar wallet"
 license = "MIT"
@@ -26,10 +26,12 @@ zeroize = "=1.9.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "=5.2.0", features = ["rt-async-io-crypto-rust"] }
+zbus = "=5.19.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "=0.10.1"
 security-framework = "=3.7.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows = { version = "=0.62.2", features = ["Security_Credentials_UI", "Win32_Foundation", "Win32_Security_Credentials", "Win32_System_Console", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging"] }
+windows-future = "=0.3.2"
