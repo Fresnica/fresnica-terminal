@@ -39,6 +39,11 @@ pub(crate) enum DeviceSecretRead {
 pub(crate) trait DeviceSecretStore: Send + Sync {
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
+    #[allow(dead_code)]
+    fn update_enrollment(&self, slot: &SystemAuthSlot) -> Result<(), String> {
+        let _ = slot;
+        Err("device unlock migration is unavailable".to_owned())
+    }
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String>;
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
