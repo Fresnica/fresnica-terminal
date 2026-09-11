@@ -1,6 +1,7 @@
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
+use std::fmt::Write as _;
 use std::os::raw::{c_char, c_int, c_long};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use core_foundation::base::TCFType;
 use core_foundation::data::CFData;
@@ -9,7 +10,8 @@ use security_framework::item::{
     ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, Location,
 };
 use security_framework::os::macos::keychain::SecKeychain;
-use zeroize::{Zeroize, Zeroizing};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
 
 use crate::device_unlock::{
     complete_reauthorization, confirm_reauthorization, versioned_enrollment_state,
@@ -35,6 +37,13 @@ const LOCAL_AUTH_REASON: &[u8] = b"authenticate this transaction\0";
 extern "C" {
     fn SecKeychainGetStatus(keychain: *mut c_void, status: *mut u32) -> i32;
     fn fresnica_macos_authenticate(reason: *const c_char, error_code: *mut c_long) -> c_int;
+    fn fresnica_macos_refresh_keychain_item_access(
+        keychain: *mut c_void,
+        source_service: *const c_char,
+        target_service: *const c_char,
+        account: *const c_char,
+        label: *const c_char,
+    ) -> c_int;
 }
 
 pub(crate) fn backend() -> Arc<dyn DeviceUnlockBackend> {
@@ -152,7 +161,11 @@ impl DeviceSecretStore for MacKeychainStore {
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
         let keychain = default_keychain()?;
         let enrollment_exists = item_exists(&keychain, SERVICE, slot)?;
-        let current_version = current_enrollment_exists(&keychain, slot)?;
+        let current_version = if enrollment_exists {
+            current_enrollment_exists(&keychain, slot)?
+        } else {
+            false
+        };
         let recovery_exists = item_exists(&keychain, MIGRATION_SERVICE, slot)?;
         Ok(versioned_enrollment_state(
             enrollment_exists,
@@ -210,86 +223,80 @@ impl DeviceSecretStore for MacKeychainStore {
 impl MacKeychainStore {
     fn migrate_and_release(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
         let keychain = default_keychain()?;
-        let account = slot.storage_id();
-        let (password, source_item, source_is_primary) =
-            match keychain.find_generic_password(SERVICE, &account) {
-                Ok((password, item)) => (password, item, true),
-                Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
-                    match keychain.find_generic_password(MIGRATION_SERVICE, &account) {
-                        Ok((password, item)) => (password, item, false),
-                        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
-                            return Ok(DeviceSecretRead::Missing)
-                        }
-                        Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
-                            return Ok(DeviceSecretRead::Cancelled)
-                        }
-                        Err(error) => {
-                            return Err(format!(
-                                "unable to read Device Unlock migration recovery: {error}"
-                            ))
-                        }
-                    }
-                }
-                Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
-                    return Ok(DeviceSecretRead::Cancelled)
-                }
-                Err(error) => {
-                    return Err(format!(
-                        "unable to read Device Unlock enrollment for migration: {error}"
-                    ))
-                }
-            };
-
-        let key = Zeroizing::new(password.as_ref().to_vec());
-        if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
-            return Err("macOS Keychain returned an invalid device unlock key".to_owned());
-        }
-
-        let mut source_item = Some(source_item);
-        let mut stage_item = None;
-        if source_is_primary {
-            if !item_exists(&keychain, MIGRATION_SERVICE, slot)? {
-                keychain
-                    .add_generic_password(MIGRATION_SERVICE, &account, key.as_slice())
-                    .map_err(|error| format!("unable to stage Device Unlock migration: {error}"))?;
-                let (staged, item) = keychain
-                    .find_generic_password(MIGRATION_SERVICE, &account)
-                    .map_err(|error| {
-                        format!("unable to verify Device Unlock migration staging: {error}")
-                    })?;
-                if staged.as_ref() != key.as_slice() {
-                    return Err("Device Unlock migration staging verification failed".to_owned());
-                }
-                stage_item = Some(item);
-            }
-            source_item.take().expect("source item").delete();
-            if item_exists(&keychain, SERVICE, slot)? {
-                return Err("unable to replace the old Device Unlock enrollment".to_owned());
-            }
+        let source_service = if item_exists(&keychain, SERVICE, slot)? {
+            SERVICE
+        } else if item_exists(&keychain, MIGRATION_SERVICE, slot)? {
+            MIGRATION_SERVICE
         } else {
-            stage_item = source_item.take();
+            return Ok(DeviceSecretRead::Missing);
+        };
+        let label = enrollment_label()?;
+        let source = CString::new(source_service)
+            .map_err(|_| "invalid Device Unlock source service".to_owned())?;
+        let target =
+            CString::new(SERVICE).map_err(|_| "invalid Device Unlock target service".to_owned())?;
+        let account = CString::new(slot.storage_id())
+            .map_err(|_| "invalid Device Unlock account identifier".to_owned())?;
+        let label =
+            CString::new(label).map_err(|_| "invalid Device Unlock enrollment label".to_owned())?;
+
+        // Updating access and metadata in one SecItemUpdate crosses the old
+        // ChangeACL authorization exactly once. Reading or deleting first would
+        // require separate ACL authorizations on an upgraded unsigned binary.
+        let status = unsafe {
+            fresnica_macos_refresh_keychain_item_access(
+                keychain.as_concrete_TypeRef().cast::<c_void>(),
+                source.as_ptr(),
+                target.as_ptr(),
+                account.as_ptr(),
+                label.as_ptr(),
+            )
+        };
+        if status == ERR_SEC_USER_CANCELED {
+            return Ok(DeviceSecretRead::Cancelled);
+        }
+        if status == ERR_SEC_ITEM_NOT_FOUND {
+            return Ok(DeviceSecretRead::Missing);
+        }
+        if status != 0 {
+            return Err(format!(
+                "unable to update Device Unlock Keychain authorization: {status}"
+            ));
         }
 
-        add_current_enrollment(&keychain, slot, key.as_slice())?;
-        let (current, current_item) = keychain
-            .find_generic_password(SERVICE, &account)
-            .map_err(|error| format!("unable to verify Device Unlock migration: {error}"))?;
-        if current.as_ref() != key.as_slice() {
-            current_item.delete();
-            return Err("Device Unlock migration verification failed".to_owned());
+        let secret = self.read(slot)?;
+        if matches!(secret, DeviceSecretRead::Secret(_)) {
+            delete_if_authorized_without_prompt(&keychain, MIGRATION_SERVICE, slot);
+            delete_if_authorized_without_prompt(&keychain, LEGACY_METADATA_SERVICE, slot);
         }
-
-        if let Some(item) = stage_item {
-            item.delete();
-        }
-        delete_if_authorized_without_prompt(&keychain, MIGRATION_SERVICE, slot);
-        delete_if_authorized_without_prompt(&keychain, LEGACY_METADATA_SERVICE, slot);
-        Ok(DeviceSecretRead::Secret(key.to_vec()))
+        Ok(secret)
     }
 }
 
-fn enrollment_label() -> String {
-    format!("{ENROLLMENT_LABEL_PREFIX}{}", env!("CARGO_PKG_VERSION"))
+fn enrollment_label() -> Result<&'static str, String> {
+    static LABEL: OnceLock<Result<String, String>> = OnceLock::new();
+    match LABEL.get_or_init(|| {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("unable to locate the Fresnica executable: {error}"))?;
+        let binary = std::fs::read(&executable).map_err(|error| {
+            format!(
+                "unable to read the Fresnica executable {}: {error}",
+                executable.display()
+            )
+        })?;
+        let digest = Sha256::digest(binary);
+        let mut build_id = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            write!(&mut build_id, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        Ok(format!(
+            "{ENROLLMENT_LABEL_PREFIX}{} build {build_id}",
+            env!("CARGO_PKG_VERSION")
+        ))
+    }) {
+        Ok(label) => Ok(label),
+        Err(error) => Err(error.clone()),
+    }
 }
 
 fn add_current_enrollment(
@@ -297,7 +304,7 @@ fn add_current_enrollment(
     slot: &SystemAuthSlot,
     unlock_key: &[u8],
 ) -> Result<(), String> {
-    let label = enrollment_label();
+    let label = enrollment_label()?;
     let mut item = ItemAddOptions::new(ItemAddValue::Data {
         class: ItemClass::generic_password(),
         data: CFData::from_buffer(unlock_key),
@@ -305,7 +312,7 @@ fn add_current_enrollment(
     item.set_location(Location::FileKeychain(keychain.clone()))
         .set_service(SERVICE)
         .set_account_name(slot.storage_id())
-        .set_label(&label)
+        .set_label(label)
         .set_description("Fresnica Device Unlock key");
     item.add()
         .map_err(|error| format!("unable to store Device Unlock key: {error}"))
@@ -315,14 +322,14 @@ fn current_enrollment_exists(
     keychain: &SecKeychain,
     slot: &SystemAuthSlot,
 ) -> Result<bool, String> {
-    let label = enrollment_label();
+    let label = enrollment_label()?;
     let mut search = ItemSearchOptions::new();
     search
         .keychains(std::slice::from_ref(keychain))
         .class(ItemClass::generic_password())
         .service(SERVICE)
         .account(&slot.storage_id())
-        .label(&label)
+        .label(label)
         .load_attributes(true)
         .skip_authenticated_items(true);
     match search.search() {

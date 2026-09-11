@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <LocalAuthentication/LocalAuthentication.h>
+#import <Security/Security.h>
 #import <dispatch/dispatch.h>
 
 enum {
@@ -62,5 +63,53 @@ int fresnica_macos_authenticate(const char *reason, long *error_code) {
             return FRESNICA_MAC_AUTH_CANCELLED;
         }
         return FRESNICA_MAC_AUTH_FAILED;
+    }
+}
+
+int fresnica_macos_refresh_keychain_item_access(
+    void *keychain_ref,
+    const char *source_service,
+    const char *target_service,
+    const char *account,
+    const char *label
+) {
+    @autoreleasepool {
+        if (keychain_ref == NULL || source_service == NULL || target_service == NULL ||
+            account == NULL || label == NULL) {
+            return errSecParam;
+        }
+
+        NSString *source = [NSString stringWithUTF8String:source_service];
+        NSString *target = [NSString stringWithUTF8String:target_service];
+        NSString *account_name = [NSString stringWithUTF8String:account];
+        NSString *item_label = [NSString stringWithUTF8String:label];
+        if (source == nil || target == nil || account_name == nil || item_label == nil) {
+            return errSecParam;
+        }
+
+        SecAccessRef access = NULL;
+        OSStatus status = SecAccessCreate((__bridge CFStringRef)item_label, NULL, &access);
+        if (status != errSecSuccess) {
+            return status;
+        }
+
+        NSDictionary *query = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrService: source,
+            (__bridge id)kSecAttrAccount: account_name,
+            (__bridge id)kSecMatchSearchList: @[(__bridge id)(SecKeychainRef)keychain_ref],
+        };
+        NSDictionary *updates = @{
+            (__bridge id)kSecAttrAccess: (__bridge id)access,
+            (__bridge id)kSecAttrService: target,
+            (__bridge id)kSecAttrLabel: item_label,
+            (__bridge id)kSecAttrDescription: @"Fresnica Device Unlock key",
+        };
+        status = SecItemUpdate(
+            (__bridge CFDictionaryRef)query,
+            (__bridge CFDictionaryRef)updates
+        );
+        CFRelease(access);
+        return status;
     }
 }
