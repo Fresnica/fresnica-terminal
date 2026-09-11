@@ -1,7 +1,6 @@
-use std::ffi::{c_void, CString};
-use std::fmt::Write as _;
+use std::ffi::c_void;
 use std::os::raw::{c_char, c_int, c_long};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use core_foundation::base::TCFType;
 use core_foundation::data::CFData;
@@ -10,7 +9,6 @@ use security_framework::item::{
     ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, Location,
 };
 use security_framework::os::macos::keychain::SecKeychain;
-use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
 use crate::device_unlock::{
@@ -37,12 +35,11 @@ const LOCAL_AUTH_REASON: &[u8] = b"authenticate this transaction\0";
 extern "C" {
     fn SecKeychainGetStatus(keychain: *mut c_void, status: *mut u32) -> i32;
     fn fresnica_macos_authenticate(reason: *const c_char, error_code: *mut c_long) -> c_int;
-    fn fresnica_macos_refresh_keychain_item_access(
+    fn fresnica_macos_keychain_item_trusts_current_application(
         keychain: *mut c_void,
-        source_service: *const c_char,
-        target_service: *const c_char,
+        service: *const c_char,
         account: *const c_char,
-        label: *const c_char,
+        trusted: *mut c_int,
     ) -> c_int;
 }
 
@@ -162,7 +159,7 @@ impl DeviceSecretStore for MacKeychainStore {
         let keychain = default_keychain()?;
         let enrollment_exists = item_exists(&keychain, SERVICE, slot)?;
         let current_version = if enrollment_exists {
-            current_enrollment_exists(&keychain, slot)?
+            current_application_trusted(&keychain, SERVICE, slot)?
         } else {
             false
         };
@@ -191,22 +188,7 @@ impl DeviceSecretStore for MacKeychainStore {
 
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
         let keychain = default_keychain()?;
-        let (password, _) = match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
-            Ok(value) => value,
-            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
-                return Ok(DeviceSecretRead::Missing)
-            }
-            Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
-                return Ok(DeviceSecretRead::Cancelled)
-            }
-            Err(error) => return Err(format!("unable to read device unlock key: {error}")),
-        };
-        let mut key = password.as_ref().to_vec();
-        if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
-            key.zeroize();
-            return Err("macOS Keychain returned an invalid device unlock key".to_owned());
-        }
-        Ok(DeviceSecretRead::Secret(key))
+        read_password(&keychain, SERVICE, slot)
     }
 
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String> {
@@ -230,73 +212,34 @@ impl MacKeychainStore {
         } else {
             return Ok(DeviceSecretRead::Missing);
         };
-        let label = enrollment_label()?;
-        let source = CString::new(source_service)
-            .map_err(|_| "invalid Device Unlock source service".to_owned())?;
-        let target =
-            CString::new(SERVICE).map_err(|_| "invalid Device Unlock target service".to_owned())?;
-        let account = CString::new(slot.storage_id())
-            .map_err(|_| "invalid Device Unlock account identifier".to_owned())?;
-        let label =
-            CString::new(label).map_err(|_| "invalid Device Unlock enrollment label".to_owned())?;
 
-        // Updating access and metadata in one SecItemUpdate crosses the old
-        // ChangeACL authorization exactly once. Reading or deleting first would
-        // require separate ACL authorizations on an upgraded unsigned binary.
-        let status = unsafe {
-            fresnica_macos_refresh_keychain_item_access(
-                keychain.as_concrete_TypeRef().cast::<c_void>(),
-                source.as_ptr(),
-                target.as_ptr(),
-                account.as_ptr(),
-                label.as_ptr(),
-            )
+        let secret = read_password(&keychain, source_service, slot)?;
+        let DeviceSecretRead::Secret(mut key) = secret else {
+            return Ok(secret);
         };
-        if status == ERR_SEC_USER_CANCELED {
-            return Ok(DeviceSecretRead::Cancelled);
-        }
-        if status == ERR_SEC_ITEM_NOT_FOUND {
-            return Ok(DeviceSecretRead::Missing);
-        }
-        if status != 0 {
-            return Err(format!(
-                "unable to update Device Unlock Keychain authorization: {status}"
-            ));
+
+        // Let macOS perform the stale-binary authorization itself. Choosing the
+        // persistent approval in the Keychain dialog adds this exact executable
+        // to the restricted/decrypt ACL without Fresnica rewriting the ACL.
+        if !current_application_trusted(&keychain, source_service, slot)? {
+            key.zeroize();
+            return Err(
+                "macOS granted one-time Keychain access but did not retain this Fresnica build; rerun and choose the persistent authorization option"
+                    .to_owned(),
+            );
         }
 
-        let secret = self.read(slot)?;
-        if matches!(secret, DeviceSecretRead::Secret(_)) {
+        if source_service == MIGRATION_SERVICE {
+            add_current_enrollment(&keychain, slot, &key)?;
             delete_if_authorized_without_prompt(&keychain, MIGRATION_SERVICE, slot);
-            delete_if_authorized_without_prompt(&keychain, LEGACY_METADATA_SERVICE, slot);
         }
-        Ok(secret)
+        delete_if_authorized_without_prompt(&keychain, LEGACY_METADATA_SERVICE, slot);
+        Ok(DeviceSecretRead::Secret(key))
     }
 }
 
-fn enrollment_label() -> Result<&'static str, String> {
-    static LABEL: OnceLock<Result<String, String>> = OnceLock::new();
-    match LABEL.get_or_init(|| {
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("unable to locate the Fresnica executable: {error}"))?;
-        let binary = std::fs::read(&executable).map_err(|error| {
-            format!(
-                "unable to read the Fresnica executable {}: {error}",
-                executable.display()
-            )
-        })?;
-        let digest = Sha256::digest(binary);
-        let mut build_id = String::with_capacity(digest.len() * 2);
-        for byte in digest {
-            write!(&mut build_id, "{byte:02x}").expect("writing to String cannot fail");
-        }
-        Ok(format!(
-            "{ENROLLMENT_LABEL_PREFIX}{} build {build_id}",
-            env!("CARGO_PKG_VERSION")
-        ))
-    }) {
-        Ok(label) => Ok(label),
-        Err(error) => Err(error.clone()),
-    }
+fn enrollment_label() -> String {
+    format!("{ENROLLMENT_LABEL_PREFIX}{}", env!("CARGO_PKG_VERSION"))
 }
 
 fn add_current_enrollment(
@@ -304,7 +247,7 @@ fn add_current_enrollment(
     slot: &SystemAuthSlot,
     unlock_key: &[u8],
 ) -> Result<(), String> {
-    let label = enrollment_label()?;
+    let label = enrollment_label();
     let mut item = ItemAddOptions::new(ItemAddValue::Data {
         class: ItemClass::generic_password(),
         data: CFData::from_buffer(unlock_key),
@@ -312,33 +255,64 @@ fn add_current_enrollment(
     item.set_location(Location::FileKeychain(keychain.clone()))
         .set_service(SERVICE)
         .set_account_name(slot.storage_id())
-        .set_label(label)
+        .set_label(&label)
         .set_description("Fresnica Device Unlock key");
     item.add()
         .map_err(|error| format!("unable to store Device Unlock key: {error}"))
 }
 
-fn current_enrollment_exists(
+fn current_application_trusted(
     keychain: &SecKeychain,
+    service: &str,
     slot: &SystemAuthSlot,
 ) -> Result<bool, String> {
-    let label = enrollment_label()?;
-    let mut search = ItemSearchOptions::new();
-    search
-        .keychains(std::slice::from_ref(keychain))
-        .class(ItemClass::generic_password())
-        .service(SERVICE)
-        .account(&slot.storage_id())
-        .label(label)
-        .load_attributes(true)
-        .skip_authenticated_items(true);
-    match search.search() {
-        Ok(results) => Ok(!results.is_empty()),
-        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(false),
-        Err(error) => Err(format!(
-            "unable to query Device Unlock enrollment version: {error}"
-        )),
+    use std::ffi::CString;
+
+    let service =
+        CString::new(service).map_err(|_| "invalid Device Unlock Keychain service".to_owned())?;
+    let account = CString::new(slot.storage_id())
+        .map_err(|_| "invalid Device Unlock account identifier".to_owned())?;
+    let mut trusted = 0 as c_int;
+    let status = unsafe {
+        fresnica_macos_keychain_item_trusts_current_application(
+            keychain.as_concrete_TypeRef().cast::<c_void>(),
+            service.as_ptr(),
+            account.as_ptr(),
+            &mut trusted,
+        )
+    };
+    if status == ERR_SEC_ITEM_NOT_FOUND {
+        return Ok(false);
     }
+    if status != 0 {
+        return Err(format!(
+            "unable to inspect Device Unlock Keychain authorization: {status}"
+        ));
+    }
+    Ok(trusted != 0)
+}
+
+fn read_password(
+    keychain: &SecKeychain,
+    service: &str,
+    slot: &SystemAuthSlot,
+) -> Result<DeviceSecretRead, String> {
+    let (password, _) = match keychain.find_generic_password(service, &slot.storage_id()) {
+        Ok(value) => value,
+        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
+            return Ok(DeviceSecretRead::Missing)
+        }
+        Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
+            return Ok(DeviceSecretRead::Cancelled)
+        }
+        Err(error) => return Err(format!("unable to read device unlock key: {error}")),
+    };
+    let mut key = password.as_ref().to_vec();
+    if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
+        key.zeroize();
+        return Err("macOS Keychain returned an invalid device unlock key".to_owned());
+    }
+    Ok(DeviceSecretRead::Secret(key))
 }
 
 fn local_authenticate() -> Result<DeviceAuthenticationOutcome, String> {

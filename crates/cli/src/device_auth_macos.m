@@ -2,6 +2,7 @@
 #import <LocalAuthentication/LocalAuthentication.h>
 #import <Security/Security.h>
 #import <dispatch/dispatch.h>
+#include <string.h>
 
 enum {
     FRESNICA_MAC_AUTH_AUTHENTICATED = 0,
@@ -66,49 +67,104 @@ int fresnica_macos_authenticate(const char *reason, long *error_code) {
     }
 }
 
-int fresnica_macos_refresh_keychain_item_access(
+int fresnica_macos_keychain_item_trusts_current_application(
     void *keychain_ref,
-    const char *source_service,
-    const char *target_service,
+    const char *service,
     const char *account,
-    const char *label
+    int *trusted
 ) {
     @autoreleasepool {
-        if (keychain_ref == NULL || source_service == NULL || target_service == NULL ||
-            account == NULL || label == NULL) {
+        if (keychain_ref == NULL || service == NULL || account == NULL || trusted == NULL) {
             return errSecParam;
         }
+        *trusted = 0;
 
-        NSString *source = [NSString stringWithUTF8String:source_service];
-        NSString *target = [NSString stringWithUTF8String:target_service];
-        NSString *account_name = [NSString stringWithUTF8String:account];
-        NSString *item_label = [NSString stringWithUTF8String:label];
-        if (source == nil || target == nil || account_name == nil || item_label == nil) {
-            return errSecParam;
-        }
-
-        SecAccessRef access = NULL;
-        OSStatus status = SecAccessCreate((__bridge CFStringRef)item_label, NULL, &access);
+        SecKeychainItemRef item = NULL;
+        OSStatus status = SecKeychainFindGenericPassword(
+            (SecKeychainRef)keychain_ref,
+            (UInt32)strlen(service), service,
+            (UInt32)strlen(account), account,
+            NULL, NULL,
+            &item
+        );
         if (status != errSecSuccess) {
             return status;
         }
 
-        NSDictionary *query = @{
-            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-            (__bridge id)kSecAttrService: source,
-            (__bridge id)kSecAttrAccount: account_name,
-            (__bridge id)kSecMatchSearchList: @[(__bridge id)(SecKeychainRef)keychain_ref],
-        };
-        NSDictionary *updates = @{
-            (__bridge id)kSecAttrAccess: (__bridge id)access,
-            (__bridge id)kSecAttrService: target,
-            (__bridge id)kSecAttrLabel: item_label,
-            (__bridge id)kSecAttrDescription: @"Fresnica Device Unlock key",
-        };
-        status = SecItemUpdate(
-            (__bridge CFDictionaryRef)query,
-            (__bridge CFDictionaryRef)updates
-        );
+        SecAccessRef access = NULL;
+        status = SecKeychainItemCopyAccess(item, &access);
+        CFRelease(item);
+        if (status != errSecSuccess) {
+            return status;
+        }
+
+        CFArrayRef acl_list = SecAccessCopyMatchingACLList(access, kSecACLAuthorizationDecrypt);
+        if (acl_list == NULL) {
+            CFRelease(access);
+            return errSecInvalidACL;
+        }
+
+        SecTrustedApplicationRef current_app = NULL;
+        status = SecTrustedApplicationCreateFromPath(NULL, &current_app);
+        if (status != errSecSuccess) {
+            CFRelease(acl_list);
+            CFRelease(access);
+            return status;
+        }
+
+        CFDataRef current_data = NULL;
+        status = SecTrustedApplicationCopyData(current_app, &current_data);
+        if (status != errSecSuccess) {
+            CFRelease(current_app);
+            CFRelease(acl_list);
+            CFRelease(access);
+            return status;
+        }
+
+        for (CFIndex i = 0; i < CFArrayGetCount(acl_list) && !*trusted; ++i) {
+            SecACLRef acl = (SecACLRef)CFArrayGetValueAtIndex(acl_list, i);
+            CFArrayRef applications = NULL;
+            CFStringRef description = NULL;
+            SecKeychainPromptSelector prompt_selector = 0;
+            status = SecACLCopyContents(acl, &applications, &description, &prompt_selector);
+            if (status != errSecSuccess) {
+                break;
+            }
+
+            if (applications == NULL) {
+                *trusted = 1;
+            } else {
+                for (CFIndex j = 0; j < CFArrayGetCount(applications); ++j) {
+                    SecTrustedApplicationRef app =
+                        (SecTrustedApplicationRef)CFArrayGetValueAtIndex(applications, j);
+                    CFDataRef app_data = NULL;
+                    OSStatus data_status = SecTrustedApplicationCopyData(app, &app_data);
+                    if (data_status == errSecSuccess) {
+                        if (CFEqual(current_data, app_data)) {
+                            *trusted = 1;
+                        }
+                        CFRelease(app_data);
+                    } else {
+                        status = data_status;
+                        break;
+                    }
+                }
+            }
+
+            if (applications != NULL) {
+                CFRelease(applications);
+            }
+            if (description != NULL) {
+                CFRelease(description);
+            }
+            if (status != errSecSuccess) {
+                break;
+            }
+        }
+
+        CFRelease(current_data);
+        CFRelease(current_app);
+        CFRelease(acl_list);
         CFRelease(access);
         return status;
     }
