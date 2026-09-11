@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+  "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/software/polkit/policyconfig-1.dtd">
+<policyconfig>
+  <vendor>Fresnica</vendor>
+  <vendor_url>https://fresnica.com/</vendor_url>
+  <action id="com.fresnica.device-unlock.authenticate.@UID@">
+    <description>Authenticate Fresnica Device Unlock</description>
+    <message>Authentication is required to use Fresnica Device Unlock</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

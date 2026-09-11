@@ -22,7 +22,7 @@ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependenc
 
 This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
 
-Terminal v0.3.0 pins `be12ee185002cc41ac874fa3f969e19d99eaf63c`, the integrated Fresnica Rust capability source. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); the v0.3.0 Terminal work changes the reusable Rust client/reference layer, not the published Native/UniFFI ABI. Terminal consumes `fresnica-client` / `fresnica-sdk` directly.
+Terminal v0.4.0 pins `6c3388c84993bf8dfd133638a7c32a37a0769e74`, the exact Fresnica Rust capability source with versioned Argon2id wallet protection and the System Authentication boundary. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); Terminal consumes `fresnica-client` / `fresnica-sdk` directly without changing that published Native/UniFFI ABI.
 
 ## Layout
 
@@ -36,9 +36,9 @@ FRESNICA_REV      pinned shared Fresnica source revision
 
 ## Releases
 
-Fresnica Terminal v0.3.0 is the current preview release line. A single release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`.
+Fresnica Terminal v0.4.0 is the current preview release candidate. The published v0.3.0 line remains unchanged until this candidate is integrated and released. A single release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`.
 
-Release publication is marker-gated by `releases/terminal-v0.3.0.json`. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
+Release publication is marker-gated by `releases/terminal-v0.4.0.json`. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
 
 The CLI supports safe `-v` / `-vv` diagnostics. Verbose output exposes execution stages and version/network metadata, never the raw argument vector or hidden secret input.
 

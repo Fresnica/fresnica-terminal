@@ -81,7 +81,10 @@ Create/import/reveal cryptography and account identity parsing go through
 `fresnica-sdk`; Core remains the cryptographic authority underneath the SDK.
 Secret, mnemonic, BIP39-passphrase, and Fresnica-passphrase prompts are read from
 the controlling terminal with input hidden; they are not accepted as command-line
-arguments.
+arguments. New Fresnica protection recommends at least 15 Unicode characters. A
+shorter non-empty passphrase is allowed only after an explicit offline-guessing risk
+warning. New protected signer envelopes use the shared Core Argon2id v2 format;
+legacy Scrypt v1 envelopes remain readable and are never silently re-encrypted.
 
 A watch-only Classic account can later attach a secret, mnemonic, or Ledger signer without
 changing wallet identity. Software signer attachment passes the existing G address as the SDK
@@ -91,9 +94,9 @@ app at `m/44'/148'/N'` (default `N=0`) and persist only public provider metadata
 wallet record. `wallet detach-ledger` removes only that metadata. `wallet detach-signer` removes
 only local protected software signing material after passphrase verification.
 
-Device Unlock is an optional convenience for protected software signers. It stores only the exact-envelope 32-byte wallet unlock key in the current OS user's secure store; the Fresnica Passphrase remains the recovery and protection root. Enable/disable require a fresh Passphrase, while Reveal/Export and protection changes never accept Device Unlock. Non-TTY CLI invocations do not activate it.
+Device Unlock is an optional convenience for protected software signers. It stores only the exact-envelope 32-byte wallet unlock key in the current OS user's secure store; the Fresnica Passphrase remains the recovery and protection root. Enable/disable require a fresh Passphrase, while Reveal/Export and protection changes never accept Device Unlock. Non-TTY CLI invocations do not activate it. Write commands do not expose a separate Device Unlock choice: an enrolled signer automatically requests system authentication when first needed, while an unenrolled signer uses the Fresnica Passphrase. Successful system authentication is reused only inside the current CLI process, so a multi-stage signing operation such as Soroban authorization plus envelope signing prompts at most once.
 
-Fresnica stays portable: there is no privileged helper, daemon, service, polkit policy, or administrator install. macOS uses the user's legacy Login Keychain, Linux uses the desktop Secret Service (for example GNOME Keyring or KWallet), and Windows uses the current user's Credential Manager. `device-unlock status` reports `disabled`, `locked`, `ready`, or `unavailable` without intentionally unlocking the store. On macOS/Linux a locked store is unlocked by the OS-native prompt when signing actually needs the key; an already-unlocked store is reported as `ready` and is used directly. Windows Credential Manager has no equivalent vault-lock state in this baseline, so an existing credential is `ready`.
+macOS uses the user's Login Keychain and LocalAuthentication, Windows uses Windows Hello plus Credential Manager, and Linux uses Polkit `auth_self` plus the user's existing default Secret Service collection (for example GNOME Keyring or KWallet). Linux keeps the policy template embedded in the `fresnica` binary. The first `device-unlock enable` for a Linux user installs or refreshes only that UID's policy under `/usr/share/polkit-1/actions/`, using `pkexec` when available and `sudo` only as the one-time privileged file installer fallback. No Fresnica helper, daemon, service, setuid binary, PAM configuration, or root key store is installed. Disabling the last Device Unlock enrollment in that user's Secret Service removes the UID-scoped policy; other users and other Fresnica homes are unaffected.
 
 Ledger signing is intentionally bounded to Classic transaction writes currently exposed by Send,
 Trustline and SDEX offer commands. Transaction preparation, authorization weight selection and
@@ -118,8 +121,9 @@ semantics live in `fresnica-client`, which consumes the resolved network profile
 Horizon/RPC endpoints; none of that HTTP/RPC or product policy is moved into `fresnica-core`.
 
 Reviewed write commands present operation-specific review and ask for
-confirmation before requesting the Fresnica passphrase. Payment preparation, its
-review DTO, submission, and pending-retry protection are shared through
+confirmation before invoking the signing layer. An enrolled software signer uses
+system authentication automatically; an unenrolled signer requests the Fresnica
+Passphrase. Payment preparation, its review DTO, submission, and pending-retry protection are shared through
 `fresnica-client`; CLI parsing, rendering, confirmation, and hidden passphrase input
 remain terminal-owned. The exact prepared XDR is then passed to the SDK composite
 passphrase-signing operation, so routine CLI signing does not expose a raw

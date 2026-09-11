@@ -8,7 +8,7 @@ Product checkpoint: `67eae19b1600e8e1ad33f522fe4c2c855be4109d` on `feat/terminal
 
 Fresnica remains one user-space `fresnica.exe`. Windows now separates:
 
-- **DeviceAuthenticator:** Windows Hello current-user verification for every interactive transaction;
+- **DeviceAuthenticator:** Windows Hello current-user verification when an enrolled signer is first needed in a CLI process;
 - **DeviceSecretStore:** Credential Manager stores only the exact-envelope 32-byte unlock key.
 
 There is no Fresnica service, LocalSystem broker, helper installation, UAC setup, or Administrator requirement.
@@ -71,21 +71,19 @@ Do not use `-y` for the first test.
   send 0.0000001 XLM to GDESTINATION --wallet $WALLET
 ```
 
-After review, expect:
+After review, Fresnica shows only its normal transaction confirmation:
 
 ```text
-Device unlock: ready (Windows Hello)
-[Enter] Authenticate, sign and submit / [p] Fresnica Passphrase / [c] Cancel:
+Submit this transaction? [y/N]
 ```
 
-Press Enter. Acceptance requires **exactly one Windows Hello-owned verification for this transaction**. Complete it with the Windows-supported method offered on the machine, such as PIN, fingerprint, or face. Only after verification succeeds may Fresnica read Credential Manager, sign and submit.
+Enter `y`. If the selected software signer has Device Unlock enrolled, Windows Hello must start automatically; there is no separate Device Unlock selection prompt. Acceptance requires **at most one Windows Hello-owned verification in this CLI process**. Complete it with the Windows-supported method offered on the machine, such as PIN, fingerprint, or face. Only after verification succeeds may Fresnica read Credential Manager, sign and submit.
 
-Repeat the payment. The second transaction must request Windows Hello again; the CLI does not retain a session.
+Run the payment again as a new CLI invocation. It must request Windows Hello again. A single multi-stage operation may reuse one successful verification only until that `fresnica` process exits.
 
 ## Confirmation and fallback paths
 
-- `p` uses a fresh Fresnica Passphrase instead of Windows Hello.
-- `c` cancels before Windows Hello and does not sign or submit.
+- A wallet without Device Unlock enrollment goes directly to the Fresnica Passphrase after normal transaction confirmation, with no Device Unlock prompt.
 - Cancel the Windows Hello dialog: Fresnica must abort/fail closed and must not silently ask for the Passphrase.
 - If Hello is unavailable or unsupported, Fresnica explicitly prints `Windows Hello unavailable (<reason>); Fresnica Passphrase required.` and then uses the fresh Passphrase path. It must never silently read Credential Manager. Report the exact `<reason>`.
 - No UAC, service, helper, or Administrator flow may appear.
@@ -97,9 +95,9 @@ Now repeat with `-y`:
   send 0.0000001 XLM to GDESTINATION --wallet $WALLET -y
 ```
 
-`-y` may skip Fresnica's text confirmation but **must not skip Windows Hello verification**.
+`-y` may skip Fresnica's normal transaction confirmation but **must not skip Windows Hello verification** for an enrolled signer.
 
-If Windows Hello never appears when Enter is selected, copy the full `Windows Hello unavailable (...)` reason and report whether the command was run in Windows Terminal, classic console host, PowerShell, or Command Prompt. This build calls the desktop `IUserConsentVerifierInterop` request directly and does not preflight it through `CheckAvailabilityAsync`.
+If Windows Hello never appears after transaction confirmation, copy the full `Windows Hello unavailable (...)` reason and report whether the command was run in Windows Terminal, classic console host, PowerShell, or Command Prompt. This build calls the desktop `IUserConsentVerifierInterop` request directly and does not preflight it through `CheckAvailabilityAsync`.
 
 ## Lifecycle
 
@@ -112,6 +110,6 @@ Disable requires the fresh Fresnica Passphrase. Status must become `disabled`.
 
 ## Report
 
-Please report Windows version/build, terminal host, Hello method used, enable/status result, Windows Hello prompt count per transaction, Enter/`p`/`c` results, Hello-dialog cancellation result, `-y` result, whether any UAC/service/helper appeared, disable/re-enable result, and exact output for failures.
+Please report Windows version/build, terminal host, Hello method used, enable/status result, Windows Hello prompt count per CLI invocation, automatic-use result, Hello-dialog cancellation result, `-y` result, whether any UAC/service/helper appeared, disable/re-enable result, and exact output for failures.
 
 Never send a mnemonic, S-key, Fresnica Passphrase, PIN, or unlock-key material.

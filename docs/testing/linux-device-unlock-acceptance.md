@@ -1,130 +1,133 @@
-# Linux Device Authentication acceptance
+# Linux Device Unlock physical acceptance
 
-Test build only. Use Testnet and a disposable or low-value software wallet.
+Status: **OPEN**
 
-Product checkpoint: `acc979c7e51747f28644f0a8213bbe416097a3b0` on `feat/terminal-device-auth-cross-platform`.
+This guide validates the current Linux Device Unlock product on a real desktop session.
 
-## Scope
+## Product boundary
 
-Fresnica remains one user-space binary. Linux now keeps authentication and storage separate:
+Linux Device Unlock has two independent roles:
 
-- **DeviceAuthenticator:** fprintd verifies a fingerprint enrolled for the current Linux user;
-- **DeviceSecretStore:** the exact-envelope 32-byte unlock key lives in the user's existing default Secret Service collection.
+- **DeviceAuthenticator:** Polkit `auth_self` asks the current desktop user to authenticate through the system authentication agent.
+- **DeviceSecretStore:** the current user's existing default Secret Service collection stores the exact-envelope 32-byte `WalletUnlockKey`.
 
-Fresnica does not create, lock or unlock a keyring. It relies on the system's existing fprintd service but installs no Fresnica helper, daemon, service, polkit policy, PAM configuration or privileged setup.
+Fresnica does not create, lock, or unlock a keyring. It does not install a helper, daemon, service, setuid binary, PAM configuration, or root key store.
 
-The previous dedicated `Fresnica Device Unlock` keyring design is rejected: physical GNOME testing showed that it requires the user to create another keyring password. A leftover keyring from that test is not used by this build and can be removed manually later if desired.
-
-## Requirements
-
-- x86_64 desktop Linux with an active graphical user session;
-- fprintd available with a usable fingerprint reader;
-- at least one fingerprint already enrolled for the current Linux user;
-- a Secret Service implementation such as GNOME Keyring or KWallet;
-- the user's normal/default Secret Service collection already unlocked by the desktop session;
-- Testnet only; run Fresnica as the normal desktop user.
-
-If the machine has no fingerprint reader or enrolled fingerprint, Device Authentication is intentionally unsupported and Fresnica Passphrase remains the safe path.
-
-## Prepare
-
-```bash
-chmod +x fresnica
-./fresnica --version
-
-BIN="$PWD/fresnica"
-HOME_DIR="$HOME/.fresnica-device-unlock-test"
-WALLET="du-a"
-```
-
-For a clean acceptance test, start with Device Unlock disabled or use a fresh Testnet wallet/home. Do not create a new `Fresnica Device Unlock` keyring if an older test binary asks for one; that binary is obsolete.
-
-## Enable
-
-```bash
-"$BIN" --home "$HOME_DIR" --network testnet \
-  wallet device-unlock status "$WALLET"
-
-"$BIN" --home "$HOME_DIR" --network testnet \
-  wallet device-unlock enable "$WALLET"
-```
-
-Successful enable must follow this order:
+The only system file is a UID-scoped Polkit action embedded in the `fresnica` binary and managed by `device-unlock enable|disable`:
 
 ```text
-Touch the fingerprint sensor to enable Fresnica Device Unlock.
-<successful fingerprint scan>
-Fresnica passphrase:
-Device unlock enabled for wallet "du-a" on this device.
+/usr/share/polkit-1/actions/com.fresnica.device-unlock.<UID>.policy
 ```
 
-There must be **no new-keyring/password-creation prompt**. Only a successful fprintd verification may proceed to the Fresnica Passphrase and Secret Service write.
-
-If fprintd, the reader or an enrolled fingerprint is unavailable, enable must fail before asking for the Fresnica Passphrase and must store nothing. If the default keyring is locked, enable must ask the user to unlock it in the desktop session and retry; Fresnica must not unlock it itself.
-
-After successful enrollment:
+The action id is:
 
 ```text
-Device unlock: ready
-Provider: Linux fingerprint
+com.fresnica.device-unlock.authenticate.<UID>
 ```
 
-## Transaction authentication
+## Prerequisites
 
-Do not use `-y` for the first test.
+Use a non-root Linux desktop user with:
 
-```bash
-"$BIN" --home "$HOME_DIR" --network testnet \
-  send 0.0000001 XLM to GDESTINATION --wallet "$WALLET"
-```
+- a running Polkit authority and a registered desktop authentication agent;
+- an existing default Secret Service collection, already unlocked by the desktop session;
+- `pkexec` or `sudo` available for the one-time UID policy install/refresh;
+- a protected Fresnica software signer and its Fresnica Passphrase.
 
-After review, expect:
+The system authentication method is chosen by the desktop/PAM stack. Fresnica does not require or detect a specific fingerprint reader.
+
+## 1. First enable
+
+Run:
 
 ```text
-Device unlock: ready (Linux fingerprint)
-[Enter] Authenticate, sign and submit / [p] Fresnica Passphrase / [c] Cancel:
+fresnica wallet device-unlock enable NAME
 ```
 
-Press Enter. Fresnica should print:
+Expected order on the first enable for this Linux UID:
+
+1. Fresnica confirms the default Secret Service collection is available and unlocked.
+2. Fresnica reports that one-time Linux Device Unlock system setup is required.
+3. The OS may request administrator authentication while Fresnica installs the UID policy.
+4. Polkit requests fresh authentication for the current Linux user.
+5. Only after successful system authentication does Fresnica ask for the Fresnica Passphrase.
+6. The verified 32-byte unlock key is stored in the current user's default Secret Service collection.
+
+No separate Fresnica/system password, new keyring, or helper installation is allowed.
+
+## 2. Policy lifecycle
+
+After enable, verify the installed action is UID-scoped:
 
 ```text
-Touch the fingerprint sensor to authenticate this Fresnica transaction.
+pkaction --action-id com.fresnica.device-unlock.authenticate.$(id -u) --verbose
 ```
 
-A successful fingerprint verification authorizes key read, signing and submission for this one transaction. Repeat the payment: the next transaction must require a new fingerprint verification; there is no CLI session.
+Expected implicit authorization:
 
-A completed fingerprint mismatch may be retried up to three times. fprintd quality-retry states such as an incomplete/too-short/not-centered scan stay inside the current attempt. Three real mismatches fail the transaction and must not silently fall back to the Fresnica Passphrase.
-
-## Fallback and control paths
-
-- `p` uses a fresh Fresnica Passphrase and must not invoke fprintd.
-- `c` cancels before fingerprint verification and must not sign or submit.
-- If fprintd/reader availability disappears after enrollment, Fresnica may explicitly require the fresh Fresnica Passphrase.
-- If the default keyring is locked, Fresnica must not unlock it or start fingerprint verification; it explicitly requires the fresh Fresnica Passphrase.
-- A fingerprint mismatch is authentication failure, not an availability condition; do not silently downgrade it.
-
-Repeat with `-y`:
-
-```bash
-"$BIN" --home "$HOME_DIR" --network testnet \
-  send 0.0000001 XLM to GDESTINATION --wallet "$WALLET" -y
+```text
+any:      no
+inactive: no
+active:   auth_self
 ```
 
-`-y` may skip Fresnica's text confirmation but **must not skip fingerprint verification**.
+There must be no `auth_self_keep` policy.
 
-## Lifecycle
+Re-running enable with an outdated embedded policy must replace that UID policy atomically before enrollment/authentication continues. A current policy must not trigger administrator setup again.
 
-```bash
-"$BIN" --home "$HOME_DIR" --network testnet \
-  wallet device-unlock disable "$WALLET"
-"$BIN" --home "$HOME_DIR" --network testnet \
-  wallet device-unlock status "$WALLET"
+Different Linux users must have different policy filenames and action ids. One user enabling or disabling Device Unlock must not change another user's policy.
+
+## 3. Status
+
+Run:
+
+```text
+fresnica wallet device-unlock status NAME
 ```
 
-Disable requires the fresh Fresnica Passphrase but not a fingerprint. The default keyring must already be unlocked. Status must become `disabled`.
+After successful enrollment the expected state is `ready` and the provider is `Linux system authentication`. Status must not authenticate or release the stored unlock key.
 
-## Report
+## 4. Automatic signing authentication
 
-Please report distro/version, desktop environment, Secret Service implementation, fprintd version, fingerprint reader model if convenient, enable result, fingerprint attempt behavior, status after enable, payment result, second-payment fresh-auth result, `p`/`c`/`-y` results, disable/re-enable result, and exact output for any failure.
+Prepare a Testnet write such as a payment with the enrolled software signer.
 
-Never send a mnemonic, S-key, Fresnica Passphrase, fingerprint data, keyring password, or unlock-key material.
+The command must show the normal transaction review and normal submit confirmation only. There must be no Fresnica prompt asking whether to use Device Unlock or the Passphrase.
+
+After the user approves submission, Device Unlock is selected automatically because the exact signer envelope is enrolled. Polkit must request current-user authentication before Secret Service releases the unlock key.
+
+Within one `fresnica` process, successful system authentication may be reused for later signing stages. A Soroban invocation that needs both detached authorization signing and final envelope signing must therefore authenticate **at most once** in that CLI process.
+
+A new CLI process must not inherit Fresnica authentication state.
+
+If the signer has no Device Unlock enrollment, signing goes directly to the Fresnica Passphrase without probing or announcing Device Unlock.
+
+If Polkit, its authentication agent, the UID policy, or the unlocked Secret Service path becomes unavailable after enrollment, Fresnica may explicitly require the Fresnica Passphrase. If the user cancels an actual system-authentication request, the operation must cancel/fail closed rather than silently downgrade.
+
+`-y` may skip Fresnica's transaction confirmation, but it must never bypass system authentication.
+
+## 5. Disable and cleanup
+
+Run:
+
+```text
+fresnica wallet device-unlock disable NAME
+```
+
+Disable requires the fresh Fresnica Passphrase. It removes only that exact signer enrollment. If other Device Unlock enrollments remain for the same Linux UID, the UID policy remains installed. When the current user's last enrollment is removed, Fresnica automatically removes that UID policy; administrator authentication may be requested for the removal.
+
+## 6. Negative cases
+
+Verify these fail safely:
+
+- locked default Secret Service collection: enable stops before administrator/system authentication and asks the user to unlock the desktop keyring first;
+- missing `pkexec` and `sudo` when policy setup is required: enable explains that one of those installers is needed;
+- inactive/non-local session or no suitable Polkit authentication path: routine signing requires the Fresnica Passphrase;
+- Polkit action already grants authorization without a fresh challenge: Fresnica rejects it as Device Authentication and requires the Fresnica Passphrase;
+- stale exact-envelope enrollment after re-protection: the old unlock key must not sign the changed signer envelope;
+- cancelled Polkit authentication: do not sign, submit, or silently request the Passphrase as if authentication were merely unavailable.
+
+## Acceptance report
+
+Report distro/version, desktop environment, Polkit version/agent, Secret Service implementation, enable result, whether one-time policy setup appeared, system-auth method offered, status after enable, Testnet write result, multi-stage one-process authentication count if tested, disable result, policy cleanup result, and exact output for any failure.
+
+Never send a mnemonic, S-key, Fresnica Passphrase, OS credential, biometric data, keyring password, or unlock-key material.
