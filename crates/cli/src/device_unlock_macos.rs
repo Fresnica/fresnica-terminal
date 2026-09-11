@@ -179,23 +179,6 @@ impl DeviceSecretStore for MacKeychainStore {
         write_enrollment_items(&mut keychain, slot, key)
     }
 
-    fn write_enrollment_items(
-        keychain: &mut SecKeychain,
-        slot: &SystemAuthSlot,
-        unlock_key: &[u8],
-    ) -> Result<(), String> {
-        keychain
-            .set_generic_password(SERVICE, &slot.storage_id(), unlock_key)
-            .map_err(|error| format!("unable to migrate device unlock key: {error}"))?;
-        keychain
-            .set_generic_password(
-                METADATA_SERVICE,
-                &slot.storage_id(),
-                env!("CARGO_PKG_VERSION").as_bytes(),
-            )
-            .map_err(|error| format!("unable to migrate device unlock metadata: {error}"))
-    }
-
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
         let keychain = default_keychain()?;
         let (password, _) = match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
@@ -238,6 +221,23 @@ impl DeviceSecretStore for MacKeychainStore {
             Err(error) => Err(format!("unable to remove device unlock key: {error}")),
         }
     }
+}
+
+fn write_enrollment_items(
+    keychain: &mut SecKeychain,
+    slot: &SystemAuthSlot,
+    unlock_key: &[u8],
+) -> Result<(), String> {
+    keychain
+        .set_generic_password(SERVICE, &slot.storage_id(), unlock_key)
+        .map_err(|error| format!("unable to migrate device unlock key: {error}"))?;
+    keychain
+        .set_generic_password(
+            METADATA_SERVICE,
+            &slot.storage_id(),
+            env!("CARGO_PKG_VERSION").as_bytes(),
+        )
+        .map_err(|error| format!("unable to migrate device unlock metadata: {error}"))
 }
 
 fn metadata_matches(keychain: &SecKeychain, slot: &SystemAuthSlot) -> Result<bool, String> {
