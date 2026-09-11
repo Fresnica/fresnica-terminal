@@ -58,6 +58,8 @@ pub(crate) trait DeviceUnlockBackend: Send + Sync {
         Ok(())
     }
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
+    #[cfg(target_os = "macos")]
+    fn reauthorize(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String>;
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease;
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
@@ -243,6 +245,37 @@ fn status(
     println!("Device unlock: {}", state_label(state));
     if state != DeviceUnlockState::Unavailable {
         println!("Provider: {}", backend.provider_name());
+    }
+
+    #[cfg(target_os = "macos")]
+    if state == DeviceUnlockState::NeedsReauthorization && io::stdin().is_terminal() {
+        if !confirm_reauthorization()? {
+            return Ok(());
+        }
+        match backend.reauthorize(&slot)? {
+            DeviceSecretRead::Secret(mut key) => {
+                use zeroize::Zeroize;
+                key.zeroize();
+                let updated = backend.state(&slot)?;
+                if !matches!(
+                    updated,
+                    DeviceUnlockState::Ready | DeviceUnlockState::Locked
+                ) {
+                    return Err(format!(
+                        "Device Unlock authorization update did not complete: {}",
+                        state_label(updated)
+                    ));
+                }
+                println!("Device unlock authorization updated.");
+                println!("Device unlock: {}", state_label(updated));
+            }
+            DeviceSecretRead::Missing => {
+                return Err("Device Unlock enrollment is missing".to_owned())
+            }
+            DeviceSecretRead::Cancelled => {
+                return Err("Device Unlock authorization update cancelled".to_owned())
+            }
+        }
     }
     Ok(())
 }

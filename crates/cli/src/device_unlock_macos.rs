@@ -1,4 +1,4 @@
-use std::ffi::{c_void, CString};
+use std::ffi::c_void;
 use std::fmt::Write as _;
 use std::os::raw::{c_char, c_int, c_long};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -11,7 +11,7 @@ use security_framework::item::{
 };
 use security_framework::os::macos::keychain::SecKeychain;
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::device_unlock::{
     complete_reauthorization, confirm_reauthorization, versioned_enrollment_state,
@@ -37,13 +37,6 @@ const LOCAL_AUTH_REASON: &[u8] = b"authenticate this transaction\0";
 extern "C" {
     fn SecKeychainGetStatus(keychain: *mut c_void, status: *mut u32) -> i32;
     fn fresnica_macos_authenticate(reason: *const c_char, error_code: *mut c_long) -> c_int;
-    fn fresnica_macos_refresh_keychain_item_access(
-        keychain: *mut c_void,
-        source_service: *const c_char,
-        target_service: *const c_char,
-        account: *const c_char,
-        label: *const c_char,
-    ) -> c_int;
 }
 
 pub(crate) fn backend() -> Arc<dyn DeviceUnlockBackend> {
@@ -79,12 +72,16 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
         self.store.enroll(slot, unlock_key)
     }
 
+    fn reauthorize(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
+        self.store.migrate_enrollment(slot)
+    }
+
     fn release(&self, slot: &SystemAuthSlot) -> SystemAuthRelease {
         match self.store.state(slot) {
             Ok(DeviceUnlockState::NeedsReauthorization) => {
                 return complete_reauthorization(
                     confirm_reauthorization,
-                    || self.store.migrate_and_release(slot),
+                    || self.reauthorize(slot),
                     || self.authenticator.remember_authenticated(),
                 )
             }
@@ -221,55 +218,83 @@ impl DeviceSecretStore for MacKeychainStore {
 }
 
 impl MacKeychainStore {
-    fn migrate_and_release(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
+    fn migrate_enrollment(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
         let keychain = default_keychain()?;
-        let source_service = if item_exists(&keychain, SERVICE, slot)? {
-            SERVICE
-        } else if item_exists(&keychain, MIGRATION_SERVICE, slot)? {
-            MIGRATION_SERVICE
+        let account = slot.storage_id();
+        let (password, source_item, source_is_primary) =
+            match keychain.find_generic_password(SERVICE, &account) {
+                Ok((password, item)) => (password, item, true),
+                Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
+                    match keychain.find_generic_password(MIGRATION_SERVICE, &account) {
+                        Ok((password, item)) => (password, item, false),
+                        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {
+                            return Ok(DeviceSecretRead::Missing)
+                        }
+                        Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
+                            return Ok(DeviceSecretRead::Cancelled)
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "unable to read Device Unlock migration recovery: {error}"
+                            ))
+                        }
+                    }
+                }
+                Err(error) if error.code() == ERR_SEC_USER_CANCELED => {
+                    return Ok(DeviceSecretRead::Cancelled)
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "unable to read Device Unlock enrollment for migration: {error}"
+                    ))
+                }
+            };
+
+        let key = Zeroizing::new(password.as_ref().to_vec());
+        if key.len() != SYSTEM_AUTH_UNLOCK_KEY_LENGTH {
+            return Err("macOS Keychain returned an invalid device unlock key".to_owned());
+        }
+
+        let mut source_item = Some(source_item);
+        let mut stage_item = None;
+        if source_is_primary {
+            if !item_exists(&keychain, MIGRATION_SERVICE, slot)? {
+                keychain
+                    .add_generic_password(MIGRATION_SERVICE, &account, key.as_slice())
+                    .map_err(|error| format!("unable to stage Device Unlock migration: {error}"))?;
+                let (staged, item) = keychain
+                    .find_generic_password(MIGRATION_SERVICE, &account)
+                    .map_err(|error| {
+                        format!("unable to verify Device Unlock migration staging: {error}")
+                    })?;
+                if staged.as_ref() != key.as_slice() {
+                    return Err("Device Unlock migration staging verification failed".to_owned());
+                }
+                stage_item = Some(item);
+            }
+            source_item.take().expect("source item").delete();
+            if item_exists(&keychain, SERVICE, slot)? {
+                return Err("unable to replace the old Device Unlock enrollment".to_owned());
+            }
         } else {
-            return Ok(DeviceSecretRead::Missing);
-        };
-        let label = enrollment_label()?;
-        let source = CString::new(source_service)
-            .map_err(|_| "invalid Device Unlock source service".to_owned())?;
-        let target =
-            CString::new(SERVICE).map_err(|_| "invalid Device Unlock target service".to_owned())?;
-        let account = CString::new(slot.storage_id())
-            .map_err(|_| "invalid Device Unlock account identifier".to_owned())?;
-        let label =
-            CString::new(label).map_err(|_| "invalid Device Unlock enrollment label".to_owned())?;
-
-        // Reauthorize the current executable before reading the secret. The
-        // macOS shim preserves the existing Access object and only appends this
-        // executable to the restricted/decrypt ACL, avoiding owner/safe ACL churn.
-        let status = unsafe {
-            fresnica_macos_refresh_keychain_item_access(
-                keychain.as_concrete_TypeRef().cast::<c_void>(),
-                source.as_ptr(),
-                target.as_ptr(),
-                account.as_ptr(),
-                label.as_ptr(),
-            )
-        };
-        if status == ERR_SEC_USER_CANCELED {
-            return Ok(DeviceSecretRead::Cancelled);
-        }
-        if status == ERR_SEC_ITEM_NOT_FOUND {
-            return Ok(DeviceSecretRead::Missing);
-        }
-        if status != 0 {
-            return Err(format!(
-                "unable to update Device Unlock Keychain authorization: {status}"
-            ));
+            stage_item = source_item.take();
         }
 
-        let secret = self.read(slot)?;
-        if matches!(secret, DeviceSecretRead::Secret(_)) {
-            delete_if_authorized_without_prompt(&keychain, MIGRATION_SERVICE, slot);
-            delete_if_authorized_without_prompt(&keychain, LEGACY_METADATA_SERVICE, slot);
+        add_current_enrollment(&keychain, slot, key.as_slice())?;
+        let (current, current_item) = keychain
+            .find_generic_password(SERVICE, &account)
+            .map_err(|error| format!("unable to verify Device Unlock migration: {error}"))?;
+        if current.as_ref() != key.as_slice() {
+            current_item.delete();
+            return Err("Device Unlock migration verification failed".to_owned());
         }
-        Ok(secret)
+
+        if let Some(item) = stage_item {
+            item.delete();
+        }
+        delete_if_authorized_without_prompt(&keychain, MIGRATION_SERVICE, slot);
+        delete_if_authorized_without_prompt(&keychain, LEGACY_METADATA_SERVICE, slot);
+        Ok(DeviceSecretRead::Secret(key.to_vec()))
     }
 }
 
