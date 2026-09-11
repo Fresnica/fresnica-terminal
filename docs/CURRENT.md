@@ -7,7 +7,7 @@ Last verified: 2026-09-11.
 ## Source of truth
 
 - Current Terminal `main`: `d32e0755e39018ee04a5a30f86102e6d9c9539e9`; released preview `v0.3.0`. Main CI #109 and Release Terminal #86 passed.
-- Active v0.4.0 branch: `feat/terminal-device-auth-cross-platform`; portable Device Unlock base `feat/terminal-device-unlock@ad8b2fcb0b76a4a62456317ad523343e6c9d4350`; final product checkpoint is pending the current local gate/commit. Exact upstream pin: `6c3388c84993bf8dfd133638a7c32a37a0769e74`. Repository HEAD remains authoritative after checkpoint creation.
+- Active v0.4.0 branch: `feat/terminal-device-auth-cross-platform`; portable Device Unlock base `feat/terminal-device-unlock@ad8b2fcb0b76a4a62456317ad523343e6c9d4350`; product checkpoint `9d3e4e0bc6753418385689b86efca3de78ba938e`. Exact upstream pin: `6c3388c84993bf8dfd133638a7c32a37a0769e74`. Repository HEAD remains authoritative for docs-only follow-up state.
 - Released upstream Main baseline remains `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. Active upstream `feat/system-auth-sdk-boundary` is now `6c3388c84993bf8dfd133638a7c32a37a0769e74`; `719adbd9787f11414e1708c0da9a28fc3f50f0d4` introduced versioned Argon2id protection and `6c3388c...` aligned Rust CLI compatibility expectations.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
@@ -37,7 +37,7 @@ Active Device Unlock architecture checkpoint:
 - `disable` removes the UID policy only after the last Fresnica Device Unlock enrollment in that user's Secret Service is removed. Different users and different `FRESNICA_HOME` values therefore do not break each other. Failed first-time enable performs the same unused-system-support cleanup so a failed enrollment does not leave a policy behind.
 - Linux fresh-auth semantics use a non-interactive Polkit preflight before allowing user interaction. An action already authorized without fresh authentication is not accepted as Fresnica System Authentication; Fresnica falls back to the Passphrase instead. No `auth_self_keep` is used.
 - VPS policy-loader smoke PASS: a synthetic UID policy installed by the current binary under `/usr/share/polkit-1/actions` was immediately visible through `pkaction` as `any=no`, `inactive=no`, `active=auth_self`, owned `root:root` mode `0644`, then removed with no residue.
-- Current local deterministic gate before final version checkpoint: repository boundary PASS; rustfmt/`git diff --check` PASS; workspace Clippy `-D warnings` PASS; workspace tests PASS (Anchor 7, CLI 53, CLI contract 2, presentation 3, TUI 21); Linux release builds PASS for all three binaries; Windows CLI cross-build PASS through the release workflow's `cargo xwin` path. Native macOS cross-build cannot be meaningfully executed on this VPS because no Apple SDK/toolchain is installed; previous physical macOS acceptance remains the platform evidence until the v0.4.0 tree receives a Mac smoke.
+- Final local deterministic gate for product `9d3e4e0...`: repository boundary PASS; rustfmt/`git diff --check` PASS; workspace Clippy `-D warnings` PASS; workspace tests PASS (Anchor 7, CLI 53, CLI contract 2, presentation 3, TUI 21); Linux release builds PASS for all three binaries and all report `0.4.0`; Python-to-Rust CLI compatibility 5/5 PASS against exact upstream `6c3388c...`; root/wallet/Anchor help ownership smoke PASS; Windows CLI release cross-build PASS through the release workflow's `cargo xwin` path. Native macOS cross-build cannot be meaningfully executed on this VPS because no Apple SDK/toolchain is installed; previous physical macOS acceptance remains the platform evidence until the v0.4.0 tree receives a Mac smoke.
 - Historical Linux fprintd and strong setuid/helper System Auth branches remain architecture/security evidence only; neither design is part of the v0.4.0 product.
 
 ## v0.4.0 release candidate
@@ -45,7 +45,7 @@ Active Device Unlock architecture checkpoint:
 - Product version is `0.4.0` for `fresnica`, `fresnica-anchor`, `fresnica-tui`, and `fresnica-terminal-presentation`. Release marker: `releases/terminal-v0.4.0.json`.
 - Exact upstream source is `6c3388c84993bf8dfd133638a7c32a37a0769e74`. Native SDK baseline remains v0.3.0 / Native Binding API 3 / Universal SDK API 5 / Core Client API 5; this Terminal release does not redefine that binary ABI.
 - Root help is intentionally shallow. Anchor remains a bundled native plugin and owns `fresnica anchor --help`; the root CLI no longer duplicates Anchor subcommand syntax. Wallet details similarly live under `fresnica wallet --help`.
-- v0.4.0 is not published or merged to Main yet. The active branch and local deterministic gates are authoritative until the final product/docs checkpoints are committed. No GitHub CI or Release workflow was triggered for this local convergence work.
+- v0.4.0 is not published or merged to Main yet. Product checkpoint is `9d3e4e0bc6753418385689b86efca3de78ba938e`; the following docs-only checkpoint records that state. No GitHub CI or Release workflow was triggered for this local convergence work.
 
 Active Anchor native-plugin checkpoint:
 
