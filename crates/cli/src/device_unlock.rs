@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use std::io::Write;
 use std::io::{self, IsTerminal};
 use std::sync::{Arc, OnceLock};
 
@@ -39,11 +41,6 @@ pub(crate) enum DeviceSecretRead {
 pub(crate) trait DeviceSecretStore: Send + Sync {
     fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String>;
     fn enroll(&self, slot: &SystemAuthSlot, unlock_key: &[u8]) -> Result<(), String>;
-    #[allow(dead_code)]
-    fn update_enrollment(&self, slot: &SystemAuthSlot) -> Result<(), String> {
-        let _ = slot;
-        Err("device unlock migration is unavailable".to_owned())
-    }
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String>;
     fn delete(&self, slot: &SystemAuthSlot) -> Result<(), String>;
 }
@@ -260,6 +257,84 @@ fn state_label(state: DeviceUnlockState) -> &'static str {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn versioned_enrollment_state(
+    enrollment_exists: bool,
+    current_version: bool,
+    recovery_exists: bool,
+    store_unlocked: Option<bool>,
+) -> DeviceUnlockState {
+    if !enrollment_exists {
+        return if recovery_exists {
+            DeviceUnlockState::NeedsReauthorization
+        } else {
+            DeviceUnlockState::Disabled
+        };
+    }
+    if !current_version {
+        return DeviceUnlockState::NeedsReauthorization;
+    }
+    match store_unlocked {
+        Some(true) => DeviceUnlockState::Ready,
+        Some(false) => DeviceUnlockState::Locked,
+        None => DeviceUnlockState::Unavailable,
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn confirm_reauthorization() -> Result<bool, String> {
+    print!("Fresnica was updated. Update Device Unlock authorization? [Y/n] ");
+    io::stdout()
+        .flush()
+        .map_err(|error| format!("unable to write Device Unlock update prompt: {error}"))?;
+    let mut answer = String::new();
+    let bytes_read = io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("unable to read Device Unlock update confirmation: {error}"))?;
+    if bytes_read == 0 {
+        return Err("Device Unlock authorization update cancelled".to_owned());
+    }
+    Ok(reauthorization_accepted(&answer))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn reauthorization_accepted(answer: &str) -> bool {
+    matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "" | "y" | "yes"
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn complete_reauthorization(
+    confirm: impl FnOnce() -> Result<bool, String>,
+    migrate: impl FnOnce() -> Result<DeviceSecretRead, String>,
+    remember_authenticated: impl FnOnce() -> Result<(), String>,
+) -> SystemAuthRelease {
+    match confirm() {
+        Ok(true) => {}
+        Ok(false) => {
+            return SystemAuthRelease::Failed(
+                "Device Unlock authorization update declined".to_owned(),
+            )
+        }
+        Err(error) => return SystemAuthRelease::Failed(error),
+    }
+    match migrate() {
+        Ok(DeviceSecretRead::Secret(mut key)) => match remember_authenticated() {
+            Ok(()) => SystemAuthRelease::UnlockKey(key),
+            Err(error) => {
+                use zeroize::Zeroize;
+                key.zeroize();
+                SystemAuthRelease::Failed(error)
+            }
+        },
+        Ok(DeviceSecretRead::Missing) => SystemAuthRelease::PassphraseRequired,
+        Ok(DeviceSecretRead::Cancelled) => SystemAuthRelease::Cancelled,
+        Err(error) => SystemAuthRelease::Failed(error),
+    }
+}
+
 pub(crate) fn one_shot_providers(
     client: &FresnicaClient,
 ) -> Result<Vec<SystemAuthUnlockProvider>, String> {
@@ -323,6 +398,7 @@ mod tests {
     struct FakeBackend {
         values: Mutex<BTreeMap<String, Vec<u8>>>,
         cleanup_calls: Mutex<usize>,
+        state_override: Mutex<Option<DeviceUnlockState>>,
     }
 
     impl FakeBackend {
@@ -332,6 +408,10 @@ mod tests {
                 .unwrap()
                 .insert(slot.storage_id(), unlock_key.to_vec());
         }
+
+        fn set_state(&self, state: DeviceUnlockState) {
+            *self.state_override.lock().unwrap() = Some(state);
+        }
     }
 
     impl DeviceUnlockBackend for FakeBackend {
@@ -339,6 +419,9 @@ mod tests {
             "Fake Device Store"
         }
         fn state(&self, slot: &SystemAuthSlot) -> Result<DeviceUnlockState, String> {
+            if let Some(state) = *self.state_override.lock().unwrap() {
+                return Ok(state);
+            }
             Ok(
                 if self.values.lock().unwrap().contains_key(&slot.storage_id()) {
                     DeviceUnlockState::Ready
@@ -393,6 +476,81 @@ mod tests {
     }
 
     #[test]
+    fn versioned_enrollment_state_distinguishes_current_stale_and_recovery() {
+        assert_eq!(
+            versioned_enrollment_state(true, true, false, Some(true)),
+            DeviceUnlockState::Ready
+        );
+        assert_eq!(
+            versioned_enrollment_state(true, true, false, Some(false)),
+            DeviceUnlockState::Locked
+        );
+        assert_eq!(
+            versioned_enrollment_state(true, false, false, Some(true)),
+            DeviceUnlockState::NeedsReauthorization
+        );
+        assert_eq!(
+            versioned_enrollment_state(false, false, true, Some(true)),
+            DeviceUnlockState::NeedsReauthorization
+        );
+        assert_eq!(
+            versioned_enrollment_state(false, false, false, Some(true)),
+            DeviceUnlockState::Disabled
+        );
+    }
+
+    #[test]
+    fn reauthorization_consent_defaults_to_yes_and_accepts_explicit_yes() {
+        assert!(reauthorization_accepted(""));
+        assert!(reauthorization_accepted("y"));
+        assert!(reauthorization_accepted("YES"));
+        assert!(!reauthorization_accepted("n"));
+        assert!(!reauthorization_accepted("anything else"));
+    }
+
+    #[test]
+    fn successful_reauthorization_returns_key_and_remembers_authentication() {
+        use std::cell::Cell;
+
+        let migrations = Cell::new(0usize);
+        let remembered = Cell::new(0usize);
+        let release = complete_reauthorization(
+            || Ok(true),
+            || {
+                migrations.set(migrations.get() + 1);
+                Ok(DeviceSecretRead::Secret(vec![7; 32]))
+            },
+            || {
+                remembered.set(remembered.get() + 1);
+                Ok(())
+            },
+        );
+        assert_eq!(release, SystemAuthRelease::UnlockKey(vec![7; 32]));
+        assert_eq!(migrations.get(), 1);
+        assert_eq!(remembered.get(), 1);
+    }
+
+    #[test]
+    fn declined_or_cancelled_reauthorization_fails_closed() {
+        let declined = complete_reauthorization(
+            || Ok(false),
+            || panic!("declined migration must not read the Keychain"),
+            || panic!("declined migration must not cache authentication"),
+        );
+        assert_eq!(
+            declined,
+            SystemAuthRelease::Failed("Device Unlock authorization update declined".to_owned())
+        );
+
+        let cancelled = complete_reauthorization(
+            || Ok(true),
+            || Ok(DeviceSecretRead::Cancelled),
+            || panic!("cancelled migration must not cache authentication"),
+        );
+        assert_eq!(cancelled, SystemAuthRelease::Cancelled);
+    }
+
+    #[test]
     fn enrolled_exact_signer_becomes_one_shot_provider() {
         let (client, root) = client();
         let record =
@@ -401,6 +559,21 @@ mod tests {
         let enrollment = prepare_system_auth_enrollment(&record, PASSCODE).unwrap();
         let backend = Arc::new(FakeBackend::default());
         backend.enroll_value(&enrollment.slot, enrollment.unlock_key());
+
+        let providers = providers_for_backend(&client, backend, true).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].public_key(), record.address);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_enrollment_is_still_offered_for_interactive_migration() {
+        let (client, root) = client();
+        let record =
+            wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
+        client.storage().save(&record, false).unwrap();
+        let backend = Arc::new(FakeBackend::default());
+        backend.set_state(DeviceUnlockState::NeedsReauthorization);
 
         let providers = providers_for_backend(&client, backend, true).unwrap();
         assert_eq!(providers.len(), 1);
