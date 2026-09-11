@@ -23,7 +23,8 @@ const PROVIDER_NAME: &str = "macOS Login Keychain";
 const SERVICE: &str = "com.fresnica.device-unlock";
 const MIGRATION_SERVICE: &str = "com.fresnica.device-unlock.migration";
 const LEGACY_METADATA_SERVICE: &str = "com.fresnica.device-unlock.metadata";
-const ENROLLMENT_LABEL_PREFIX: &str = "Fresnica Device Unlock v";
+const ENROLLMENT_LABEL_PREFIX: &str = "Fresnica Device Unlock ";
+const BUILD_ID_HEX_LEN: usize = 12;
 const ERR_SEC_USER_CANCELED: i32 = -128;
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const K_SEC_UNLOCK_STATE_STATUS: u32 = 1;
@@ -310,12 +311,12 @@ fn enrollment_label() -> Result<&'static str, String> {
             )
         })?;
         let digest = Sha256::digest(binary);
-        let mut build_id = String::with_capacity(digest.len() * 2);
-        for byte in digest {
+        let mut build_id = String::with_capacity(BUILD_ID_HEX_LEN);
+        for byte in digest.iter().take(BUILD_ID_HEX_LEN / 2) {
             write!(&mut build_id, "{byte:02x}").expect("writing to String cannot fail");
         }
         Ok(format!(
-            "{ENROLLMENT_LABEL_PREFIX}{} build {build_id}",
+            "{ENROLLMENT_LABEL_PREFIX}{} \u{00b7} {build_id}",
             env!("CARGO_PKG_VERSION")
         ))
     }) {
