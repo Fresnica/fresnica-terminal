@@ -13,6 +13,7 @@ pub(crate) enum DeviceUnlockState {
     Disabled,
     Locked,
     Ready,
+    NeedsReauthorization,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,7 +139,9 @@ fn enable(
             DeviceUnlockState::Unavailable => {
                 return Err("device unlock is unavailable on this platform".to_owned())
             }
-            DeviceUnlockState::Locked | DeviceUnlockState::Ready => {
+            DeviceUnlockState::Locked
+            | DeviceUnlockState::Ready
+            | DeviceUnlockState::NeedsReauthorization => {
                 return Err(format!(
                     "device unlock is already enabled for wallet \"{}\"",
                     record.name
@@ -195,7 +198,9 @@ fn disable(
                 record.name
             ))
         }
-        DeviceUnlockState::Locked | DeviceUnlockState::Ready => {}
+        DeviceUnlockState::Locked
+        | DeviceUnlockState::Ready
+        | DeviceUnlockState::NeedsReauthorization => {}
     }
     let passphrase = crate::prompt_hidden("Fresnica passphrase: ")?;
     disable_with_passphrase(&record, backend.as_ref(), &passphrase)?;
@@ -246,6 +251,7 @@ fn state_label(state: DeviceUnlockState) -> &'static str {
         DeviceUnlockState::Disabled => "disabled",
         DeviceUnlockState::Locked => "locked",
         DeviceUnlockState::Ready => "ready",
+        DeviceUnlockState::NeedsReauthorization => "needs-reauthorization",
     }
 }
 

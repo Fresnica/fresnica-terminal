@@ -15,6 +15,7 @@ use crate::device_unlock::{
 
 const PROVIDER_NAME: &str = "macOS Login Keychain";
 const SERVICE: &str = "com.fresnica.device-unlock";
+const METADATA_SERVICE: &str = "com.fresnica.device-unlock.metadata";
 const ERR_SEC_USER_CANCELED: i32 = -128;
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const K_SEC_UNLOCK_STATE_STATUS: u32 = 1;
@@ -72,6 +73,28 @@ impl DeviceUnlockBackend for MacDeviceUnlockBackend {
             }
             Err(error) => return SystemAuthRelease::Failed(error),
         }
+        match self.store.state(slot) {
+            Ok(DeviceUnlockState::NeedsReauthorization) => {
+                if let Err(error) = self.store.update_enrollment(slot) {
+                    return SystemAuthRelease::Failed(error);
+                }
+            }
+            Ok(DeviceUnlockState::Ready | DeviceUnlockState::Locked) => {}
+            Ok(DeviceUnlockState::Disabled) => return SystemAuthRelease::PassphraseRequired,
+            Ok(DeviceUnlockState::Unavailable) => {
+                return SystemAuthRelease::Failed("device unlock unavailable".to_owned())
+            }
+            Err(error) => return SystemAuthRelease::Failed(error),
+        }
+        match self.store.state(slot) {
+            Ok(DeviceUnlockState::NeedsReauthorization) => {
+                if let Err(error) = self.store.update_enrollment(slot) {
+                    return SystemAuthRelease::Failed(error);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => return SystemAuthRelease::Failed(error),
+        }
         match self.store.read(slot) {
             Ok(DeviceSecretRead::Secret(key)) => SystemAuthRelease::UnlockKey(key),
             Ok(DeviceSecretRead::Missing) => SystemAuthRelease::PassphraseRequired,
@@ -122,6 +145,9 @@ impl DeviceSecretStore for MacKeychainStore {
         if !item_exists(&keychain, slot)? {
             return Ok(DeviceUnlockState::Disabled);
         }
+        if !metadata_matches(&keychain, slot)? {
+            return Ok(DeviceUnlockState::NeedsReauthorization);
+        }
         match keychain_unlocked(&keychain) {
             Ok(true) => Ok(DeviceUnlockState::Ready),
             Ok(false) => Ok(DeviceUnlockState::Locked),
@@ -137,7 +163,25 @@ impl DeviceSecretStore for MacKeychainStore {
         ensure_keychain_unlocked(&mut keychain)?;
         keychain
             .set_generic_password(SERVICE, &slot.storage_id(), unlock_key)
-            .map_err(|error| format!("unable to store device unlock key: {error}"))
+            .map_err(|error| format!("unable to store device unlock key: {error}"))?;
+        keychain
+            .set_generic_password(
+                METADATA_SERVICE,
+                &slot.storage_id(),
+                env!("CARGO_PKG_VERSION").as_bytes(),
+            )
+            .map_err(|error| format!("unable to store device unlock metadata: {error}"))
+    }
+
+    fn update_enrollment(&self, slot: &SystemAuthSlot) -> Result<(), String> {
+        let key = match self.read(slot)? {
+            DeviceSecretRead::Secret(key) => key,
+            DeviceSecretRead::Missing => {
+                return Err("device unlock enrollment is missing".to_owned())
+            }
+            DeviceSecretRead::Cancelled => return Err("device unlock update cancelled".to_owned()),
+        };
+        self.enroll(slot, &key)
     }
 
     fn read(&self, slot: &SystemAuthSlot) -> Result<DeviceSecretRead, String> {
@@ -169,11 +213,26 @@ impl DeviceSecretStore for MacKeychainStore {
         match keychain.find_generic_password(SERVICE, &slot.storage_id()) {
             Ok((_, item)) => {
                 item.delete();
-                Ok(())
+                match keychain.find_generic_password(METADATA_SERVICE, &slot.storage_id()) {
+                    Ok((_, metadata)) => {
+                        metadata.delete();
+                        Ok(())
+                    }
+                    Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
+                    Err(error) => Err(format!("unable to remove device unlock metadata: {error}")),
+                }
             }
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(error) => Err(format!("unable to remove device unlock key: {error}")),
         }
+    }
+}
+
+fn metadata_matches(keychain: &SecKeychain, slot: &SystemAuthSlot) -> Result<bool, String> {
+    match keychain.find_generic_password(METADATA_SERVICE, &slot.storage_id()) {
+        Ok((version, _)) => Ok(version.as_ref() == env!("CARGO_PKG_VERSION").as_bytes()),
+        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(false),
+        Err(error) => Err(format!("unable to read device unlock metadata: {error}")),
     }
 }
 

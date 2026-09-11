@@ -119,6 +119,10 @@ pub fn with_software_signer_authorization<T>(
     mut authorize: impl FnMut(Option<&str>, &[SystemAuthUnlockProvider]) -> Result<T, String>,
 ) -> Result<T, String> {
     let device_unlock_providers = crate::device_unlock::one_shot_providers(client)?;
+    crate::diagnostics::stage("signing: resolve authorization providers");
+    if !device_unlock_providers.is_empty() {
+        crate::diagnostics::stage("signing: device unlock provider available");
+    }
     submit_with_authorization_sources(
         &device_unlock_providers,
         &[],
@@ -173,7 +177,7 @@ fn device_unlock_error(error: String) -> String {
 }
 
 pub fn confirm_submission() -> Result<bool, String> {
-    print!("Submit this transaction? [y/N] ");
+    print!("Sign and submit this transaction? [y/N] ");
     io::stdout()
         .flush()
         .map_err(|error| format!("unable to write prompt: {error}"))?;

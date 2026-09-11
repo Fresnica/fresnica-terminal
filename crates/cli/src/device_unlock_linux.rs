@@ -105,9 +105,11 @@ impl DeviceUnlockBackend for LinuxDeviceUnlockBackend {
                 eprintln!("Desktop keyring is locked; Fresnica Passphrase required.");
                 return SystemAuthRelease::PassphraseRequired;
             }
-            Ok(DeviceUnlockState::Disabled | DeviceUnlockState::Unavailable) => {
-                return SystemAuthRelease::PassphraseRequired
-            }
+            Ok(
+                DeviceUnlockState::Disabled
+                | DeviceUnlockState::Unavailable
+                | DeviceUnlockState::NeedsReauthorization,
+            ) => return SystemAuthRelease::PassphraseRequired,
             Err(error) => return SystemAuthRelease::Failed(error),
         }
         match self.authenticator.authenticate() {
