@@ -64,6 +64,82 @@ fn capabilities_are_machine_readable_without_home_or_network_configuration() {
 }
 
 #[test]
+fn local_identity_commands_are_machine_readable() {
+    let home = temp_home();
+    let import = run(
+        &home,
+        &[
+            "--network",
+            "testnet",
+            "wallet",
+            "import-watch",
+            "observer",
+            WATCH_ADDRESS,
+        ],
+    );
+    assert!(import.status.success());
+
+    let wallets = run(&home, &["wallet", "list", "--json"]);
+    assert!(
+        wallets.status.success(),
+        "{}",
+        String::from_utf8_lossy(&wallets.stderr)
+    );
+    let wallets: serde_json::Value = serde_json::from_slice(&wallets.stdout).unwrap();
+    assert_eq!(wallets["kind"], "wallet_list");
+    assert_eq!(wallets["wallets"][0]["name"], "observer");
+    assert_eq!(wallets["wallets"][0]["address"], WATCH_ADDRESS);
+    assert_eq!(wallets["wallets"][0]["watch_only"], true);
+    assert!(wallets["wallets"][0].get("secret").is_none());
+
+    let info = run(&home, &["info", "--wallet", "observer", "--json"]);
+    assert!(
+        info.status.success(),
+        "{}",
+        String::from_utf8_lossy(&info.stderr)
+    );
+    let info: serde_json::Value = serde_json::from_slice(&info.stdout).unwrap();
+    assert_eq!(info["kind"], "wallet_info");
+    assert_eq!(info["wallet"]["name"], "observer");
+    assert_eq!(info["wallet"]["protection"], "none");
+    assert!(info["fresnica_revision"].as_str().is_some());
+
+    let add = run(
+        &home,
+        &[
+            "contact",
+            "add",
+            "alice",
+            WATCH_ADDRESS,
+            "--memo",
+            "42",
+            "--json",
+        ],
+    );
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let add: serde_json::Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(add["kind"], "contact_added");
+    assert_eq!(add["contact"]["memo"], "42");
+
+    let list = run(&home, &["contact", "list", "--json"]);
+    assert!(list.status.success());
+    let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list["contacts"][0]["name"], "alice");
+
+    let remove = run(&home, &["contact", "remove", "alice", "--json"]);
+    assert!(remove.status.success());
+    let remove: serde_json::Value = serde_json::from_slice(&remove.stdout).unwrap();
+    assert_eq!(remove["kind"], "contact_removed");
+    assert_eq!(remove["contact"]["name"], "alice");
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
 fn info_prints_sdk_core_compatibility_line_once() {
     let home = temp_home();
     let import = run(

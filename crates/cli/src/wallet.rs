@@ -1,12 +1,13 @@
 use std::io::{self, Write};
 
 use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
+use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
 use crate::{device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden};
 
 const WALLET_HELP: &str = r#"Wallet commands:
-  fresnica wallet list
+  fresnica wallet list [--json]
   fresnica wallet use NAME
   fresnica wallet create NAME [--index N] [--language LANGUAGE] [--strength BITS]
   fresnica wallet import-secret NAME
@@ -27,13 +28,42 @@ const WALLET_HELP: &str = r#"Wallet commands:
 "#;
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
-    let wallet_name = match arguments {
-        [] => None,
-        [flag, name] if flag == "--wallet" => Some(name.as_str()),
-        _ => return Err("usage: fresnica info [--wallet NAME]".to_owned()),
-    };
+    let mut wallet_name = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--wallet" if wallet_name.is_none() => {
+                index += 1;
+                wallet_name = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "usage: fresnica info [--wallet NAME] [--json]".to_owned())?
+                        .as_str(),
+                );
+                index += 1;
+            }
+            "--json" if !json_output => {
+                json_output = true;
+                index += 1;
+            }
+            _ => return Err("usage: fresnica info [--wallet NAME] [--json]".to_owned()),
+        }
+    }
     let record = storage.resolve(wallet_name)?;
     let default = storage.default_name()?;
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "wallet_info",
+                "wallet": wallet_public_json(&record, default.as_deref())?,
+                "fresnica_revision": diagnostics::fresnica_revision(),
+            }))
+            .map_err(|error| format!("unable to encode wallet info JSON: {error}"))?
+        );
+        return Ok(());
+    }
     println!("Name:       {}", record.name);
     println!("Address:    {}", record.address);
     println!("Network:    {}", record.network);
@@ -65,6 +95,28 @@ pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Res
     Ok(())
 }
 
+fn wallet_public_json(record: &WalletRecord, default_name: Option<&str>) -> Result<Value, String> {
+    let signer = match ledger::configuration(record)? {
+        Some(configuration) => json!({
+            "kind": "ledger",
+            "hd_path": configuration.hd_path,
+        }),
+        None => json!({
+            "kind": record.wallet_type.as_str(),
+        }),
+    };
+    Ok(json!({
+        "name": record.name.as_str(),
+        "address": record.address.as_str(),
+        "network": record.network.as_str(),
+        "wallet_type": record.wallet_type.as_str(),
+        "watch_only": record.watch_only(),
+        "protection": if record.watch_only() { "none" } else { "fresnica_passphrase" },
+        "default": default_name == Some(record.name.as_str()),
+        "signer": signer,
+    }))
+}
+
 pub(crate) fn command_wallet(
     storage: &WalletStorage,
     network: &str,
@@ -79,7 +131,8 @@ pub(crate) fn command_wallet(
         return Ok(());
     }
     match command {
-        "list" if arguments.len() == 1 => wallet_list(storage),
+        "list" if arguments.len() == 1 => wallet_list(storage, false),
+        "list" if arguments.len() == 2 && arguments[1] == "--json" => wallet_list(storage, true),
         "use" if arguments.len() == 2 => {
             storage.set_default(&arguments[1])?;
             println!("Default wallet is now \"{}\"", arguments[1]);
@@ -113,9 +166,24 @@ pub(crate) fn command_wallet(
     }
 }
 
-fn wallet_list(storage: &WalletStorage) -> Result<(), String> {
+fn wallet_list(storage: &WalletStorage, json_output: bool) -> Result<(), String> {
     let records = storage.list()?;
     let default = storage.default_name()?;
+    if json_output {
+        let wallets = records
+            .iter()
+            .map(|record| wallet_public_json(record, default.as_deref()))
+            .collect::<Result<Vec<_>, _>>()?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "wallet_list",
+                "wallets": wallets,
+            }))
+            .map_err(|error| format!("unable to encode wallet list JSON: {error}"))?
+        );
+        return Ok(());
+    }
     if records.is_empty() {
         println!("No local wallets.");
         return Ok(());
