@@ -31,6 +31,9 @@ fn operations() -> Vec<Value> {
         operation("history.list", "fresnica history [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
         operation("asset.discover", "fresnica asset discover [--limit N] [--cached] --json", "read", &["network", "horizon"]),
         operation_with_confirmation("payment.send", "fresnica send AMOUNT ASSET to DESTINATION [--wallet NAME] [--memo TEXT] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
+        operation_with_confirmation("trustline.add", "fresnica trust add CODE:GISSUER [--limit VALUE] [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
+        operation_with_confirmation("trustline.limit", "fresnica trust limit CODE:GISSUER LIMIT [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
+        operation_with_confirmation("trustline.remove", "fresnica trust remove CODE:GISSUER [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
         operation("dex.orderbook", "fresnica dex orderbook SELLING BUYING --json", "read", &["network", "horizon"]),
         operation("dex.offers", "fresnica dex offers [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
         operation("dex.trades", "fresnica dex trades BASE COUNTER [--limit N] --json", "read", &["network", "horizon"]),
@@ -86,6 +89,9 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(ids.len(), operations.len());
         assert!(ids.contains("payment.send"));
+        assert!(ids.contains("trustline.add"));
+        assert!(ids.contains("trustline.limit"));
+        assert!(ids.contains("trustline.remove"));
         assert!(ids.contains("contract.invoke"));
         assert!(ids.contains("token.transfer"));
     }
