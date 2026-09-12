@@ -32,6 +32,8 @@ fn operations() -> Vec<Value> {
         operation("asset.discover", "fresnica asset discover [--limit N] [--cached] --json", "read", &["network", "horizon"]),
         operation("wallet.list", "fresnica wallet list --json", "local_read", &[]),
         operation("wallet.info", "fresnica info [--wallet NAME] --json", "local_read", &["wallet"]),
+        operation("wallet.use", "fresnica wallet use NAME --json", "local_write", &["wallet"]),
+        operation("plugin.list", "fresnica plugin ls --json", "local_read", &[]),
         operation("contact.list", "fresnica contact list --json", "local_read", &[]),
         operation("contact.add", "fresnica contact add NAME G... [--memo TEXT] --json", "local_write", &[]),
         operation("contact.remove", "fresnica contact remove NAME --json", "local_write", &[]),
@@ -99,6 +101,8 @@ mod tests {
         assert_eq!(ids.len(), operations.len());
         assert!(ids.contains("wallet.list"));
         assert!(ids.contains("wallet.info"));
+        assert!(ids.contains("wallet.use"));
+        assert!(ids.contains("plugin.list"));
         assert!(ids.contains("contact.list"));
         assert!(ids.contains("contact.add"));
         assert!(ids.contains("contact.remove"));

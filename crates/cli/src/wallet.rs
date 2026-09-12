@@ -8,7 +8,7 @@ use crate::{device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_h
 
 const WALLET_HELP: &str = r#"Wallet commands:
   fresnica wallet list [--json]
-  fresnica wallet use NAME
+  fresnica wallet use NAME [--json]
   fresnica wallet create NAME [--index N] [--language LANGUAGE] [--strength BITS]
   fresnica wallet import-secret NAME
   fresnica wallet import-mnemonic NAME [--index N] [--language LANGUAGE]
@@ -133,10 +133,9 @@ pub(crate) fn command_wallet(
     match command {
         "list" if arguments.len() == 1 => wallet_list(storage, false),
         "list" if arguments.len() == 2 && arguments[1] == "--json" => wallet_list(storage, true),
-        "use" if arguments.len() == 2 => {
-            storage.set_default(&arguments[1])?;
-            println!("Default wallet is now \"{}\"", arguments[1]);
-            Ok(())
+        "use" if arguments.len() == 2 => wallet_use(storage, &arguments[1], false),
+        "use" if arguments.len() == 3 && arguments[2] == "--json" => {
+            wallet_use(storage, &arguments[1], true)
         }
         "create" => wallet_create(storage, network, &arguments[1..]),
         "import-secret" if arguments.len() == 2 => {
@@ -164,6 +163,24 @@ pub(crate) fn command_wallet(
             "unknown or invalid wallet command: {command}\n\n{WALLET_HELP}"
         )),
     }
+}
+
+fn wallet_use(storage: &WalletStorage, name: &str, json_output: bool) -> Result<(), String> {
+    storage.set_default(name)?;
+    if json_output {
+        let record = storage.resolve(Some(name))?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "wallet_default_changed",
+                "wallet": wallet_public_json(&record, Some(name))?,
+            }))
+            .map_err(|error| format!("unable to encode default wallet JSON: {error}"))?
+        );
+    } else {
+        println!("Default wallet is now \"{name}\"");
+    }
+    Ok(())
 }
 
 fn wallet_list(storage: &WalletStorage, json_output: bool) -> Result<(), String> {

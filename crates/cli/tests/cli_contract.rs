@@ -4,6 +4,7 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const WATCH_ADDRESS: &str = "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR";
+const OTHER_WATCH_ADDRESS: &str = "GAXUGZINCMWFE5WPBMF4H75RYIH522TEGLZHGI7QXRDNGLEUFZJ4RWNY";
 
 fn temp_home() -> PathBuf {
     let nonce = SystemTime::now()
@@ -103,6 +104,41 @@ fn local_identity_commands_are_machine_readable() {
     assert_eq!(info["wallet"]["name"], "observer");
     assert_eq!(info["wallet"]["protection"], "none");
     assert!(info["fresnica_revision"].as_str().is_some());
+
+    let import_second = run(
+        &home,
+        &[
+            "--network",
+            "testnet",
+            "wallet",
+            "import-watch",
+            "secondary",
+            OTHER_WATCH_ADDRESS,
+        ],
+    );
+    assert!(import_second.status.success());
+    let use_wallet = run(&home, &["wallet", "use", "secondary", "--json"]);
+    assert!(
+        use_wallet.status.success(),
+        "{}",
+        String::from_utf8_lossy(&use_wallet.stderr)
+    );
+    let use_wallet: serde_json::Value = serde_json::from_slice(&use_wallet.stdout).unwrap();
+    assert_eq!(use_wallet["kind"], "wallet_default_changed");
+    assert_eq!(use_wallet["wallet"]["name"], "secondary");
+    assert_eq!(use_wallet["wallet"]["default"], true);
+    assert!(use_wallet["wallet"].get("secret").is_none());
+
+    let wallets_after_use = run(&home, &["wallet", "list", "--json"]);
+    let wallets_after_use: serde_json::Value =
+        serde_json::from_slice(&wallets_after_use.stdout).unwrap();
+    let secondary = wallets_after_use["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|wallet| wallet["name"] == "secondary")
+        .unwrap();
+    assert_eq!(secondary["default"], true);
 
     let add = run(
         &home,
