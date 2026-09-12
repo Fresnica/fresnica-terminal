@@ -42,6 +42,14 @@ Release publication remains marker-gated. The release workflow revalidates the r
 
 The CLI supports safe `-v` / `-vv` diagnostics. Verbose output exposes execution stages and version/network metadata, never the raw argument vector or hidden secret input.
 
+Automation can discover the currently machine-ready operation surface without opening wallet storage or network providers:
+
+```bash
+fresnica capabilities --json
+```
+
+The versioned `fresnica-capabilities-v1` inventory reports exact CLI/source versions plus JSON-capable operation IDs, usage, effects and runtime dependencies. It intentionally omits commands that do not yet have a deliberate machine-output contract.
+
 ## Build and test
 
 ```bash

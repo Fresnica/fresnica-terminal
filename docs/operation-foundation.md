@@ -77,6 +77,8 @@ Capabilities intended for automation must converge on:
 
 Human output may evolve independently as presentation. Machine JSON must not be produced by parsing human text.
 
+The machine surface must also be discoverable without prose scraping. `fresnica capabilities --json` is the versioned local inventory for operations that already have deliberate JSON contracts. Capability discovery must not require a wallet, HOME directory, Horizon or RPC initialization. The inventory must stay conservative: an operation is listed only after its machine output and noninteractive policy are implemented and tested.
+
 ## Capabilities, not secrets
 
 Agents, scripts and plugins request bounded wallet capabilities. They do not receive generic signing authority.
@@ -148,7 +150,8 @@ v0.5 uses Soroban as the first demanding proof of this foundation:
 4. expose useful Store and contract inspection as machine-readable output;
 5. detect executable/Wasm changes and recheck write preparation before review;
 6. reuse the same simulation/review/authorization/signing path for human and machine execution;
-7. only after the foundation is stable, prove it with a thin standard or ecosystem consumer such as SEP-41 token operations or Aqua.
+7. expose a zero-state versioned inventory of machine-ready operations;
+8. only after the foundation is stable, prove it with a thin standard or ecosystem consumer such as SEP-41 token operations or Aqua.
 
 ## Non-goals
 
