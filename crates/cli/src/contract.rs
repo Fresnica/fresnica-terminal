@@ -6,14 +6,27 @@ use fresnica_client::{
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
 
+use crate::contract_alias::{looks_like_contract_id, ContractAliasStore};
 use crate::transaction_flow::{
     confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
 };
 
-const USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
+const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--json] [FUNCTION [--NAME VALUE]...]\n  fresnica contract list\n  fresnica contract add NAME C...\n  fresnica contract remove NAME\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...";
+const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
+const SAVED_CONTRACT_USAGE: &str =
+    "usage: fresnica contract list | contract add NAME C... | contract remove NAME";
 
 pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
-    let options = InvokeOptions::parse(arguments)?;
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("list" | "add" | "remove")
+    ) {
+        return command_saved_contracts(client, arguments);
+    }
+
+    let mut options = InvokeOptions::parse(arguments)?;
+    let requested_target = options.contract_id.clone();
+    options.contract_id = resolve_contract_target(client, &requested_target)?;
     let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
@@ -26,7 +39,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
             if options.json {
                 print_json(&interface_json(&interface))?;
             } else {
-                render_interface_help(&interface);
+                render_interface_help(&interface, &requested_target);
             }
             return Ok(());
         }
@@ -42,7 +55,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
             if options.json {
                 print_json(&function_json(function))?;
             } else {
-                render_function_help(&options.contract_id, function);
+                render_function_help(&requested_target, &options.contract_id, function);
             }
             return Ok(());
         }
@@ -70,21 +83,21 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         if options.json {
             print_json(&read_only_json(&result))?;
         } else {
-            render_read_only(&result);
+            render_read_only(&result, &requested_target);
         }
         return Ok(());
     };
 
     if options.json && !options.yes {
         return Err(
-            "write contract invoke --json requires -y so stdout remains one machine-readable JSON document"
+            "write contract call --json requires -y so stdout remains one machine-readable JSON document"
                 .to_owned(),
         );
     }
 
     crate::diagnostics::stage("contract: review simulated transaction");
     if !options.json {
-        render_review(&prepared.review);
+        render_review(&prepared.review, &requested_target);
         if !options.yes && !confirm_submission()? {
             println!("Transaction cancelled.");
             return Ok(());
@@ -137,15 +150,19 @@ enum InvokeAction {
 
 impl InvokeOptions {
     fn parse(arguments: &[String]) -> Result<Self, String> {
-        if arguments.len() < 2 || arguments[0] != "invoke" {
-            return Err(USAGE.to_owned());
+        if arguments.first().map(String::as_str) == Some("invoke") {
+            return Self::parse_legacy(arguments);
         }
-        let contract_id = arguments[1].clone();
+        Self::parse_direct(arguments)
+    }
+
+    fn parse_direct(arguments: &[String]) -> Result<Self, String> {
+        let contract_id = arguments.first().ok_or_else(|| USAGE.to_owned())?.clone();
         let mut wallet = None;
         let mut yes = false;
         let mut json = false;
-        let mut index = 2;
-        while index < arguments.len() && arguments[index] != "--" {
+        let mut index = 1;
+        while index < arguments.len() {
             match arguments[index].as_str() {
                 "--wallet" => {
                     index += 1;
@@ -165,17 +182,27 @@ impl InvokeOptions {
                     json = true;
                     index += 1;
                 }
+                "-h" | "--help" => {
+                    if index + 1 != arguments.len() {
+                        return Err(USAGE.to_owned());
+                    }
+                    return Ok(Self {
+                        contract_id,
+                        wallet,
+                        yes,
+                        json,
+                        action: InvokeAction::InterfaceHelp,
+                    });
+                }
                 value if !value.starts_with('-') => break,
                 _ => return Err(USAGE.to_owned()),
             }
         }
-        if arguments.get(index).map(String::as_str) != Some("--") {
-            return Err(format!(
-                "contract-specific function arguments must follow `--`\n{USAGE}"
-            ));
-        }
-        let dynamic = &arguments[index + 1..];
-        let action = parse_dynamic(dynamic)?;
+        let action = if index == arguments.len() {
+            InvokeAction::InterfaceHelp
+        } else {
+            parse_dynamic(&arguments[index..])?
+        };
         Ok(Self {
             contract_id,
             wallet,
@@ -184,6 +211,103 @@ impl InvokeOptions {
             action,
         })
     }
+
+    fn parse_legacy(arguments: &[String]) -> Result<Self, String> {
+        if arguments.len() < 2 {
+            return Err(LEGACY_USAGE.to_owned());
+        }
+        let contract_id = arguments[1].clone();
+        let mut wallet = None;
+        let mut yes = false;
+        let mut json = false;
+        let mut index = 2;
+        while index < arguments.len() && arguments[index] != "--" {
+            match arguments[index].as_str() {
+                "--wallet" => {
+                    index += 1;
+                    wallet = Some(
+                        arguments
+                            .get(index)
+                            .ok_or_else(|| LEGACY_USAGE.to_owned())?
+                            .clone(),
+                    );
+                    index += 1;
+                }
+                "-y" | "--yes" => {
+                    yes = true;
+                    index += 1;
+                }
+                "--json" => {
+                    json = true;
+                    index += 1;
+                }
+                value if !value.starts_with('-') => break,
+                _ => return Err(LEGACY_USAGE.to_owned()),
+            }
+        }
+        if arguments.get(index).map(String::as_str) != Some("--") {
+            return Err(format!(
+                "contract-specific function arguments must follow `--`\n{LEGACY_USAGE}"
+            ));
+        }
+        let action = parse_dynamic(&arguments[index + 1..])?;
+        Ok(Self {
+            contract_id,
+            wallet,
+            yes,
+            json,
+            action,
+        })
+    }
+}
+
+fn command_saved_contracts(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
+    let store = ContractAliasStore::for_home(client.storage().home(), client.network());
+    match arguments {
+        [command] if command == "list" => {
+            let aliases = store.list()?;
+            if aliases.is_empty() {
+                println!("No saved contracts on {}.", client.network());
+                return Ok(());
+            }
+            println!("Saved contracts ({})", client.network());
+            for alias in aliases {
+                println!("  {:<20} {}", alias.name, alias.contract_id);
+            }
+            Ok(())
+        }
+        [command, name, contract_id] if command == "add" => {
+            let alias = store.add(name, contract_id)?;
+            println!("Saved contract \"{}\" on {}.", alias.name, client.network());
+            println!("Contract: {}", alias.contract_id);
+            Ok(())
+        }
+        [command, name] if command == "remove" => {
+            let alias = store.remove(name)?;
+            println!(
+                "Removed contract \"{}\" from {}.",
+                alias.name,
+                client.network()
+            );
+            Ok(())
+        }
+        _ => Err(SAVED_CONTRACT_USAGE.to_owned()),
+    }
+}
+
+fn resolve_contract_target(client: &FresnicaClient, target: &str) -> Result<String, String> {
+    if looks_like_contract_id(target) {
+        return Ok(target.to_owned());
+    }
+    let store = ContractAliasStore::for_home(client.storage().home(), client.network());
+    if let Some(alias) = store.find(target)? {
+        return Ok(alias.contract_id);
+    }
+    Err(format!(
+        "Unknown contract {target:?} on {}. Use a C... contract id or save one with `fresnica --network {} contract add {target} C...`.",
+        client.network(),
+        client.network()
+    ))
 }
 
 fn parse_dynamic(arguments: &[String]) -> Result<InvokeAction, String> {
@@ -230,8 +354,17 @@ fn is_help(value: &str) -> bool {
     matches!(value, "--help" | "-h")
 }
 
-fn render_interface_help(interface: &ContractInterface) {
-    println!("Contract: {}", interface.contract_id);
+fn render_contract_identity(requested_target: &str, contract_id: &str) {
+    if requested_target == contract_id {
+        println!("Contract: {contract_id}");
+    } else {
+        println!("Contract: {requested_target}");
+        println!("ID:       {contract_id}");
+    }
+}
+
+fn render_interface_help(interface: &ContractInterface, requested_target: &str) {
+    render_contract_identity(requested_target, &interface.contract_id);
     println!("Functions:");
     if interface.functions.is_empty() {
         println!("  (none)");
@@ -256,12 +389,13 @@ fn render_interface_help(interface: &ContractInterface) {
     }
     println!();
     println!(
-        "Use `fresnica contract invoke {} -- FUNCTION --help` for parameter details.",
-        interface.contract_id
+        "Use `fresnica contract {} FUNCTION --help` for parameter details.",
+        requested_target
     );
 }
 
-fn render_function_help(contract_id: &str, function: &ContractFunction) {
+fn render_function_help(requested_target: &str, contract_id: &str, function: &ContractFunction) {
+    render_contract_identity(requested_target, contract_id);
     println!("Function: {}", function.name);
     let doc = sanitize_terminal_text(&function.doc);
     if !doc.trim().is_empty() {
@@ -269,7 +403,7 @@ fn render_function_help(contract_id: &str, function: &ContractFunction) {
     }
     println!();
     print!(
-        "Usage: fresnica contract invoke {contract_id} [--wallet NAME] [-y] -- {}",
+        "Usage: fresnica contract {requested_target} [--wallet NAME] [-y] {}",
         function.name
     );
     for input in &function.inputs {
@@ -307,9 +441,13 @@ fn render_function_help(contract_id: &str, function: &ContractFunction) {
     }
 }
 
-fn render_read_only(result: &ContractReadResult) {
+fn render_read_only(result: &ContractReadResult, requested_target: &str) {
     println!("Read-only contract result");
-    println!("Contract:   {}", result.contract_id);
+    if requested_target == result.contract_id {
+        println!("Contract:   {}", result.contract_id);
+    } else {
+        println!("Contract:   {requested_target} ({})", result.contract_id);
+    }
     println!("Function:   {}", result.function_name);
     println!("Network:    {}", result.network);
     for argument in &result.arguments {
@@ -331,11 +469,15 @@ fn render_read_only(result: &ContractReadResult) {
     println!("Submitted:  no");
 }
 
-fn render_review(review: &ContractInvokeReview) {
+fn render_review(review: &ContractInvokeReview, requested_target: &str) {
     println!("Review contract invocation");
     println!("Wallet:     {}", review.wallet_name);
     println!("Fee payer:  {}", review.fee_payer);
-    println!("Contract:   {}", review.contract_id);
+    if requested_target == review.contract_id {
+        println!("Contract:   {}", review.contract_id);
+    } else {
+        println!("Contract:   {requested_target} ({})", review.contract_id);
+    }
     println!("Function:   {}", review.function_name);
     println!("Network:    {}", review.network);
     for argument in &review.arguments {
@@ -522,6 +664,49 @@ mod tests {
         assert_eq!(arguments[2].value, "10000000");
         assert!(options.yes);
         assert!(options.json);
+    }
+
+    #[test]
+    fn direct_contract_syntax_keeps_host_options_before_function() {
+        let args = [
+            "aqua",
+            "--wallet",
+            "bot",
+            "-y",
+            "--json",
+            "transfer",
+            "--from",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "--wallet",
+            "contract-owned-value",
+            "--amount",
+            "10",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(options.contract_id, "aqua");
+        assert_eq!(options.wallet.as_deref(), Some("bot"));
+        assert!(options.yes);
+        assert!(options.json);
+        let InvokeAction::Invoke {
+            function_name,
+            arguments,
+        } = options.action
+        else {
+            panic!("expected invoke action");
+        };
+        assert_eq!(function_name, "transfer");
+        assert_eq!(arguments[1].name, "wallet");
+        assert_eq!(arguments[1].value, "contract-owned-value");
+    }
+
+    #[test]
+    fn direct_contract_without_function_means_interface_help() {
+        let args = ["aqua", "--json"].map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(options.contract_id, "aqua");
+        assert!(options.json);
+        assert!(matches!(options.action, InvokeAction::InterfaceHelp));
     }
 
     #[test]

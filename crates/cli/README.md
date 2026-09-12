@@ -31,7 +31,9 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `dex trades BASE COUNTER [--limit N] [--json]`
 - `dex fills [--wallet NAME] [--limit N] [--json]`
 - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
-- `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
+- `contract TARGET [--wallet NAME] [-y] [--json] [FUNCTION [--NAME VALUE]...]`
+- `contract list | contract add NAME C... | contract remove NAME`
+- legacy: `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
 - `anchor discover CODE:GISSUER --home-domain DOMAIN [--json]`
 - `anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]`
 - `anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]`
@@ -168,16 +170,27 @@ activity, remain separate segments. The native client deliberately does not add 
 second chain-data cache implementation in this slice; the asset catalog is a
 small public-metadata cache owned by the shared Asset Discovery capability.
 
-## Contract invocation
+## Contract use
 
-`contract invoke` follows Stellar CLI's fully-typed contract model: the deployed on-chain contract specification is the source of truth for functions, parameter names, types, and documentation. Fresnica options stay before `--`; the function and contract-specific named arguments follow it.
+Fresnica treats a deployed Soroban contract as something a wallet user or agent can use directly, not as a developer-only `invoke` primitive. The deployed on-chain Contract Spec remains the source of truth for functions, parameter names, types, and documentation, but the normal command surface removes the extra `invoke` and `--` layers. Fresnica-owned options must appear before the function name; everything after the function name is contract-owned, so a contract parameter may safely be named `--wallet` or `--json`.
 
 ```sh
-fresnica --network testnet contract invoke C... -- --help
-fresnica --network testnet contract invoke C... -- transfer --help
-fresnica --network testnet contract invoke C... --json -- balance --id G...
-fresnica --network testnet contract invoke C... --wallet main -- transfer --from G... --to C... --amount 10000000
+fresnica --network testnet contract C...
+fresnica --network testnet contract C... transfer --help
+fresnica --network testnet contract C... --json balance --id G...
+fresnica --network testnet contract C... --wallet main transfer --from G... --to C... --amount 10000000
 ```
+
+Contracts can be given local, network-scoped names. The alias is only presentation/configuration; review still exposes the resolved `C...` identity and all execution continues through the same Contract Spec / simulation / authorization path.
+
+```sh
+fresnica --network testnet contract add aqua C...
+fresnica --network testnet contract list
+fresnica --network testnet contract aqua
+fresnica --network testnet contract aqua --wallet bot -y swap --amount 100
+```
+
+The v0.4 `contract invoke C... -- FUNCTION ...` grammar remains accepted for compatibility.
 
 The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. Dynamic help exposes official type examples where available.
 

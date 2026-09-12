@@ -2,6 +2,7 @@ mod anchor_auth;
 mod asset_discovery;
 mod contacts;
 mod contract;
+mod contract_alias;
 mod device_unlock;
 #[cfg(target_os = "linux")]
 mod device_unlock_linux;
@@ -42,7 +43,7 @@ Commands:
   send       Send a payment
   trust      Manage issued-asset trustlines
   dex        Read and trade on the Stellar DEX
-  contract   Invoke Soroban contracts
+  contract   Use Soroban contracts
   wallet     Manage wallets and signing material
   contact    Manage contacts
   plugin     Manage CLI plugins

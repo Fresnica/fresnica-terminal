@@ -1647,6 +1647,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "stellar-ledger",
+ "stellar-strkey 0.0.18",
  "stellar-xdr",
  "time",
  "tokio",
