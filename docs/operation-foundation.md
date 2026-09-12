@@ -126,9 +126,11 @@ A plugin is an operation consumer and orchestrator. It may contribute protocol k
 
 The desired end state permits a useful plugin to be a small shell, Python, Node or native executable that composes stable Fresnica operations. Language choice is not part of the trust model.
 
-The current `fresnica-*` executable namespace and bounded plugin-host re-entry remain valid evidence. Do not freeze the current env/JSON wire into a universal Plugin SDK until Contract/Token or another real consumer proves which host capabilities are stable.
+The current `fresnica-*` executable namespace and bounded plugin-host re-entry remain valid evidence. Ordinary reusable operations should use the same public machine CLI available to agents and scripts through `FRESNICA_PLUGIN_HOST`; do not mirror `contract`, `token`, payment or other headless operations into a second private plugin-host RPC surface. Private `__plugin-host` re-entry is for exceptional boundaries that need host-only state or authority, such as ephemeral authentication material or mandatory host-owned proposal review.
 
-Plugin packaging, manifests and installation systems may evolve. Capability and authorization boundaries are the durable contract.
+A Testnet shell-plugin proof confirmed this rule: a plugin consisting only of `$FRESNICA_PLUGIN_HOST --network "$FRESNICA_PLUGIN_NETWORK" token XLM balance OWNER --json` reused the complete resolver/SEP-41/Contract pipeline without a plugin-specific API. This is the desired cost model for future AI-generated integrations.
+
+Do not freeze the current env/JSON wire into a universal Plugin SDK merely because this reuse works. Plugin packaging, manifests and installation systems may evolve. Capability and authorization boundaries are the durable contract.
 
 ## UI relationship
 

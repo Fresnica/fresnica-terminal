@@ -74,6 +74,21 @@ The host remains responsible for validation, authorization, user review, signer 
 
 Plugins are ordinary local executables and are not OS-sandboxed by Fresnica. Users must install only plugins they trust. The wallet guarantee is narrower: Fresnica does not hand the child secret wallet/signing material or generic signing authority.
 
+## Public machine operations before private host re-entry
+
+The Operation Foundation's public machine CLI is the default process boundary for reusable wallet operations. A plugin that needs an ordinary headless operation should call the Fresnica executable already supplied in `FRESNICA_PLUGIN_HOST`, preserving the selected network and other host context, instead of asking for a duplicate private host RPC. For example:
+
+```text
+$FRESNICA_PLUGIN_HOST --network "$FRESNICA_PLUGIN_NETWORK" token XLM balance G... --json
+$FRESNICA_PLUGIN_HOST --network "$FRESNICA_PLUGIN_NETWORK" contract aqua quote ... --json
+```
+
+This rule matters beyond plugins: the same machine surface is usable by shell scripts, Python, agents and bots, so adding `__plugin-host token-balance` or `__plugin-host contract-read` would create a second API for the same operation and invite semantic drift.
+
+A fresh Testnet proof used an ephemeral `fresnica-xlm-balance` shell plugin containing only a call back to `FRESNICA_PLUGIN_HOST ... token XLM balance ... --json`. It returned the same resolved native SAC, SEP-41 evidence and exact balance as the built-in operation, while `fresnica plugin ls` discovered the plugin normally. This proves that a useful plugin can remain orchestration-only when the public operation base is complete.
+
+`__plugin-host` is therefore reserved for bounded capabilities that the ordinary public machine CLI cannot safely or cleanly express, such as selected public context, returning a short-lived SEP-10 bearer token to the child, or accepting a semantic proposal that must re-enter mandatory Fresnica-owned review. It is not the generic operation transport.
+
 ## Bounded native host re-entry
 
 The first real native consumer, `fresnica-anchor`, proves four bounded interaction classes:
