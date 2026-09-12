@@ -6,6 +6,7 @@ use fresnica_client::{
     LedgerSignerAvailability, LedgerSignerKind, SystemAuthUnlockProvider,
     LOCAL_SOFTWARE_PASSPHRASE_REQUIRED,
 };
+use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
 pub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};
@@ -13,6 +14,77 @@ pub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};
 pub fn render_authorization_review(snapshot: &LedgerAuthorizationSnapshot) {
     for line in authorization_review_lines(snapshot) {
         println!("{line}");
+    }
+}
+
+pub fn authorization_json(snapshot: &LedgerAuthorizationSnapshot) -> Value {
+    let accounts = snapshot
+        .accounts
+        .iter()
+        .map(|account| {
+            let uses = account
+                .uses
+                .iter()
+                .map(|usage| {
+                    json!({
+                        "scope": authorization_scope_json(&usage.scope),
+                        "threshold": threshold_machine_label(usage.threshold),
+                        "required_weight": usage.required_weight,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let signers = account
+                .signers
+                .iter()
+                .map(|signer| {
+                    json!({
+                        "kind": signer_kind_machine_label(&signer.condition.kind),
+                        "key": signer.condition.key.as_str(),
+                        "weight": signer.weight,
+                        "availability": availability_machine_label(signer.availability),
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "account_id": account.account_id.as_str(),
+                "required_weight": account.required_weight,
+                "satisfied_weight": account.satisfied_weight,
+                "local_available_weight": account.local_available_weight,
+                "remaining_weight": account.remaining_weight,
+                "uses": uses,
+                "signers": signers,
+            })
+        })
+        .collect::<Vec<_>>();
+    let extra_signers = snapshot
+        .extra_signers
+        .iter()
+        .map(|signer| {
+            json!({
+                "kind": signer_kind_machine_label(&signer.condition.kind),
+                "key": signer.condition.key.as_str(),
+                "availability": availability_machine_label(signer.availability),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "status": authorization_status_machine(snapshot),
+        "satisfied": snapshot.satisfied,
+        "locally_satisfiable": snapshot.locally_satisfiable,
+        "transaction_hash": snapshot.transaction_hash.as_str(),
+        "accounts": accounts,
+        "extra_signers": extra_signers,
+    })
+}
+
+fn authorization_scope_json(scope: &AuthorizationScope) -> Value {
+    match scope {
+        AuthorizationScope::TransactionSource => json!({"kind": "transaction_source"}),
+        AuthorizationScope::Operation { index, kind } => json!({
+            "kind": "operation",
+            "operation_index": index,
+            "operation": operation_kind_machine_label(*kind),
+        }),
     }
 }
 
@@ -67,11 +139,29 @@ fn authorization_status(snapshot: &LedgerAuthorizationSnapshot) -> &'static str 
     }
 }
 
+fn authorization_status_machine(snapshot: &LedgerAuthorizationSnapshot) -> &'static str {
+    if snapshot.satisfied {
+        "already_satisfied"
+    } else if snapshot.locally_satisfiable {
+        "local_signing_ready"
+    } else {
+        "external_authorization_required"
+    }
+}
+
 fn availability_label(availability: LedgerSignerAvailability) -> &'static str {
     match availability {
         LedgerSignerAvailability::Satisfied => "satisfied",
         LedgerSignerAvailability::LocalEd25519 => "local",
         LedgerSignerAvailability::UnavailableLocally => "external",
+    }
+}
+
+fn availability_machine_label(availability: LedgerSignerAvailability) -> &'static str {
+    match availability {
+        LedgerSignerAvailability::Satisfied => "satisfied",
+        LedgerSignerAvailability::LocalEd25519 => "local_ed25519",
+        LedgerSignerAvailability::UnavailableLocally => "unavailable_locally",
     }
 }
 
@@ -84,12 +174,25 @@ fn signer_kind_label(kind: &LedgerSignerKind) -> &'static str {
     }
 }
 
+fn signer_kind_machine_label(kind: &LedgerSignerKind) -> &'static str {
+    match kind {
+        LedgerSignerKind::Ed25519PublicKey => "ed25519",
+        LedgerSignerKind::PreauthorizedTransaction => "preauth_tx",
+        LedgerSignerKind::HashX => "hash_x",
+        LedgerSignerKind::Ed25519SignedPayload => "ed25519_signed_payload",
+    }
+}
+
 fn threshold_label(threshold: AuthorizationThreshold) -> &'static str {
     match threshold {
         AuthorizationThreshold::Low => "low",
         AuthorizationThreshold::Medium => "medium",
         AuthorizationThreshold::High => "high",
     }
+}
+
+fn threshold_machine_label(threshold: AuthorizationThreshold) -> &'static str {
+    threshold_label(threshold)
 }
 
 fn scope_label(scope: &AuthorizationScope) -> String {
@@ -111,6 +214,19 @@ fn operation_kind_label(kind: ClassicOperationKind) -> &'static str {
         ClassicOperationKind::ManageData => "ManageData",
         ClassicOperationKind::InvokeHostFunction => "InvokeHostFunction",
         ClassicOperationKind::BumpSequence => "BumpSequence",
+    }
+}
+
+fn operation_kind_machine_label(kind: ClassicOperationKind) -> &'static str {
+    match kind {
+        ClassicOperationKind::CreateAccount => "create_account",
+        ClassicOperationKind::Payment => "payment",
+        ClassicOperationKind::ManageSellOffer => "manage_sell_offer",
+        ClassicOperationKind::ManageBuyOffer => "manage_buy_offer",
+        ClassicOperationKind::ChangeTrust => "change_trust",
+        ClassicOperationKind::ManageData => "manage_data",
+        ClassicOperationKind::InvokeHostFunction => "invoke_host_function",
+        ClassicOperationKind::BumpSequence => "bump_sequence",
     }
 }
 
@@ -292,5 +408,17 @@ mod tests {
             .iter()
             .any(|line| line == "    local Ed25519 GSIGNER (weight 1)"));
         assert_eq!(lines.last().unwrap(), "Prepared tx: 0123456789abcdef");
+
+        let value = authorization_json(&snapshot);
+        assert_eq!(value["status"], "local_signing_ready");
+        assert_eq!(
+            value["accounts"][0]["uses"][0]["scope"]["operation"],
+            "payment"
+        );
+        assert_eq!(
+            value["accounts"][0]["signers"][0]["availability"],
+            "local_ed25519"
+        );
+        assert_eq!(value["transaction_hash"], "0123456789abcdef");
     }
 }
