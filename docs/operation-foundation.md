@@ -120,6 +120,8 @@ Store persistence is an implementation detail. `contract list --json` and other 
 Wallet operations should accept stable local names where the protocol type makes the intended identity unambiguous.
 
 For Soroban Contract Spec `Address` / `MuxedAddress` positions, Fresnica may resolve names from wallet, contact and saved-contract stores. Raw valid Stellar addresses always win and cannot be shadowed. Conflicting local names must fail as ambiguous rather than choosing silently.
+
+External protocol output may already contain a typed Soroban `ScVal`. Fresnica may accept that value as a bounded argument encoding, but encoded input is never an alternate ABI or authorization path: it must decode successfully, validate against the current Contract Spec parameter type, normalize into the same semantic review representation, and then use the same simulation/review/authorization/signing pipeline as ordinary textual/JSON arguments.
 Name resolution is presentation/convenience, not authorization. The resolved transaction still passes through normal simulation, Soroban authorization and signer selection.
 
 ## Plugin relationship
