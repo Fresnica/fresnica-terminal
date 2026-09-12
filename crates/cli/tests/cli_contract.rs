@@ -105,6 +105,22 @@ fn local_identity_commands_are_machine_readable() {
     assert_eq!(info["wallet"]["protection"], "none");
     assert!(info["fresnica_revision"].as_str().is_some());
 
+    let device_status = run(
+        &home,
+        &["wallet", "device-unlock", "status", "observer", "--json"],
+    );
+    assert!(
+        device_status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&device_status.stderr)
+    );
+    let device_status: serde_json::Value = serde_json::from_slice(&device_status.stdout).unwrap();
+    assert_eq!(device_status["kind"], "device_unlock_status");
+    assert_eq!(device_status["wallet"]["name"], "observer");
+    assert_eq!(device_status["applicable"], false);
+    assert_eq!(device_status["state"], "not_applicable");
+    assert_eq!(device_status["requires_reauthorization"], false);
+
     let import_second = run(
         &home,
         &[

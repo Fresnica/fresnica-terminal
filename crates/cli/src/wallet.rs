@@ -19,7 +19,8 @@ const WALLET_HELP: &str = r#"Wallet commands:
   fresnica wallet attach-secret NAME
   fresnica wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]
   fresnica wallet detach-signer NAME
-  fresnica wallet device-unlock enable|disable|status NAME
+  fresnica wallet device-unlock enable|disable NAME
+  fresnica wallet device-unlock status NAME [--json]
   fresnica wallet testnet-fund [--wallet NAME]
   fresnica wallet reveal [NAME]
   fresnica wallet backup NAME PATH [--force]
