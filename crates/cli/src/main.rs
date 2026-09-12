@@ -18,6 +18,7 @@ mod plugin;
 mod plugin_host;
 mod read_commands;
 mod send;
+mod token;
 mod transaction_flow;
 mod trust;
 mod wallet;
@@ -44,6 +45,7 @@ Commands:
   trust      Manage issued-asset trustlines
   dex        Read and trade on the Stellar DEX
   contract   Use Soroban contracts
+  token      Inspect SEP-41 tokens and Stellar Asset Contracts
   wallet     Manage wallets and signing material
   contact    Manage contacts
   plugin     Manage CLI plugins
@@ -130,7 +132,7 @@ fn run(global: GlobalOptions) -> Result<(), String> {
         }
         "plugin" => plugin::command_plugin(&global.command[1..]),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
-        | "contract" | "__plugin-host" => run_network_command(&global),
+        | "contract" | "token" | "__plugin-host" => run_network_command(&global),
         other => match plugin::dispatch(&global.command, &plugin_context)? {
             Some(exit_code) => process::exit(exit_code),
             None => Err(format!("unknown command: {other}\n\n{HELP}")),
@@ -174,6 +176,7 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
         "trust" => trust::command_trust(&client, &global.command[1..]),
         "dex" => dex::command_dex(&client, &global.command[1..]),
         "contract" => contract::command_contract(&client, &global.command[1..]),
+        "token" => token::command_token(&client, &global.command[1..]),
         "__plugin-host" => plugin_host::command(&client, &global.network, &global.command[1..]),
         _ => unreachable!("network command was classified before dispatch"),
     }
@@ -316,6 +319,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("trust") => "CLI command: trust",
         Some("dex") => "CLI command: dex",
         Some("contract") => "CLI command: contract",
+        Some("token") => "CLI command: token",
         Some("anchor") => "CLI command: anchor",
         Some("wallet") => "CLI command: wallet",
         Some("plugin") => "CLI command: plugin",

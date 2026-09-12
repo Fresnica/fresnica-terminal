@@ -720,7 +720,7 @@ fn metadata_json(metadata: &[ContractMetadataEntry]) -> Vec<Value> {
         .collect()
 }
 
-fn render_capability_evidence(capabilities: &ContractCapabilities) {
+pub(crate) fn render_capability_evidence(capabilities: &ContractCapabilities) {
     let sep41 = &capabilities.sep41;
     if !sep41.native_sac && !sep41.sep47_declared && !sep41.current_interface_compatible {
         return;
@@ -744,7 +744,7 @@ fn render_capability_evidence(capabilities: &ContractCapabilities) {
     );
 }
 
-fn capabilities_json(capabilities: &ContractCapabilities) -> Value {
+pub(crate) fn capabilities_json(capabilities: &ContractCapabilities) -> Value {
     json!({
         "sep41": {
             "interface_version": SEP41_INTERFACE_VERSION,
@@ -778,7 +778,7 @@ fn argument_json(argument: &fresnica_client::ContractArgumentReview) -> Value {
     })
 }
 
-fn interface_json(interface: &ContractInterface) -> Value {
+pub(crate) fn interface_json(interface: &ContractInterface) -> Value {
     json!({
         "contract_id": interface.contract_id.as_str(),
         "executable": executable_json(&interface.executable),
