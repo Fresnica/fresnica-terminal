@@ -3,8 +3,10 @@ use std::io::{self, Write};
 use fresnica_client::{
     AuthorizationScope, AuthorizationThreshold, ClassicOperationKind,
     ExternalEd25519SigningProvider, FresnicaClient, LedgerAuthorizationSnapshot,
-    LedgerSignerAvailability, LedgerSignerKind,
+    LedgerSignerAvailability, LedgerSignerKind, SystemAuthUnlockProvider,
+    LOCAL_SOFTWARE_PASSPHRASE_REQUIRED,
 };
+use zeroize::Zeroizing;
 
 pub(crate) use fresnica_client::{network_passphrase, parse_transaction_xdr};
 
@@ -112,25 +114,70 @@ fn operation_kind_label(kind: ClassicOperationKind) -> &'static str {
     }
 }
 
-const LOCAL_PASSPHRASE_REQUIRED: &str =
-    "Fresnica passphrase is required for selected local software signers";
+pub fn with_software_signer_authorization<T>(
+    client: &FresnicaClient,
+    mut authorize: impl FnMut(Option<&str>, &[SystemAuthUnlockProvider]) -> Result<T, String>,
+) -> Result<T, String> {
+    let device_unlock_providers = crate::device_unlock::one_shot_providers(client)?;
+    crate::diagnostics::stage("signing: resolve authorization providers");
+    if !device_unlock_providers.is_empty() {
+        crate::diagnostics::stage("signing: device unlock provider available");
+    }
+    submit_with_authorization_sources(
+        &device_unlock_providers,
+        &[],
+        || crate::prompt_hidden("Fresnica passphrase: "),
+        |passphrase, device_unlock, _| authorize(passphrase, device_unlock),
+    )
+}
 
 pub fn submit_with_classic_signers<T>(
     client: &FresnicaClient,
-    mut submit: impl FnMut(Option<&str>, &[ExternalEd25519SigningProvider]) -> Result<T, String>,
+    submit: impl FnMut(
+        Option<&str>,
+        &[SystemAuthUnlockProvider],
+        &[ExternalEd25519SigningProvider],
+    ) -> Result<T, String>,
 ) -> Result<T, String> {
-    let providers = crate::ledger::external_signing_providers(client)?;
-    match submit(None, &providers) {
-        Err(error) if error == LOCAL_PASSPHRASE_REQUIRED => {
-            let passcode = crate::prompt_hidden("Fresnica passphrase: ")?;
-            submit(Some(passcode.as_str()), &providers)
+    let external_providers = crate::ledger::external_signing_providers(client)?;
+    let device_unlock_providers = crate::device_unlock::one_shot_providers(client)?;
+    submit_with_authorization_sources(
+        &device_unlock_providers,
+        &external_providers,
+        || crate::prompt_hidden("Fresnica passphrase: "),
+        submit,
+    )
+}
+
+fn submit_with_authorization_sources<T>(
+    device_unlock_providers: &[SystemAuthUnlockProvider],
+    external_providers: &[ExternalEd25519SigningProvider],
+    mut prompt_passphrase: impl FnMut() -> Result<Zeroizing<String>, String>,
+    mut submit: impl FnMut(
+        Option<&str>,
+        &[SystemAuthUnlockProvider],
+        &[ExternalEd25519SigningProvider],
+    ) -> Result<T, String>,
+) -> Result<T, String> {
+    match submit(None, device_unlock_providers, external_providers) {
+        Err(error) if error == LOCAL_SOFTWARE_PASSPHRASE_REQUIRED => {
+            let passphrase = prompt_passphrase()?;
+            // A fresh passphrase is the higher-authority fallback. Do not also
+            // use Device Unlock for other selected software signers.
+            submit(Some(passphrase.as_str()), &[], external_providers).map_err(device_unlock_error)
         }
-        result => result,
+        result => result.map_err(device_unlock_error),
     }
 }
 
+fn device_unlock_error(error: String) -> String {
+    error
+        .replace("System authentication", "Device unlock")
+        .replace("system-auth", "device-unlock")
+}
+
 pub fn confirm_submission() -> Result<bool, String> {
-    print!("Submit this transaction? [y/N] ");
+    print!("Sign and submit this transaction? [y/N] ");
     io::stdout()
         .flush()
         .map_err(|error| format!("unable to write prompt: {error}"))?;
@@ -148,9 +195,57 @@ pub fn confirm_submission() -> Result<bool, String> {
 mod tests {
     use super::*;
     use fresnica_client::{
-        AccountAuthorizationSnapshot, AuthorizationUse, LedgerSignerCondition,
+        AccountAuthorizationSnapshot, AuthorizationUse, LedgerSignerCondition, SystemAuthRelease,
         WeightedLedgerSignerSnapshot,
     };
+
+    const SIGNER: &str = "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR";
+
+    #[test]
+    fn passphrase_fallback_drops_device_unlock_providers() {
+        let system =
+            SystemAuthUnlockProvider::new(SIGNER, |_| SystemAuthRelease::Cancelled).unwrap();
+        let mut attempts = 0usize;
+        let result = submit_with_authorization_sources(
+            &[system],
+            &[],
+            || Ok(Zeroizing::new("correct horse battery staple".to_owned())),
+            |passphrase, device_unlock, external| {
+                attempts += 1;
+                assert!(external.is_empty());
+                if attempts == 1 {
+                    assert!(passphrase.is_none());
+                    assert_eq!(device_unlock.len(), 1);
+                    Err(LOCAL_SOFTWARE_PASSPHRASE_REQUIRED.to_owned())
+                } else {
+                    assert_eq!(passphrase, Some("correct horse battery staple"));
+                    assert!(device_unlock.is_empty());
+                    Ok("submitted")
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(result, "submitted");
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn device_unlock_failure_does_not_silently_downgrade_to_passphrase() {
+        let system =
+            SystemAuthUnlockProvider::new(SIGNER, |_| SystemAuthRelease::Cancelled).unwrap();
+        let error = submit_with_authorization_sources::<()>(
+            &[system],
+            &[],
+            || panic!("provider failure must not prompt for passphrase"),
+            |passphrase, device_unlock, _| {
+                assert!(passphrase.is_none());
+                assert_eq!(device_unlock.len(), 1);
+                Err("System authentication for signer failed: cancelled".to_owned())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error, "Device unlock for signer failed: cancelled");
+    }
 
     #[test]
     fn authorization_review_explains_transaction_specific_local_capacity() {
