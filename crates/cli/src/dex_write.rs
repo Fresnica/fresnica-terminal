@@ -1,7 +1,9 @@
 use fresnica_client::{FresnicaClient, OfferRequest, OfferReview, OfferReviewDetails, OfferSide};
+use serde_json::{json, Value};
 
 use crate::transaction_flow::{
-    confirm_submission, render_authorization_review, submit_with_classic_signers,
+    authorization_json, confirm_submission, render_authorization_review,
+    submit_with_classic_signers,
 };
 
 pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Result<(), String> {
@@ -10,18 +12,35 @@ pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Resul
     crate::diagnostics::stage("DEX write: prepare reviewed transaction");
     let prepared = client.prepare_offer(&request.service)?;
     crate::diagnostics::stage("DEX write: review prepared transaction");
-    render_offer_review(&prepared.review);
-    if !request.yes && !confirm_submission()? {
-        println!("Transaction cancelled.");
-        return Ok(());
+    if !request.json {
+        render_offer_review(&prepared.review);
+        if !request.yes && !confirm_submission()? {
+            println!("Transaction cancelled.");
+            return Ok(());
+        }
     }
     crate::diagnostics::stage("DEX write: sign and submit");
     let submission = submit_with_classic_signers(client, |passcode, system_auth, providers| {
         client.submit_offer_with_providers(&prepared, passcode, system_auth, providers)
     })?;
-    println!("Submitted: {}", submission.hash);
-    if let Some(ledger) = submission.ledger {
-        println!("Ledger:    {ledger}");
+    if request.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "dex_offer_submission",
+                "review": offer_review_json(&prepared.review),
+                "submission": {
+                    "hash": submission.hash.as_str(),
+                    "ledger": submission.ledger,
+                },
+            }))
+            .map_err(|error| format!("unable to encode DEX offer JSON: {error}"))?
+        );
+    } else {
+        println!("Submitted: {}", submission.hash);
+        if let Some(ledger) = submission.ledger {
+            println!("Ledger:    {ledger}");
+        }
     }
     Ok(())
 }
@@ -30,6 +49,7 @@ pub fn command_dex_write(client: &FresnicaClient, arguments: &[String]) -> Resul
 struct WriteRequest {
     service: OfferRequest,
     yes: bool,
+    json: bool,
 }
 
 impl WriteRequest {
@@ -47,7 +67,8 @@ impl WriteRequest {
                 } else {
                     OfferSide::Sell
                 };
-                let (wallet, allow_trustline, yes) = parse_options(&arguments[5..], true)?;
+                let (wallet, allow_trustline, yes, json) = parse_options(&arguments[5..], true)?;
+                reject_machine_without_approval(json, yes)?;
                 Ok(Self {
                     service: OfferRequest::Create {
                         side,
@@ -59,6 +80,7 @@ impl WriteRequest {
                         allow_trustline,
                     },
                     yes,
+                    json,
                 })
             }
             "update" => {
@@ -66,7 +88,8 @@ impl WriteRequest {
                     return Err(usage().to_owned());
                 }
                 let offer_id = parse_offer_id(&arguments[1])?;
-                let (wallet, allow_trustline, yes) = parse_options(&arguments[6..], false)?;
+                let (wallet, allow_trustline, yes, json) = parse_options(&arguments[6..], false)?;
+                reject_machine_without_approval(json, yes)?;
                 if allow_trustline {
                     return Err(usage().to_owned());
                 }
@@ -80,6 +103,7 @@ impl WriteRequest {
                         wallet,
                     },
                     yes,
+                    json,
                 })
             }
             "cancel" => {
@@ -87,13 +111,15 @@ impl WriteRequest {
                     return Err(usage().to_owned());
                 }
                 let offer_id = parse_offer_id(&arguments[1])?;
-                let (wallet, allow_trustline, yes) = parse_options(&arguments[2..], false)?;
+                let (wallet, allow_trustline, yes, json) = parse_options(&arguments[2..], false)?;
+                reject_machine_without_approval(json, yes)?;
                 if allow_trustline {
                     return Err(usage().to_owned());
                 }
                 Ok(Self {
                     service: OfferRequest::Cancel { wallet, offer_id },
                     yes,
+                    json,
                 })
             }
             _ => Err(usage().to_owned()),
@@ -104,10 +130,11 @@ impl WriteRequest {
 fn parse_options(
     arguments: &[String],
     allow_trustline_option: bool,
-) -> Result<(Option<String>, bool, bool), String> {
+) -> Result<(Option<String>, bool, bool, bool), String> {
     let mut wallet = None;
     let mut allow_trustline = false;
     let mut yes = false;
+    let mut json = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -129,10 +156,25 @@ fn parse_options(
                 yes = true;
                 index += 1;
             }
+            "--json" => {
+                json = true;
+                index += 1;
+            }
             _ => return Err(usage().to_owned()),
         }
     }
-    Ok((wallet, allow_trustline, yes))
+    Ok((wallet, allow_trustline, yes, json))
+}
+
+fn reject_machine_without_approval(json: bool, yes: bool) -> Result<(), String> {
+    if json && !yes {
+        Err(
+            "dex write --json requires -y so stdout remains one machine-readable JSON document"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_offer_id(value: &str) -> Result<i64, String> {
@@ -141,6 +183,56 @@ fn parse_offer_id(value: &str) -> Result<i64, String> {
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| "offer id must be a positive integer".to_owned())
+}
+
+fn offer_review_json(review: &OfferReview) -> Value {
+    let details = match &review.details {
+        OfferReviewDetails::Trade {
+            side,
+            base,
+            counter,
+            amount,
+            price,
+            requested_price,
+            price_n,
+            price_d,
+            total,
+            trustline_asset,
+            trustline_limit,
+        } => json!({
+            "kind": "trade",
+            "side": side.label().to_ascii_lowercase(),
+            "base": base.as_str(),
+            "counter": counter.as_str(),
+            "amount": amount.as_str(),
+            "price": price.as_str(),
+            "requested_price": requested_price.as_deref(),
+            "price_n": price_n,
+            "price_d": price_d,
+            "total": total.as_str(),
+            "trustline_asset": trustline_asset.as_deref(),
+            "trustline_limit": trustline_limit.as_deref(),
+        }),
+        OfferReviewDetails::Cancel { selling, buying } => json!({
+            "kind": "cancel",
+            "selling": selling.as_str(),
+            "buying": buying.as_str(),
+        }),
+    };
+    json!({
+        "action": review.action.label(),
+        "operation": review.operation.label(),
+        "wallet": {
+            "name": review.wallet_name.as_str(),
+            "address": review.source.as_str(),
+        },
+        "offer_id": review.offer_id,
+        "details": details,
+        "fee_xlm": review.fee_xlm.as_str(),
+        "network": review.network.as_str(),
+        "transaction_timeout_seconds": review.transaction_timeout_seconds,
+        "authorization": authorization_json(&review.ledger_authorization),
+    })
 }
 
 fn render_offer_review(review: &OfferReview) {
@@ -197,11 +289,13 @@ fn render_offer_review(review: &OfferReview) {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  fresnica dex buy BASE COUNTER AMOUNT PRICE [--wallet NAME] [--allow-trustline] [-y]\n  fresnica dex sell BASE COUNTER AMOUNT PRICE [--wallet NAME] [--allow-trustline] [-y]\n  fresnica dex update OFFER_ID BASE COUNTER AMOUNT PRICE [--wallet NAME] [-y]\n  fresnica dex cancel OFFER_ID [--wallet NAME] [-y]"
+    "usage:\n  fresnica dex buy BASE COUNTER AMOUNT PRICE [--wallet NAME] [--allow-trustline] [-y] [--json]\n  fresnica dex sell BASE COUNTER AMOUNT PRICE [--wallet NAME] [--allow-trustline] [-y] [--json]\n  fresnica dex update OFFER_ID BASE COUNTER AMOUNT PRICE [--wallet NAME] [-y] [--json]\n  fresnica dex cancel OFFER_ID [--wallet NAME] [-y] [--json]"
 }
 
 #[cfg(test)]
 mod tests {
+    use fresnica_client::{LedgerAuthorizationSnapshot, OfferAction, OfferOperation};
+
     use super::*;
 
     const ISSUER: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
@@ -245,5 +339,61 @@ mod tests {
         ])
         .is_err());
         assert!(WriteRequest::parse(&["cancel".to_owned(), "-1".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn machine_dex_write_requires_explicit_noninteractive_approval() {
+        let pair = format!("USD:{ISSUER}");
+        let without_yes = ["buy", "XLM", pair.as_str(), "1", "2", "--json"].map(str::to_owned);
+        assert!(WriteRequest::parse(&without_yes)
+            .unwrap_err()
+            .contains("requires -y"));
+
+        let with_yes = ["buy", "XLM", pair.as_str(), "1", "2", "-y", "--json"].map(str::to_owned);
+        let request = WriteRequest::parse(&with_yes).unwrap();
+        assert!(request.yes);
+        assert!(request.json);
+    }
+
+    #[test]
+    fn offer_review_json_preserves_semantic_review() {
+        let review = OfferReview {
+            action: OfferAction::Create,
+            operation: OfferOperation::ManageBuyOffer,
+            wallet_name: "alpha".to_owned(),
+            source: "GSOURCE".to_owned(),
+            offer_id: None,
+            fee_xlm: "0.00001".to_owned(),
+            network: "testnet".to_owned(),
+            transaction_timeout_seconds: 180,
+            details: OfferReviewDetails::Trade {
+                side: OfferSide::Buy,
+                base: "XLM".to_owned(),
+                counter: format!("USD:{ISSUER}"),
+                amount: "10".to_owned(),
+                price: "2.5".to_owned(),
+                requested_price: Some("2.5".to_owned()),
+                price_n: 5,
+                price_d: 2,
+                total: "25".to_owned(),
+                trustline_asset: Some(format!("USD:{ISSUER}")),
+                trustline_limit: Some("100".to_owned()),
+            },
+            ledger_authorization: LedgerAuthorizationSnapshot {
+                transaction_hash: "abc123".to_owned(),
+                accounts: Vec::new(),
+                extra_signers: Vec::new(),
+                satisfied: false,
+                locally_satisfiable: true,
+            },
+        };
+        let value = offer_review_json(&review);
+        assert_eq!(value["action"], "create");
+        assert_eq!(value["operation"], "ManageBuyOffer");
+        assert_eq!(value["details"]["side"], "buy");
+        assert_eq!(value["details"]["price_n"], 5);
+        assert_eq!(value["details"]["trustline_limit"], "100");
+        assert_eq!(value["authorization"]["status"], "local_signing_ready");
+        assert_eq!(value["authorization"]["transaction_hash"], "abc123");
     }
 }

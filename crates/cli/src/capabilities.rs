@@ -35,6 +35,10 @@ fn operations() -> Vec<Value> {
         operation_with_confirmation("trustline.limit", "fresnica trust limit CODE:GISSUER LIMIT [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
         operation_with_confirmation("trustline.remove", "fresnica trust remove CODE:GISSUER [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
         operation("dex.orderbook", "fresnica dex orderbook SELLING BUYING --json", "read", &["network", "horizon"]),
+        operation_with_confirmation("dex.offer.buy", "fresnica dex buy BASE COUNTER AMOUNT PRICE [--wallet NAME] [--allow-trustline] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
+        operation_with_confirmation("dex.offer.sell", "fresnica dex sell BASE COUNTER AMOUNT PRICE [--wallet NAME] [--allow-trustline] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
+        operation_with_confirmation("dex.offer.update", "fresnica dex update OFFER_ID BASE COUNTER AMOUNT PRICE [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
+        operation_with_confirmation("dex.offer.cancel", "fresnica dex cancel OFFER_ID [--wallet NAME] -y --json", "write", &["network", "horizon", "wallet"], "-y"),
         operation("dex.offers", "fresnica dex offers [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
         operation("dex.trades", "fresnica dex trades BASE COUNTER [--limit N] --json", "read", &["network", "horizon"]),
         operation("dex.fills", "fresnica dex fills [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
@@ -92,6 +96,10 @@ mod tests {
         assert!(ids.contains("trustline.add"));
         assert!(ids.contains("trustline.limit"));
         assert!(ids.contains("trustline.remove"));
+        assert!(ids.contains("dex.offer.buy"));
+        assert!(ids.contains("dex.offer.sell"));
+        assert!(ids.contains("dex.offer.update"));
+        assert!(ids.contains("dex.offer.cancel"));
         assert!(ids.contains("contract.invoke"));
         assert!(ids.contains("token.transfer"));
     }
