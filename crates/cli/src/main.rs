@@ -1,5 +1,6 @@
 mod anchor_auth;
 mod asset_discovery;
+mod capabilities;
 mod contacts;
 mod contract;
 mod contract_store;
@@ -39,6 +40,7 @@ Commands:
   info       Show local wallet information
   account    Show current ledger account state
   balance    Show account balances and liabilities
+  capabilities  Show machine-readable operation inventory
   history    Show recent account operations
   asset      Discover issued assets
   send       Send a payment
@@ -118,6 +120,9 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     }
 
     diagnostics::stage(command_stage(&global.command));
+    if global.command[0] == "capabilities" {
+        return capabilities::command(&global.command[1..]);
+    }
     let plugin_context = plugin::NativeHostContext {
         home: &global.home,
         network: &global.network,
@@ -259,8 +264,10 @@ impl GlobalOptions {
                 _ => break,
             }
         }
+        let command = arguments[index..].to_vec();
         let home = match home {
             Some(home) => home,
+            None if command.first().is_some_and(|value| value == "capabilities") => PathBuf::new(),
             None => default_home()?,
         };
         Ok(Self {
@@ -270,7 +277,7 @@ impl GlobalOptions {
             rpc_url,
             tx_timeout_seconds,
             verbosity,
-            command: arguments[index..].to_vec(),
+            command,
         })
     }
 }

@@ -38,6 +38,32 @@ fn run_with_horizon_url(home: &PathBuf, arguments: &[&str], horizon_url: &str) -
 }
 
 #[test]
+fn capabilities_are_machine_readable_without_home_or_network_configuration() {
+    let output = Command::new(env!("CARGO_BIN_EXE_fresnica"))
+        .args(["--network", "testnet", "capabilities", "--json"])
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env_remove("FRESNICA_HOME")
+        .env("FRESNICA_HORIZON_URL", "not-a-url")
+        .env("FRESNICA_RPC_URL", "not-a-url")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "capabilities must not initialize wallet or network state: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema"], "fresnica-capabilities-v1");
+    assert!(value["fresnica_revision"].as_str().is_some());
+    let operations = value["operations"].as_array().unwrap();
+    assert!(operations
+        .iter()
+        .any(|item| item["id"] == "contract.invoke"));
+    assert!(operations.iter().any(|item| item["id"] == "token.transfer"));
+}
+
+#[test]
 fn info_prints_sdk_core_compatibility_line_once() {
     let home = temp_home();
     let import = run(

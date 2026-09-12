@@ -1,0 +1,90 @@
+use serde_json::{json, Value};
+
+const SCHEMA: &str = "fresnica-capabilities-v1";
+const USAGE: &str = "usage: fresnica capabilities --json";
+
+pub fn command(arguments: &[String]) -> Result<(), String> {
+    if arguments != ["--json"] {
+        return Err(USAGE.to_owned());
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&inventory())
+            .map_err(|error| format!("unable to encode capability inventory: {error}"))?
+    );
+    Ok(())
+}
+
+fn inventory() -> Value {
+    json!({
+        "schema": SCHEMA,
+        "cli_version": env!("CARGO_PKG_VERSION"),
+        "fresnica_revision": crate::diagnostics::fresnica_revision(),
+        "operations": operations(),
+    })
+}
+
+fn operations() -> Vec<Value> {
+    vec![
+        operation("account.inspect", "fresnica account [--wallet NAME] --json", "read", &["network", "horizon", "wallet"]),
+        operation("balance.list", "fresnica balance [--wallet NAME] --json", "read", &["network", "horizon", "wallet"]),
+        operation("history.list", "fresnica history [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
+        operation("asset.discover", "fresnica asset discover [--limit N] [--cached] --json", "read", &["network", "horizon"]),
+        operation("dex.orderbook", "fresnica dex orderbook SELLING BUYING --json", "read", &["network", "horizon"]),
+        operation("dex.offers", "fresnica dex offers [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
+        operation("dex.trades", "fresnica dex trades BASE COUNTER [--limit N] --json", "read", &["network", "horizon"]),
+        operation("dex.fills", "fresnica dex fills [--wallet NAME] [--limit N] --json", "read", &["network", "horizon", "wallet"]),
+        operation("dex.candles", "fresnica dex candles BASE COUNTER [--resolution RESOLUTION] [--start MS] [--end MS] [--offset MS] [--limit N] --json", "read", &["network", "horizon"]),
+        operation("contract.store.list", "fresnica --network NETWORK contract list --json", "local_read", &["network"]),
+        operation("contract.store.add", "fresnica --network NETWORK contract add NAME C... --json", "local_write", &["network"]),
+        operation("contract.store.remove", "fresnica --network NETWORK contract remove NAME --json", "local_write", &["network"]),
+        operation("contract.inspect", "fresnica --network NETWORK contract TARGET --json", "read", &["network", "rpc"]),
+        operation_with_confirmation("contract.invoke", "fresnica --network NETWORK contract TARGET [--wallet NAME] [-y] --json FUNCTION [--NAME VALUE]...", "read_write", &["network", "rpc"], "-y when simulation classifies the operation as a write"),
+        operation("token.inspect", "fresnica --network NETWORK token TOKEN --json", "read", &["network", "rpc"]),
+        operation("token.balance", "fresnica --network NETWORK token TOKEN balance OWNER --json", "read", &["network", "rpc"]),
+        operation_with_confirmation("token.transfer", "fresnica --network NETWORK token TOKEN transfer AMOUNT TO [--wallet NAME] -y --json", "write", &["network", "rpc", "wallet"], "-y"),
+    ]
+}
+
+fn operation(id: &str, usage: &str, effect: &str, dependencies: &[&str]) -> Value {
+    json!({
+        "id": id,
+        "usage": usage,
+        "effect": effect,
+        "machine_output": "json",
+        "dependencies": dependencies,
+    })
+}
+
+fn operation_with_confirmation(
+    id: &str,
+    usage: &str,
+    effect: &str,
+    dependencies: &[&str],
+    confirmation: &str,
+) -> Value {
+    let mut value = operation(id, usage, effect, dependencies);
+    value["noninteractive_confirmation"] = Value::String(confirmation.to_owned());
+    value
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn inventory_is_versioned_and_operation_ids_are_unique() {
+        let inventory = inventory();
+        assert_eq!(inventory["schema"], SCHEMA);
+        let operations = inventory["operations"].as_array().unwrap();
+        let ids = operations
+            .iter()
+            .map(|operation| operation["id"].as_str().unwrap())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), operations.len());
+        assert!(ids.contains("contract.invoke"));
+        assert!(ids.contains("token.transfer"));
+    }
+}
