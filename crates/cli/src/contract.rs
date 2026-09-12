@@ -433,7 +433,7 @@ fn verify_contract_observation(
     )
 }
 
-fn add_local_address_names(
+pub(crate) fn add_local_address_names(
     client: &FresnicaClient,
     request: &mut ContractInvokeRequest,
 ) -> Result<(), String> {
