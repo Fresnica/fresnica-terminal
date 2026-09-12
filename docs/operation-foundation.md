@@ -105,7 +105,7 @@ external         information supplied by a registry/plugin/domain when introduce
 derived          conclusions computed from identified source facts
 ```
 
-v0.5 must add only fields backed by real evidence. The first observed facts are the deployed contract identity and executable/Wasm identity already available while loading the Contract Spec. Raw `contractmetav0` key/value entries embedded in that Wasm may also be retained as self-declared observed facts with explicit Wasm provenance. They must not be promoted to trusted protocol generation, home domain, application identity or similar derived claims until Fresnica has a concrete verification source for that stronger conclusion.
+v0.5 must add only fields backed by real evidence. The first observed facts are the deployed contract identity and executable/Wasm identity already available while loading the Contract Spec. Raw `contractmetav0` key/value entries embedded in that Wasm may also be retained as self-declared observed facts with explicit Wasm provenance. They must not be promoted to trusted protocol generation, home domain, application identity or similar derived claims until Fresnica has a concrete verification source for that stronger conclusion. Derived capability snapshots must record the standard/version they evaluated and keep distinct evidence distinct; for SEP-41, native SAC identity, SEP-47 self-declaration and Contract Spec interface compatibility are separate facts rather than one trusted-token boolean.
 
 A stored friendly name must never replace exact chain identity. Human output may prefer the name; review and machine output must retain the resolved `C...` contract address.
 

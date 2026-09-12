@@ -1,13 +1,15 @@
 use fresnica_client::{
-    ContactStore, ContractArgumentInput, ContractExecutableObservation, ContractFunction,
-    ContractInterface, ContractInvokePreparation, ContractInvokeRequest, ContractInvokeReview,
-    ContractMetadataEntry, ContractReadResult, FresnicaClient, TransactionSubmission,
-    WalletStorage,
+    ContactStore, ContractArgumentInput, ContractCapabilities, ContractExecutableObservation,
+    ContractFunction, ContractInterface, ContractInvokePreparation, ContractInvokeRequest,
+    ContractInvokeReview, ContractMetadataEntry, ContractReadResult, FresnicaClient,
+    TransactionSubmission, WalletStorage, SEP41_INTERFACE_VERSION,
 };
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
 
-use crate::contract_store::{looks_like_contract_id, ContractStore, SavedContract};
+use crate::contract_store::{
+    looks_like_contract_id, ContractDerivedCapabilities, ContractStore, SavedContract,
+};
 use crate::transaction_flow::{
     confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
 };
@@ -98,6 +100,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
             &result.contract_id,
             &result.executable,
             &result.metadata,
+            &result.capabilities,
         )?;
         crate::diagnostics::stage("contract: return read-only simulation");
         if options.json {
@@ -113,6 +116,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         &prepared.review.contract_id,
         &prepared.review.executable,
         &prepared.review.metadata,
+        &prepared.review.capabilities,
     )?;
 
     if options.json && !options.yes {
@@ -377,6 +381,7 @@ fn saved_contract_json(contract: &SavedContract) -> Value {
                 "key": entry.key.as_str(),
                 "value": entry.value.as_str(),
             })).collect::<Vec<_>>(),
+            "derived": observation.derived.as_ref().map(stored_capabilities_json),
         })
     });
     json!({
@@ -409,6 +414,7 @@ fn record_contract_inspection(
         &interface.contract_id,
         &interface.executable,
         &interface.metadata,
+        &interface.capabilities,
     )
 }
 
@@ -417,11 +423,13 @@ fn verify_contract_observation(
     contract_id: &str,
     observation: &ContractExecutableObservation,
     metadata: &[ContractMetadataEntry],
+    capabilities: &ContractCapabilities,
 ) -> Result<(), String> {
     ContractStore::for_home(client.storage().home(), client.network()).verify_observation(
         contract_id,
         observation,
         metadata,
+        capabilities,
     )
 }
 
@@ -514,6 +522,7 @@ fn render_interface_help(interface: &ContractInterface, requested_target: &str) 
     render_contract_identity(requested_target, &interface.contract_id);
     render_executable(&interface.executable);
     render_wasm_metadata(&interface.metadata);
+    render_capability_evidence(&interface.capabilities);
     println!("Functions:");
     if interface.functions.is_empty() {
         println!("  (none)");
@@ -711,6 +720,52 @@ fn metadata_json(metadata: &[ContractMetadataEntry]) -> Vec<Value> {
         .collect()
 }
 
+fn render_capability_evidence(capabilities: &ContractCapabilities) {
+    let sep41 = &capabilities.sep41;
+    if !sep41.native_sac && !sep41.sep47_declared && !sep41.current_interface_compatible {
+        return;
+    }
+    let mut evidence = Vec::new();
+    if sep41.native_sac {
+        evidence.push("native SAC");
+    }
+    if sep41.sep47_declared {
+        evidence.push("SEP-47 declared");
+    }
+    evidence.push(if sep41.current_interface_compatible {
+        "current interface compatible"
+    } else {
+        "current interface mismatch"
+    });
+    println!(
+        "SEP-41 {} evidence: {}",
+        SEP41_INTERFACE_VERSION,
+        evidence.join(", ")
+    );
+}
+
+fn capabilities_json(capabilities: &ContractCapabilities) -> Value {
+    json!({
+        "sep41": {
+            "interface_version": SEP41_INTERFACE_VERSION,
+            "native_sac": capabilities.sep41.native_sac,
+            "sep47_declared": capabilities.sep41.sep47_declared,
+            "interface_compatible": capabilities.sep41.current_interface_compatible,
+        }
+    })
+}
+
+fn stored_capabilities_json(capabilities: &ContractDerivedCapabilities) -> Value {
+    json!({
+        "sep41": {
+            "interface_version": capabilities.sep41.interface_version.as_str(),
+            "native_sac": capabilities.sep41.native_sac,
+            "sep47_declared": capabilities.sep41.sep47_declared,
+            "interface_compatible": capabilities.sep41.interface_compatible,
+        }
+    })
+}
+
 fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).expect("serde_json::Value serialization cannot fail")
 }
@@ -728,6 +783,7 @@ fn interface_json(interface: &ContractInterface) -> Value {
         "contract_id": interface.contract_id.as_str(),
         "executable": executable_json(&interface.executable),
         "wasm_meta": metadata_json(&interface.metadata),
+        "capabilities": capabilities_json(&interface.capabilities),
         "functions": interface.functions.iter().map(function_json).collect::<Vec<_>>(),
     })
 }
@@ -755,6 +811,7 @@ fn read_only_json(result: &ContractReadResult) -> Value {
         "contract_id": result.contract_id.as_str(),
         "executable": executable_json(&result.executable),
         "wasm_meta": metadata_json(&result.metadata),
+        "capabilities": capabilities_json(&result.capabilities),
         "function": result.function_name.as_str(),
         "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "result": result.output.clone(),
@@ -772,6 +829,7 @@ fn review_json(review: &ContractInvokeReview) -> Value {
         "contract_id": review.contract_id.as_str(),
         "executable": executable_json(&review.executable),
         "wasm_meta": metadata_json(&review.metadata),
+        "capabilities": capabilities_json(&review.capabilities),
         "function": review.function_name.as_str(),
         "arguments": review.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "authorizers": review.authorizers.as_slice(),
@@ -957,6 +1015,25 @@ mod tests {
         assert!(InvokeOptions::parse(&args)
             .unwrap_err()
             .contains("must follow `--`"));
+    }
+
+    #[test]
+    fn capabilities_json_preserves_sep41_evidence_and_version() {
+        let capabilities = ContractCapabilities {
+            sep41: fresnica_client::ContractSep41Evidence {
+                native_sac: false,
+                sep47_declared: true,
+                current_interface_compatible: true,
+            },
+        };
+        let encoded = capabilities_json(&capabilities);
+        assert_eq!(
+            encoded["sep41"]["interface_version"],
+            SEP41_INTERFACE_VERSION
+        );
+        assert_eq!(encoded["sep41"]["native_sac"], false);
+        assert_eq!(encoded["sep41"]["sep47_declared"], true);
+        assert_eq!(encoded["sep41"]["interface_compatible"], true);
     }
 
     #[test]

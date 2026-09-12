@@ -179,7 +179,15 @@ fn contract_store_commands_are_versioned_and_machine_readable() {
         "wasm_meta": [
             {"key": "sep", "value": "41"},
             {"key": "home_domain", "value": "example.org"}
-        ]
+        ],
+        "derived": {
+            "sep41": {
+                "interface_version": "0.5.1",
+                "native_sac": false,
+                "sep47_declared": true,
+                "interface_compatible": true
+            }
+        }
     });
     fs::write(
         home.join("contracts-testnet.json"),
@@ -203,6 +211,18 @@ fn contract_store_commands_are_versioned_and_machine_readable() {
     assert_eq!(
         listed["contracts"][0]["observed"]["wasm_meta"][1]["value"],
         "example.org"
+    );
+    assert_eq!(
+        listed["contracts"][0]["observed"]["derived"]["sep41"]["interface_version"],
+        "0.5.1"
+    );
+    assert_eq!(
+        listed["contracts"][0]["observed"]["derived"]["sep41"]["sep47_declared"],
+        true
+    );
+    assert_eq!(
+        listed["contracts"][0]["observed"]["derived"]["sep41"]["interface_compatible"],
+        true
     );
     assert_ne!(listed["schema"], stored["schema"]);
 

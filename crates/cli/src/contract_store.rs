@@ -3,7 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use fresnica_client::{ContractExecutableObservation, ContractMetadataEntry};
+use fresnica_client::{
+    ContractCapabilities, ContractExecutableObservation, ContractMetadataEntry,
+    SEP41_INTERFACE_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use stellar_strkey::Contract as StrkeyContract;
 
@@ -21,12 +24,27 @@ pub struct ContractWasmMetadata {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractSep41Derived {
+    pub interface_version: String,
+    pub native_sac: bool,
+    pub sep47_declared: bool,
+    pub interface_compatible: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractDerivedCapabilities {
+    pub sep41: ContractSep41Derived,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractObservation {
     pub executable: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wasm_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wasm_meta: Vec<ContractWasmMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<ContractDerivedCapabilities>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,8 +125,9 @@ impl ContractStore {
         contract_id: &str,
         observation: &ContractExecutableObservation,
         metadata: &[ContractMetadataEntry],
+        capabilities: &ContractCapabilities,
     ) -> Result<(), String> {
-        let observed = ContractObservation::from_chain(observation, metadata);
+        let observed = ContractObservation::from_chain(observation, metadata, capabilities);
         let mut contracts = self.load()?;
         let mut changed = false;
         for contract in contracts
@@ -130,8 +149,9 @@ impl ContractStore {
         contract_id: &str,
         observation: &ContractExecutableObservation,
         metadata: &[ContractMetadataEntry],
+        capabilities: &ContractCapabilities,
     ) -> Result<(), String> {
-        let observed = ContractObservation::from_chain(observation, metadata);
+        let observed = ContractObservation::from_chain(observation, metadata, capabilities);
         let mut contracts = self.load()?;
         let mut changed = false;
         for contract in contracts
@@ -144,7 +164,9 @@ impl ContractStore {
                     changed = true;
                 }
                 Some(previous) if previous.same_identity(&observed) => {
-                    if previous.wasm_meta != observed.wasm_meta {
+                    if previous.wasm_meta != observed.wasm_meta
+                        || previous.derived != observed.derived
+                    {
                         contract.observed = Some(observed.clone());
                         changed = true;
                     }
@@ -232,6 +254,7 @@ impl ContractObservation {
     fn from_chain(
         observation: &ContractExecutableObservation,
         metadata: &[ContractMetadataEntry],
+        capabilities: &ContractCapabilities,
     ) -> Self {
         Self {
             executable: observation.kind.as_str().to_owned(),
@@ -243,6 +266,14 @@ impl ContractObservation {
                     value: entry.value.clone(),
                 })
                 .collect(),
+            derived: Some(ContractDerivedCapabilities {
+                sep41: ContractSep41Derived {
+                    interface_version: SEP41_INTERFACE_VERSION.to_owned(),
+                    native_sac: capabilities.sep41.native_sac,
+                    sep47_declared: capabilities.sep41.sep47_declared,
+                    interface_compatible: capabilities.sep41.current_interface_compatible,
+                },
+            }),
         }
     }
 
@@ -345,10 +376,39 @@ fn normalize_observation(observed: &ContractObservation) -> Result<ContractObser
         }
         _ => {}
     }
+    let derived = observed
+        .derived
+        .as_ref()
+        .map(|derived| normalize_derived(derived, &executable))
+        .transpose()?;
     Ok(ContractObservation {
         executable,
         wasm_hash,
         wasm_meta: observed.wasm_meta.clone(),
+        derived,
+    })
+}
+
+fn normalize_derived(
+    derived: &ContractDerivedCapabilities,
+    executable: &str,
+) -> Result<ContractDerivedCapabilities, String> {
+    let interface_version = derived.sep41.interface_version.trim();
+    if interface_version.is_empty() {
+        return Err("Contract derived SEP-41 evidence is missing its interface version".to_owned());
+    }
+    if derived.sep41.native_sac != (executable == "stellar_asset") {
+        return Err(
+            "Contract derived SEP-41 native SAC evidence contradicts executable type".to_owned(),
+        );
+    }
+    Ok(ContractDerivedCapabilities {
+        sep41: ContractSep41Derived {
+            interface_version: interface_version.to_owned(),
+            native_sac: derived.sep41.native_sac,
+            sep47_declared: derived.sep41.sep47_declared,
+            interface_compatible: derived.sep41.interface_compatible,
+        },
     })
 }
 
@@ -379,7 +439,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use fresnica_client::{
-        ContractExecutableKind, ContractExecutableObservation, ContractMetadataEntry,
+        ContractCapabilities, ContractExecutableKind, ContractExecutableObservation,
+        ContractMetadataEntry, ContractSep41Evidence,
     };
     use serde_json::json;
 
@@ -412,6 +473,20 @@ mod tests {
         ContractMetadataEntry {
             key: key.to_owned(),
             value: value.to_owned(),
+        }
+    }
+
+    fn capabilities(
+        native_sac: bool,
+        sep47_declared: bool,
+        interface_compatible: bool,
+    ) -> ContractCapabilities {
+        ContractCapabilities {
+            sep41: ContractSep41Evidence {
+                native_sac,
+                sep47_declared,
+                current_interface_compatible: interface_compatible,
+            },
         }
     }
 
@@ -459,7 +534,12 @@ mod tests {
         assert!(loaded[0].observed.is_none());
 
         store
-            .record_observation(CONTRACT, &wasm(0xab), &[meta("binver", "2.3.7")])
+            .record_observation(
+                CONTRACT,
+                &wasm(0xab),
+                &[meta("binver", "2.3.7")],
+                &capabilities(false, false, false),
+            )
             .unwrap();
         let upgraded: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&store.path).unwrap()).unwrap();
@@ -493,6 +573,7 @@ mod tests {
 
         let observed = store.find("aqua").unwrap().unwrap().observed.unwrap();
         assert!(observed.wasm_meta.is_empty());
+        assert!(observed.derived.is_none());
         assert_eq!(observed.wasm_hash.unwrap(), "11".repeat(32));
     }
 
@@ -501,7 +582,12 @@ mod tests {
         let store = store("metadata", "testnet");
         store.add("Aqua", CONTRACT).unwrap();
         store
-            .verify_observation(CONTRACT, &wasm(0x11), &[])
+            .verify_observation(
+                CONTRACT,
+                &wasm(0x11),
+                &[],
+                &capabilities(false, false, false),
+            )
             .unwrap();
 
         store
@@ -509,12 +595,17 @@ mod tests {
                 CONTRACT,
                 &wasm(0x11),
                 &[meta("sep", "41"), meta("home_domain", "example.org")],
+                &capabilities(false, true, true),
             )
             .unwrap();
         let observed = store.find("aqua").unwrap().unwrap().observed.unwrap();
         assert_eq!(observed.wasm_meta.len(), 2);
         assert_eq!(observed.wasm_meta[0].key, "sep");
         assert_eq!(observed.wasm_meta[1].value, "example.org");
+        let sep41 = observed.derived.unwrap().sep41;
+        assert_eq!(sep41.interface_version, SEP41_INTERFACE_VERSION);
+        assert!(sep41.sep47_declared);
+        assert!(sep41.interface_compatible);
     }
 
     #[test]
@@ -523,7 +614,12 @@ mod tests {
         store.add("Aqua", CONTRACT).unwrap();
 
         store
-            .verify_observation(CONTRACT, &wasm(0x11), &[])
+            .verify_observation(
+                CONTRACT,
+                &wasm(0x11),
+                &[],
+                &capabilities(false, false, false),
+            )
             .unwrap();
         let before = store.find("aqua").unwrap().unwrap();
         let first_hash = "11".repeat(32);
@@ -533,7 +629,12 @@ mod tests {
         );
 
         let error = store
-            .verify_observation(CONTRACT, &wasm(0x22), &[meta("binver", "3.0.0")])
+            .verify_observation(
+                CONTRACT,
+                &wasm(0x22),
+                &[meta("binver", "3.0.0")],
+                &capabilities(false, false, false),
+            )
             .unwrap_err();
         assert!(error.contains("changed executable"));
         assert!(error.contains("Inspect the deployed contract interface"));
@@ -541,10 +642,20 @@ mod tests {
         assert_eq!(unchanged.observed, before.observed);
 
         store
-            .record_observation(CONTRACT, &wasm(0x22), &[meta("binver", "3.0.0")])
+            .record_observation(
+                CONTRACT,
+                &wasm(0x22),
+                &[meta("binver", "3.0.0")],
+                &capabilities(false, false, false),
+            )
             .unwrap();
         store
-            .verify_observation(CONTRACT, &wasm(0x22), &[meta("binver", "3.0.0")])
+            .verify_observation(
+                CONTRACT,
+                &wasm(0x22),
+                &[meta("binver", "3.0.0")],
+                &capabilities(false, false, false),
+            )
             .unwrap();
         assert_eq!(
             store
