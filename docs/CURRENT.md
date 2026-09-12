@@ -7,7 +7,7 @@ Last verified: 2026-09-12.
 ## Source of truth
 
 - Current Terminal `main`: `420c09c3005ac82dc211b2170e9da546de373800`, squash integration of Fresnica Terminal v0.4.0 through PR #38.
-- Active v0.5 branch: `feat/terminal-v0.5-contract-ux`; first product checkpoint `7a761a6ec221698536bc47a3c26f8dfb190c8f87` makes deployed Soroban contracts directly usable and adds network-scoped saved contract names while retaining the v0.4 invoke grammar.
+- Active v0.5 branch: `feat/terminal-v0.5-contract-ux`. First direct-contract checkpoint: `7a761a6ec221698536bc47a3c26f8dfb190c8f87`. Current Operation Foundation product checkpoint: `9f301032b820cfca6a5d01ecb2ae626a7ec3b278`.
 - Active v0.5 now pins shared Fresnica source `54ceeec7de63931ed89219d1a3587cb289262687` from `feat/rust-client-contract-address-names`. The upstream line is intentionally incremental: `3ab24e0` adds typed local-name resolution for Contract Spec Address inputs; `6ad7d56` exposes contract executable kind and resolved Wasm hash during interface inspection; `8f15175` carries the same observation through read-only and transaction invoke results; `54ceeec` rechecks executable identity after real write preparation and fails closed if code changed during preparation.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
@@ -31,6 +31,7 @@ Soroban is the first proof because Contract Spec, simulation and typed Address s
 Plugins remain ordinary lower-trust orchestration processes. They should become cheaper as the Operation Foundation improves; they must not become alternate wallet implementations.
 
 Current Terminal implementation upgrades the former flat network-scoped contract alias file in place to `fresnica-contract-store-v1`. Legacy arrays remain readable and migrate on first write. Saved contracts retain exact `C...` identity plus user name and only proven observations (`executable`, optional resolved `wasm_hash`). First inspect/invoke initializes the observation; later invocation fails closed before authorization/signing if the executable changes, while explicit inspect refreshes the reviewed observation. `contract add/list/remove --json` are machine-readable. Contract Address arguments may resolve referenced wallet, contact, or saved-contract names; raw Stellar addresses win and referenced cross-namespace conflicts fail closed.
+
 The Contract Store commands are local operations and remain usable even when Horizon/RPC configuration is invalid. Machine `contract list --json` uses `fresnica-contract-list-v1`, separate from the on-disk Store schema. Final local validation for this slice: rustfmt and `git diff --check` PASS; workspace Clippy `-D warnings` PASS; workspace tests PASS (Anchor 7, CLI 65, CLI integration 3, presentation 3, TUI 21); workspace release build PASS; repository boundary PASS at upstream `54ceeec...`. Upstream rust-client validation is 204/204 tests PASS.
 
 Active Device Unlock architecture checkpoint:
