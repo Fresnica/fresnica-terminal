@@ -2,7 +2,7 @@ use fresnica_client::{
     ContactStore, ContractArgumentInput, ContractCapabilities, ContractExecutableObservation,
     ContractFunction, ContractInterface, ContractInvokePreparation, ContractInvokeRequest,
     ContractInvokeReview, ContractMetadataEntry, ContractReadResult, FresnicaClient,
-    TransactionSubmission, WalletStorage, SEP41_INTERFACE_VERSION,
+    PreparedContractInvoke, TransactionSubmission, WalletStorage, SEP41_INTERFACE_VERSION,
 };
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
@@ -135,18 +135,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         }
     }
 
-    crate::diagnostics::stage("contract: authorize detached Soroban entries");
-    with_software_signer_authorization(client, |passphrase, system_auth| {
-        client.authorize_contract_invoke_with_system_auth(&mut prepared, passphrase, system_auth)
-    })?;
-
-    crate::diagnostics::stage("contract: sign transaction envelope");
-    submit_with_classic_signers(client, |passphrase, system_auth, external| {
-        client.sign_contract_invoke_with_providers(&mut prepared, passphrase, system_auth, external)
-    })?;
-
-    crate::diagnostics::stage("contract: submit and reconcile");
-    let submission = runtime.block_on(client.submit_contract_invoke(&prepared))?;
+    let submission = authorize_sign_submit_contract(client, &runtime, &mut prepared)?;
     if options.json {
         print_json(&submission_json(&prepared.review, &submission))?;
     } else {
@@ -156,6 +145,25 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         }
     }
     Ok(())
+}
+
+pub(crate) fn authorize_sign_submit_contract(
+    client: &FresnicaClient,
+    runtime: &tokio::runtime::Runtime,
+    prepared: &mut PreparedContractInvoke,
+) -> Result<TransactionSubmission, String> {
+    crate::diagnostics::stage("contract: authorize detached Soroban entries");
+    with_software_signer_authorization(client, |passphrase, system_auth| {
+        client.authorize_contract_invoke_with_system_auth(prepared, passphrase, system_auth)
+    })?;
+
+    crate::diagnostics::stage("contract: sign transaction envelope");
+    submit_with_classic_signers(client, |passphrase, system_auth, external| {
+        client.sign_contract_invoke_with_providers(prepared, passphrase, system_auth, external)
+    })?;
+
+    crate::diagnostics::stage("contract: submit and reconcile");
+    runtime.block_on(client.submit_contract_invoke(prepared))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,31 +446,23 @@ pub(crate) fn add_local_address_names(
     request: &mut ContractInvokeRequest,
 ) -> Result<(), String> {
     for wallet in client.storage().list()? {
-        if wallet.network == client.network() && request_uses_name(request, &wallet.name) {
+        if wallet.network == client.network() && request.references_argument_value(&wallet.name) {
             request.add_address_name(&wallet.name, &wallet.address)?;
         }
     }
     let contacts = ContactStore::for_home(client.storage().home());
     for contact in contacts.list()? {
-        if request_uses_name(request, &contact.name) {
+        if request.references_argument_value(&contact.name) {
             request.add_address_name(&contact.name, &contact.address)?;
         }
     }
     let contracts = ContractStore::for_home(client.storage().home(), client.network());
     for contract in contracts.list()? {
-        if request_uses_name(request, &contract.user.name) {
+        if request.references_argument_value(&contract.user.name) {
             request.add_address_name(&contract.user.name, &contract.contract_id)?;
         }
     }
     Ok(())
-}
-
-fn request_uses_name(request: &ContractInvokeRequest, name: &str) -> bool {
-    let key = name.trim().to_lowercase();
-    request
-        .arguments
-        .iter()
-        .any(|argument| argument.value.trim().trim_matches('"').to_lowercase() == key)
 }
 
 fn parse_dynamic(arguments: &[String]) -> Result<InvokeAction, String> {
@@ -634,7 +634,7 @@ fn render_read_only(result: &ContractReadResult, requested_target: &str) {
     println!("Submitted:  no");
 }
 
-fn render_review(review: &ContractInvokeReview, requested_target: &str) {
+pub(crate) fn render_review(review: &ContractInvokeReview, requested_target: &str) {
     println!("Review contract invocation");
     println!("Wallet:     {}", review.wallet_name);
     println!("Fee payer:  {}", review.fee_payer);
@@ -821,7 +821,7 @@ fn read_only_json(result: &ContractReadResult) -> Value {
     })
 }
 
-fn review_json(review: &ContractInvokeReview) -> Value {
+pub(crate) fn review_json(review: &ContractInvokeReview) -> Value {
     json!({
         "wallet": review.wallet_name.as_str(),
         "fee_payer": review.fee_payer.as_str(),
@@ -1005,8 +1005,8 @@ mod tests {
             "balance",
             vec![ContractArgumentInput::new("id", "\"Alice\"")],
         );
-        assert!(request_uses_name(&request, "alice"));
-        assert!(!request_uses_name(&request, "bob"));
+        assert!(request.references_argument_value("alice"));
+        assert!(!request.references_argument_value("bob"));
     }
 
     #[test]
