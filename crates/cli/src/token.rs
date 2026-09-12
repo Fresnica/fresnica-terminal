@@ -1,6 +1,6 @@
 use fresnica_client::{
-    resolve_token, ContractCapabilities, ContractInvokePreparation, ContractInvokeRequest,
-    ContractReadResult, FresnicaClient, ResolvedToken, ResolvedTokenSource,
+    resolve_token, FresnicaClient, ResolvedToken, ResolvedTokenSource, TokenBalanceRequest,
+    TokenTransferRequest,
 };
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
@@ -91,25 +91,17 @@ fn balance_token(
     json_output: bool,
 ) -> Result<(), String> {
     crate::diagnostics::stage("token: read SEP-41 balance");
-    let balance =
-        read_token_function(client, runtime, resolved, "balance", vec![owner.to_owned()])?;
-    ensure_current_sep41(&balance)?;
-    let raw = parse_i128_output(balance.output.as_ref(), "balance")?;
-
-    let decimals = if balance.capabilities.sep41.native_sac {
-        7
-    } else {
-        crate::diagnostics::stage("token: read SEP-41 decimals");
-        let decimals = read_token_function(client, runtime, resolved, "decimals", Vec::new())?;
-        ensure_current_sep41(&decimals)?;
-        parse_u32_output(decimals.output.as_ref(), "decimals")?
-    };
-    let amount = format_fixed_point(raw, decimals);
-    let resolved_owner = balance
-        .arguments
-        .first()
-        .map(|argument| argument.value.clone())
-        .unwrap_or(Value::Null);
+    let mut request = TokenBalanceRequest::new(resolved.token.clone(), owner);
+    add_balance_address_names(client, &mut request)?;
+    let balance = runtime.block_on(client.token_balance(request))?;
+    verify_saved_observation(
+        client,
+        resolved,
+        &balance.contract.contract_id,
+        &balance.contract.executable,
+        &balance.contract.metadata,
+        &balance.contract.capabilities,
+    )?;
 
     if json_output {
         print_json(&json!({
@@ -117,27 +109,30 @@ fn balance_token(
             "network": client.network(),
             "reference": reference,
             "resolution": resolution_json(resolved),
-            "owner": resolved_owner,
+            "owner": balance.owner,
             "balance": {
-                "raw": raw.to_string(),
-                "decimals": decimals,
-                "amount": amount,
+                "raw": balance.amount.raw.to_string(),
+                "decimals": balance.amount.decimals,
+                "amount": balance.amount.amount,
             },
-            "capabilities": contract::capabilities_json(&balance.capabilities),
-            "simulation_ledger": balance.simulation_ledger,
+            "capabilities": contract::capabilities_json(&balance.contract.capabilities),
+            "simulation_ledger": balance.contract.simulation_ledger,
         }))?;
         return Ok(());
     }
 
     println!("Token: {reference}");
     render_resolution(resolved);
-    println!("Owner: {}", compact_json(&resolved_owner));
-    match amount {
+    println!("Owner: {}", compact_json(&balance.owner));
+    match balance.amount.amount.as_deref() {
         Some(amount) => println!("Balance: {amount}"),
-        None => println!("Balance: {raw} raw units ({decimals} decimals)"),
+        None => println!(
+            "Balance: {} raw units ({} decimals)",
+            balance.amount.raw, balance.amount.decimals
+        ),
     }
-    println!("Raw: {raw}");
-    println!("Decimals: {decimals}");
+    println!("Raw: {}", balance.amount.raw);
+    println!("Decimals: {}", balance.amount.decimals);
     Ok(())
 }
 
@@ -149,71 +144,47 @@ fn transfer_token(
     transfer: &TokenTransferAction,
     json_output: bool,
 ) -> Result<(), String> {
-    let wallet = client.resolve_wallet(transfer.wallet.as_deref())?;
-    let decimals = token_decimals(client, runtime, resolved)?;
-    let raw = parse_token_amount(&transfer.amount, decimals)?;
-    let amount = format_fixed_point(raw, decimals).unwrap_or_else(|| transfer.amount.clone());
-
     crate::diagnostics::stage("token: prepare SEP-41 transfer");
-    let mut request = ContractInvokeRequest::new_positional(
-        &resolved.token.contract_id,
-        "transfer",
-        vec![wallet.address.clone(), transfer.to.clone(), raw.to_string()],
-    );
-    request.wallet = Some(wallet.name.clone());
-    contract::add_local_address_names(client, &mut request)?;
-    let outcome = runtime.block_on(client.prepare_contract_invoke_outcome(request))?;
-    let ContractInvokePreparation::Transaction(mut prepared) = outcome else {
-        return Err(
-            "SEP-41 transfer unexpectedly simulated as read-only; refusing token transfer"
-                .to_owned(),
-        );
-    };
-    ensure_current_sep41_capabilities(&prepared.review.capabilities, &prepared.review.contract_id)?;
+    let mut request =
+        TokenTransferRequest::new(resolved.token.clone(), &transfer.amount, &transfer.to);
+    request.wallet = transfer.wallet.clone();
+    add_transfer_address_names(client, &mut request)?;
+    let mut prepared = runtime.block_on(client.prepare_token_transfer(request))?;
     verify_saved_observation(
         client,
         resolved,
-        &prepared.review.contract_id,
-        &prepared.review.executable,
-        &prepared.review.metadata,
-        &prepared.review.capabilities,
+        &prepared.contract.review.contract_id,
+        &prepared.contract.review.executable,
+        &prepared.contract.review.metadata,
+        &prepared.contract.review.capabilities,
     )?;
-
-    let from = prepared
-        .review
-        .arguments
-        .first()
-        .map(|argument| argument.value.clone())
-        .unwrap_or(Value::Null);
-    if from != Value::String(wallet.address.clone()) {
-        return Err(
-            "prepared SEP-41 transfer source does not match the selected Fresnica wallet"
-                .to_owned(),
-        );
-    }
-    let destination = prepared
-        .review
-        .arguments
-        .get(1)
-        .map(|argument| argument.value.clone())
-        .unwrap_or(Value::Null);
 
     crate::diagnostics::stage("token: review transfer");
     if !json_output {
         println!("Token transfer");
         println!("Token: {reference}");
         render_resolution(resolved);
-        println!("From: {} ({})", wallet.name, wallet.address);
-        println!("To: {}", compact_json(&destination));
-        println!("Amount: {amount}");
-        contract::render_review(&prepared.review, reference);
+        println!(
+            "From: {} ({})",
+            prepared.wallet_name, prepared.wallet_address
+        );
+        println!("To: {}", compact_json(&prepared.destination));
+        match prepared.amount.amount.as_deref() {
+            Some(amount) => println!("Amount: {amount}"),
+            None => println!(
+                "Amount: {} raw units ({} decimals)",
+                prepared.amount.raw, prepared.amount.decimals
+            ),
+        }
+        contract::render_review(&prepared.contract.review, reference);
         if !transfer.yes && !crate::transaction_flow::confirm_submission()? {
             println!("Transaction cancelled.");
             return Ok(());
         }
     }
 
-    let submission = contract::authorize_sign_submit_contract(client, runtime, &mut prepared)?;
+    let submission =
+        contract::authorize_sign_submit_contract(client, runtime, &mut prepared.contract)?;
     if json_output {
         print_json(&json!({
             "kind": "token_transfer",
@@ -221,18 +192,18 @@ fn transfer_token(
             "reference": reference,
             "resolution": resolution_json(resolved),
             "wallet": {
-                "name": wallet.name.as_str(),
-                "address": wallet.address.as_str(),
+                "name": prepared.wallet_name,
+                "address": prepared.wallet_address,
             },
-            "to": destination,
+            "to": prepared.destination,
             "amount": {
-                "input": transfer.amount.as_str(),
-                "raw": raw.to_string(),
-                "decimals": decimals,
-                "amount": amount,
+                "input": prepared.amount_input,
+                "raw": prepared.amount.raw.to_string(),
+                "decimals": prepared.amount.decimals,
+                "amount": prepared.amount.amount,
             },
-            "capabilities": contract::capabilities_json(&prepared.review.capabilities),
-            "review": contract::review_json(&prepared.review),
+            "capabilities": contract::capabilities_json(&prepared.contract.review.capabilities),
+            "review": contract::review_json(&prepared.contract.review),
             "submission": {
                 "hash": submission.hash.as_str(),
                 "ledger": submission.ledger,
@@ -247,21 +218,30 @@ fn transfer_token(
     Ok(())
 }
 
-fn token_decimals(
+fn add_balance_address_names(
     client: &FresnicaClient,
-    runtime: &tokio::runtime::Runtime,
-    resolved: &TerminalResolvedToken,
-) -> Result<u32, String> {
-    if matches!(
-        resolved.token.source,
-        ResolvedTokenSource::StellarAsset { .. }
-    ) {
-        return Ok(7);
+    request: &mut TokenBalanceRequest,
+) -> Result<(), String> {
+    let entries = contract::local_address_name_entries(client, |name| {
+        request.references_argument_value(name)
+    })?;
+    for (name, address) in entries {
+        request.add_address_name(&name, &address)?;
     }
-    crate::diagnostics::stage("token: read SEP-41 decimals");
-    let result = read_token_function(client, runtime, resolved, "decimals", Vec::new())?;
-    ensure_current_sep41(&result)?;
-    parse_u32_output(result.output.as_ref(), "decimals")
+    Ok(())
+}
+
+fn add_transfer_address_names(
+    client: &FresnicaClient,
+    request: &mut TokenTransferRequest,
+) -> Result<(), String> {
+    let entries = contract::local_address_name_entries(client, |name| {
+        request.references_argument_value(name)
+    })?;
+    for (name, address) in entries {
+        request.add_address_name(&name, &address)?;
+    }
+    Ok(())
 }
 
 fn verify_saved_observation(
@@ -270,7 +250,7 @@ fn verify_saved_observation(
     contract_id: &str,
     executable: &fresnica_client::ContractExecutableObservation,
     metadata: &[fresnica_client::ContractMetadataEntry],
-    capabilities: &ContractCapabilities,
+    capabilities: &fresnica_client::ContractCapabilities,
 ) -> Result<(), String> {
     if resolved.saved_name.is_none() {
         return Ok(());
@@ -281,49 +261,6 @@ fn verify_saved_observation(
         metadata,
         capabilities,
     )
-}
-
-fn read_token_function(
-    client: &FresnicaClient,
-    runtime: &tokio::runtime::Runtime,
-    resolved: &TerminalResolvedToken,
-    function: &str,
-    arguments: Vec<String>,
-) -> Result<ContractReadResult, String> {
-    let mut request =
-        ContractInvokeRequest::new_positional(&resolved.token.contract_id, function, arguments);
-    contract::add_local_address_names(client, &mut request)?;
-    let outcome = runtime.block_on(client.prepare_contract_invoke_outcome(request))?;
-    let ContractInvokePreparation::ReadOnly(result) = outcome else {
-        return Err(format!(
-            "SEP-41 {function} unexpectedly requires a write transaction; refusing token read"
-        ));
-    };
-    verify_saved_observation(
-        client,
-        resolved,
-        &result.contract_id,
-        &result.executable,
-        &result.metadata,
-        &result.capabilities,
-    )?;
-    Ok(result)
-}
-
-fn ensure_current_sep41(result: &ContractReadResult) -> Result<(), String> {
-    ensure_current_sep41_capabilities(&result.capabilities, &result.contract_id)
-}
-
-fn ensure_current_sep41_capabilities(
-    capabilities: &ContractCapabilities,
-    contract_id: &str,
-) -> Result<(), String> {
-    if capabilities.sep41.current_interface_compatible {
-        return Ok(());
-    }
-    Err(format!(
-        "contract {contract_id} is not compatible with the current SEP-41 interface"
-    ))
 }
 
 struct TokenOptions {
@@ -481,107 +418,6 @@ fn render_resolution(resolved: &TerminalResolvedToken) {
     println!("Contract: {}", resolved.token.contract_id);
 }
 
-fn parse_i128_output(value: Option<&Value>, label: &str) -> Result<i128, String> {
-    parse_integer_text(value, label)?
-        .parse()
-        .map_err(|_| format!("SEP-41 {label} returned a value outside i128 range"))
-}
-
-fn parse_u32_output(value: Option<&Value>, label: &str) -> Result<u32, String> {
-    parse_integer_text(value, label)?
-        .parse()
-        .map_err(|_| format!("SEP-41 {label} returned a value outside u32 range"))
-}
-
-fn parse_integer_text<'a>(
-    value: Option<&'a Value>,
-    label: &str,
-) -> Result<std::borrow::Cow<'a, str>, String> {
-    match value {
-        Some(Value::String(value)) => Ok(std::borrow::Cow::Borrowed(value)),
-        Some(Value::Number(value)) => Ok(std::borrow::Cow::Owned(value.to_string())),
-        Some(other) => Err(format!(
-            "SEP-41 {label} returned a non-integer value: {other}"
-        )),
-        None => Err(format!("SEP-41 {label} returned no value")),
-    }
-}
-
-fn parse_token_amount(value: &str, decimals: u32) -> Result<i128, String> {
-    let value = value.trim();
-    if value.is_empty() || value.starts_with('-') || value.starts_with('+') {
-        return Err("token transfer amount must be a positive decimal number".to_owned());
-    }
-    let mut parts = value.split('.');
-    let whole = parts.next().unwrap_or_default();
-    let fraction = parts.next().unwrap_or_default().trim_end_matches('0');
-    if parts.next().is_some()
-        || whole.is_empty()
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return Err("token transfer amount must be a positive decimal number".to_owned());
-    }
-    if fraction.len() > decimals as usize {
-        return Err(format!(
-            "token transfer amount has more than {decimals} decimal places"
-        ));
-    }
-
-    let mut significant = format!("{whole}{fraction}");
-    let first_nonzero = significant.bytes().position(|byte| byte != b'0');
-    let Some(first_nonzero) = first_nonzero else {
-        return Err("token transfer amount must be greater than zero".to_owned());
-    };
-    significant.drain(..first_nonzero);
-    let trailing_zeros = decimals as usize - fraction.len();
-    if significant.len().saturating_add(trailing_zeros) > 39 {
-        return Err("token transfer amount is outside the i128 range".to_owned());
-    }
-    significant.extend(std::iter::repeat_n('0', trailing_zeros));
-    let raw: i128 = significant
-        .parse()
-        .map_err(|_| "token transfer amount is outside the i128 range".to_owned())?;
-    if raw <= 0 {
-        return Err("token transfer amount must be greater than zero".to_owned());
-    }
-    Ok(raw)
-}
-
-fn format_fixed_point(raw: i128, decimals: u32) -> Option<String> {
-    if decimals > 38 {
-        return None;
-    }
-    if decimals == 0 {
-        return Some(raw.to_string());
-    }
-    let text = raw.to_string();
-    let (negative, digits) = match text.strip_prefix('-') {
-        Some(digits) => (true, digits),
-        None => (false, text.as_str()),
-    };
-    let decimals = decimals as usize;
-    let mut value = if digits.len() > decimals {
-        let split = digits.len() - decimals;
-        format!("{}.{}", &digits[..split], &digits[split..])
-    } else {
-        format!("0.{}{}", "0".repeat(decimals - digits.len()), digits)
-    };
-    while value.ends_with('0') {
-        value.pop();
-    }
-    if value.ends_with('.') {
-        value.pop();
-    }
-    if value.is_empty() || value == "-0" {
-        value = "0".to_owned();
-    }
-    if negative && value != "0" {
-        value.insert(0, '-');
-    }
-    Some(value)
-}
-
 fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).expect("serde_json::Value serialization cannot fail")
 }
@@ -671,30 +507,5 @@ mod tests {
         .err()
         .expect("machine transfer without -y must fail")
         .contains("requires -y"));
-    }
-
-    #[test]
-    fn token_amount_parser_is_exact_and_rejects_rounding_or_overflow() {
-        assert_eq!(parse_token_amount("1", 7).unwrap(), 10_000_000);
-        assert_eq!(parse_token_amount("1.25", 7).unwrap(), 12_500_000);
-        assert_eq!(parse_token_amount("0.0000001", 7).unwrap(), 1);
-        assert_eq!(parse_token_amount("1.2300000", 7).unwrap(), 12_300_000);
-        assert!(parse_token_amount("0", 7).is_err());
-        assert!(parse_token_amount("-1", 7).is_err());
-        assert!(parse_token_amount("1e2", 7).is_err());
-        assert!(parse_token_amount("0.00000001", 7).is_err());
-        assert!(parse_token_amount("999999999999999999999999999999999999999", 7).is_err());
-    }
-
-    #[test]
-    fn fixed_point_format_is_exact_and_bounded() {
-        assert_eq!(
-            format_fixed_point(12_345_678, 7).as_deref(),
-            Some("1.2345678")
-        );
-        assert_eq!(format_fixed_point(10_000_000, 7).as_deref(), Some("1"));
-        assert_eq!(format_fixed_point(-1, 7).as_deref(), Some("-0.0000001"));
-        assert_eq!(format_fixed_point(0, 7).as_deref(), Some("0"));
-        assert!(format_fixed_point(1, 39).is_none());
     }
 }

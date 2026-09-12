@@ -1661,7 +1661,7 @@ dependencies = [
 [[package]]
 name = "fresnica-client"
 version = "0.1.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=2c622814207df6e8f566c288d5fd549c4616b2c1#2c622814207df6e8f566c288d5fd549c4616b2c1"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=a19024481fc30b884ed68372749b6e7875e947c3#a19024481fc30b884ed68372749b6e7875e947c3"
 dependencies = [
  "base64 0.23.1",
  "fresnica-core",
@@ -1687,7 +1687,7 @@ dependencies = [
 [[package]]
 name = "fresnica-core"
 version = "0.2.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=2c622814207df6e8f566c288d5fd549c4616b2c1#2c622814207df6e8f566c288d5fd549c4616b2c1"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=a19024481fc30b884ed68372749b6e7875e947c3#a19024481fc30b884ed68372749b6e7875e947c3"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1709,7 +1709,7 @@ dependencies = [
 [[package]]
 name = "fresnica-sdk"
 version = "0.2.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=2c622814207df6e8f566c288d5fd549c4616b2c1#2c622814207df6e8f566c288d5fd549c4616b2c1"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=a19024481fc30b884ed68372749b6e7875e947c3#a19024481fc30b884ed68372749b6e7875e947c3"
 dependencies = [
  "base64 0.23.1",
  "fresnica-core",

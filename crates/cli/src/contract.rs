@@ -441,26 +441,39 @@ fn verify_contract_observation(
     )
 }
 
-pub(crate) fn add_local_address_names(
+pub(crate) fn local_address_name_entries(
     client: &FresnicaClient,
-    request: &mut ContractInvokeRequest,
-) -> Result<(), String> {
+    references: impl Fn(&str) -> bool,
+) -> Result<Vec<(String, String)>, String> {
+    let mut entries = Vec::new();
     for wallet in client.storage().list()? {
-        if wallet.network == client.network() && request.references_argument_value(&wallet.name) {
-            request.add_address_name(&wallet.name, &wallet.address)?;
+        if wallet.network == client.network() && references(&wallet.name) {
+            entries.push((wallet.name, wallet.address));
         }
     }
     let contacts = ContactStore::for_home(client.storage().home());
     for contact in contacts.list()? {
-        if request.references_argument_value(&contact.name) {
-            request.add_address_name(&contact.name, &contact.address)?;
+        if references(&contact.name) {
+            entries.push((contact.name, contact.address));
         }
     }
     let contracts = ContractStore::for_home(client.storage().home(), client.network());
     for contract in contracts.list()? {
-        if request.references_argument_value(&contract.user.name) {
-            request.add_address_name(&contract.user.name, &contract.contract_id)?;
+        if references(&contract.user.name) {
+            entries.push((contract.user.name, contract.contract_id));
         }
+    }
+    Ok(entries)
+}
+
+pub(crate) fn add_local_address_names(
+    client: &FresnicaClient,
+    request: &mut ContractInvokeRequest,
+) -> Result<(), String> {
+    let entries =
+        local_address_name_entries(client, |name| request.references_argument_value(name))?;
+    for (name, address) in entries {
+        request.add_address_name(&name, &address)?;
     }
     Ok(())
 }
