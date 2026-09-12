@@ -22,7 +22,7 @@ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependenc
 
 This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
 
-Terminal v0.4.0 pins `6c3388c84993bf8dfd133638a7c32a37a0769e74`, the exact Fresnica Rust capability source with versioned Argon2id wallet protection and the System Authentication boundary. Active v0.5 development pins `54ceeec7de63931ed89219d1a3587cb289262687`, adding typed Contract Address names plus executable/Wasm observations carried through contract inspection and invocation results, with write preparation rechecking executable identity before review. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); Terminal consumes `fresnica-client` / `fresnica-sdk` directly without changing that published Native/UniFFI ABI.
+Terminal v0.4.0 pins `6c3388c84993bf8dfd133638a7c32a37a0769e74`, the exact Fresnica Rust capability source with versioned Argon2id wallet protection and the System Authentication boundary. Active v0.5 development pins `373e194191acffc0b56f9928d82c2d28ad1f12ad`, adding typed Contract Address names plus executable/Wasm observations carried through contract inspection and invocation results, with write preparation rechecking executable identity before review. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); Terminal consumes `fresnica-client` / `fresnica-sdk` directly without changing that published Native/UniFFI ABI.
 
 ## Layout
 

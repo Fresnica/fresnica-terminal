@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use fresnica_client::ContractExecutableObservation;
+use fresnica_client::{ContractExecutableObservation, ContractMetadataEntry};
 use serde::{Deserialize, Serialize};
 use stellar_strkey::Contract as StrkeyContract;
 
@@ -15,10 +15,18 @@ pub struct ContractUserMetadata {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractWasmMetadata {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContractObservation {
     pub executable: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wasm_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wasm_meta: Vec<ContractWasmMetadata>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -98,8 +106,9 @@ impl ContractStore {
         &self,
         contract_id: &str,
         observation: &ContractExecutableObservation,
+        metadata: &[ContractMetadataEntry],
     ) -> Result<(), String> {
-        let observed = ContractObservation::from_chain(observation);
+        let observed = ContractObservation::from_chain(observation, metadata);
         let mut contracts = self.load()?;
         let mut changed = false;
         for contract in contracts
@@ -120,8 +129,9 @@ impl ContractStore {
         &self,
         contract_id: &str,
         observation: &ContractExecutableObservation,
+        metadata: &[ContractMetadataEntry],
     ) -> Result<(), String> {
-        let observed = ContractObservation::from_chain(observation);
+        let observed = ContractObservation::from_chain(observation, metadata);
         let mut contracts = self.load()?;
         let mut changed = false;
         for contract in contracts
@@ -133,7 +143,12 @@ impl ContractStore {
                     contract.observed = Some(observed.clone());
                     changed = true;
                 }
-                Some(previous) if previous == &observed => {}
+                Some(previous) if previous.same_identity(&observed) => {
+                    if previous.wasm_meta != observed.wasm_meta {
+                        contract.observed = Some(observed.clone());
+                        changed = true;
+                    }
+                }
                 Some(previous) => {
                     return Err(format!(
                         "Saved contract {:?} changed executable from {} to {}. Inspect the deployed contract interface before invoking it again.",
@@ -214,11 +229,25 @@ impl ContractStore {
 }
 
 impl ContractObservation {
-    fn from_chain(observation: &ContractExecutableObservation) -> Self {
+    fn from_chain(
+        observation: &ContractExecutableObservation,
+        metadata: &[ContractMetadataEntry],
+    ) -> Self {
         Self {
             executable: observation.kind.as_str().to_owned(),
             wasm_hash: observation.wasm_hash.clone(),
+            wasm_meta: metadata
+                .iter()
+                .map(|entry| ContractWasmMetadata {
+                    key: entry.key.clone(),
+                    value: entry.value.clone(),
+                })
+                .collect(),
         }
+    }
+
+    fn same_identity(&self, other: &Self) -> bool {
+        self.executable == other.executable && self.wasm_hash == other.wasm_hash
     }
 
     fn describe(&self) -> String {
@@ -301,9 +330,9 @@ fn normalize_observation(observed: &ContractObservation) -> Result<ContractObser
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase);
     match executable.as_str() {
-        "stellar_asset" if wasm_hash.is_some() => {
+        "stellar_asset" if wasm_hash.is_some() || !observed.wasm_meta.is_empty() => {
             return Err(
-                "Stellar Asset Contract observation must not contain a Wasm hash".to_owned(),
+                "Stellar Asset Contract observation must not contain Wasm facts".to_owned(),
             );
         }
         "wasm" | "external_ref" => {
@@ -319,6 +348,7 @@ fn normalize_observation(observed: &ContractObservation) -> Result<ContractObser
     Ok(ContractObservation {
         executable,
         wasm_hash,
+        wasm_meta: observed.wasm_meta.clone(),
     })
 }
 
@@ -348,7 +378,9 @@ fn restrict_file(_path: &Path) -> Result<(), String> {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use fresnica_client::{ContractExecutableKind, ContractExecutableObservation};
+    use fresnica_client::{
+        ContractExecutableKind, ContractExecutableObservation, ContractMetadataEntry,
+    };
     use serde_json::json;
 
     use super::*;
@@ -373,6 +405,13 @@ mod tests {
         ContractExecutableObservation {
             kind: ContractExecutableKind::Wasm,
             wasm_hash: Some(format!("{hash_byte:02x}").repeat(32)),
+        }
+    }
+
+    fn meta(key: &str, value: &str) -> ContractMetadataEntry {
+        ContractMetadataEntry {
+            key: key.to_owned(),
+            value: value.to_owned(),
         }
     }
 
@@ -419,18 +458,73 @@ mod tests {
         assert_eq!(loaded[0].user.name, "Aqua");
         assert!(loaded[0].observed.is_none());
 
-        store.record_observation(CONTRACT, &wasm(0xab)).unwrap();
+        store
+            .record_observation(CONTRACT, &wasm(0xab), &[meta("binver", "2.3.7")])
+            .unwrap();
         let upgraded: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&store.path).unwrap()).unwrap();
         assert_eq!(upgraded["schema"], CONTRACT_STORE_SCHEMA);
         assert_eq!(upgraded["contracts"][0]["observed"]["executable"], "wasm");
+        assert_eq!(
+            upgraded["contracts"][0]["observed"]["wasm_meta"][0]["key"],
+            "binver"
+        );
     }
+    #[test]
+    fn version_one_observation_without_metadata_remains_readable() {
+        let store = store("v1-no-meta", "testnet");
+        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        fs::write(
+            &store.path,
+            serde_json::to_string_pretty(&json!({
+                "schema": CONTRACT_STORE_SCHEMA,
+                "contracts": [{
+                    "contract_id": CONTRACT,
+                    "user": {"name": "Aqua"},
+                    "observed": {
+                        "executable": "wasm",
+                        "wasm_hash": "11".repeat(32)
+                    }
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let observed = store.find("aqua").unwrap().unwrap().observed.unwrap();
+        assert!(observed.wasm_meta.is_empty());
+        assert_eq!(observed.wasm_hash.unwrap(), "11".repeat(32));
+    }
+
+    #[test]
+    fn same_wasm_enriches_legacy_observation_metadata_without_upgrade_error() {
+        let store = store("metadata", "testnet");
+        store.add("Aqua", CONTRACT).unwrap();
+        store
+            .verify_observation(CONTRACT, &wasm(0x11), &[])
+            .unwrap();
+
+        store
+            .verify_observation(
+                CONTRACT,
+                &wasm(0x11),
+                &[meta("sep", "41"), meta("home_domain", "example.org")],
+            )
+            .unwrap();
+        let observed = store.find("aqua").unwrap().unwrap().observed.unwrap();
+        assert_eq!(observed.wasm_meta.len(), 2);
+        assert_eq!(observed.wasm_meta[0].key, "sep");
+        assert_eq!(observed.wasm_meta[1].value, "example.org");
+    }
+
     #[test]
     fn changed_wasm_fails_closed_until_explicit_inspection_refreshes_store() {
         let store = store("upgrade", "testnet");
         store.add("Aqua", CONTRACT).unwrap();
 
-        store.verify_observation(CONTRACT, &wasm(0x11)).unwrap();
+        store
+            .verify_observation(CONTRACT, &wasm(0x11), &[])
+            .unwrap();
         let before = store.find("aqua").unwrap().unwrap();
         let first_hash = "11".repeat(32);
         assert_eq!(
@@ -438,14 +532,20 @@ mod tests {
             Some(first_hash.as_str())
         );
 
-        let error = store.verify_observation(CONTRACT, &wasm(0x22)).unwrap_err();
+        let error = store
+            .verify_observation(CONTRACT, &wasm(0x22), &[meta("binver", "3.0.0")])
+            .unwrap_err();
         assert!(error.contains("changed executable"));
         assert!(error.contains("Inspect the deployed contract interface"));
         let unchanged = store.find("aqua").unwrap().unwrap();
         assert_eq!(unchanged.observed, before.observed);
 
-        store.record_observation(CONTRACT, &wasm(0x22)).unwrap();
-        store.verify_observation(CONTRACT, &wasm(0x22)).unwrap();
+        store
+            .record_observation(CONTRACT, &wasm(0x22), &[meta("binver", "3.0.0")])
+            .unwrap();
+        store
+            .verify_observation(CONTRACT, &wasm(0x22), &[meta("binver", "3.0.0")])
+            .unwrap();
         assert_eq!(
             store
                 .find("aqua")

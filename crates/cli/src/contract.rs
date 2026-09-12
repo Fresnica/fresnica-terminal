@@ -1,7 +1,8 @@
 use fresnica_client::{
     ContactStore, ContractArgumentInput, ContractExecutableObservation, ContractFunction,
     ContractInterface, ContractInvokePreparation, ContractInvokeRequest, ContractInvokeReview,
-    ContractReadResult, FresnicaClient, TransactionSubmission, WalletStorage,
+    ContractMetadataEntry, ContractReadResult, FresnicaClient, TransactionSubmission,
+    WalletStorage,
 };
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
@@ -92,7 +93,12 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         let ContractInvokePreparation::ReadOnly(result) = outcome else {
             unreachable!("contract invoke preparation has only read-only or transaction outcomes")
         };
-        verify_contract_observation(client, &result.contract_id, &result.executable)?;
+        verify_contract_observation(
+            client,
+            &result.contract_id,
+            &result.executable,
+            &result.metadata,
+        )?;
         crate::diagnostics::stage("contract: return read-only simulation");
         if options.json {
             print_json(&read_only_json(&result))?;
@@ -106,6 +112,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         client,
         &prepared.review.contract_id,
         &prepared.review.executable,
+        &prepared.review.metadata,
     )?;
 
     if options.json && !options.yes {
@@ -366,6 +373,10 @@ fn saved_contract_json(contract: &SavedContract) -> Value {
         json!({
             "executable": observation.executable.as_str(),
             "wasm_hash": observation.wasm_hash.as_deref(),
+            "wasm_meta": observation.wasm_meta.iter().map(|entry| json!({
+                "key": entry.key.as_str(),
+                "value": entry.value.as_str(),
+            })).collect::<Vec<_>>(),
         })
     });
     json!({
@@ -394,17 +405,24 @@ fn record_contract_inspection(
     client: &FresnicaClient,
     interface: &ContractInterface,
 ) -> Result<(), String> {
-    ContractStore::for_home(client.storage().home(), client.network())
-        .record_observation(&interface.contract_id, &interface.executable)
+    ContractStore::for_home(client.storage().home(), client.network()).record_observation(
+        &interface.contract_id,
+        &interface.executable,
+        &interface.metadata,
+    )
 }
 
 fn verify_contract_observation(
     client: &FresnicaClient,
     contract_id: &str,
     observation: &ContractExecutableObservation,
+    metadata: &[ContractMetadataEntry],
 ) -> Result<(), String> {
-    ContractStore::for_home(client.storage().home(), client.network())
-        .verify_observation(contract_id, observation)
+    ContractStore::for_home(client.storage().home(), client.network()).verify_observation(
+        contract_id,
+        observation,
+        metadata,
+    )
 }
 
 fn add_local_address_names(
@@ -495,6 +513,7 @@ fn render_contract_identity(requested_target: &str, contract_id: &str) {
 fn render_interface_help(interface: &ContractInterface, requested_target: &str) {
     render_contract_identity(requested_target, &interface.contract_id);
     render_executable(&interface.executable);
+    render_wasm_metadata(&interface.metadata);
     println!("Functions:");
     if interface.functions.is_empty() {
         println!("  (none)");
@@ -666,6 +685,32 @@ fn executable_json(observation: &ContractExecutableObservation) -> Value {
     })
 }
 
+fn render_wasm_metadata(metadata: &[ContractMetadataEntry]) {
+    if metadata.is_empty() {
+        return;
+    }
+    println!("Wasm metadata:");
+    for entry in metadata {
+        println!(
+            "  {} = {}",
+            one_line(&sanitize_terminal_text(&entry.key)),
+            one_line(&sanitize_terminal_text(&entry.value))
+        );
+    }
+}
+
+fn metadata_json(metadata: &[ContractMetadataEntry]) -> Vec<Value> {
+    metadata
+        .iter()
+        .map(|entry| {
+            json!({
+                "key": entry.key.as_str(),
+                "value": entry.value.as_str(),
+            })
+        })
+        .collect()
+}
+
 fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).expect("serde_json::Value serialization cannot fail")
 }
@@ -682,6 +727,7 @@ fn interface_json(interface: &ContractInterface) -> Value {
     json!({
         "contract_id": interface.contract_id.as_str(),
         "executable": executable_json(&interface.executable),
+        "wasm_meta": metadata_json(&interface.metadata),
         "functions": interface.functions.iter().map(function_json).collect::<Vec<_>>(),
     })
 }
@@ -708,6 +754,7 @@ fn read_only_json(result: &ContractReadResult) -> Value {
         "kind": "read_only",
         "contract_id": result.contract_id.as_str(),
         "executable": executable_json(&result.executable),
+        "wasm_meta": metadata_json(&result.metadata),
         "function": result.function_name.as_str(),
         "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "result": result.output.clone(),
@@ -724,6 +771,7 @@ fn review_json(review: &ContractInvokeReview) -> Value {
         "operation_source": review.operation_source.as_str(),
         "contract_id": review.contract_id.as_str(),
         "executable": executable_json(&review.executable),
+        "wasm_meta": metadata_json(&review.metadata),
         "function": review.function_name.as_str(),
         "arguments": review.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "authorizers": review.authorizers.as_slice(),
@@ -909,6 +957,27 @@ mod tests {
         assert!(InvokeOptions::parse(&args)
             .unwrap_err()
             .contains("must follow `--`"));
+    }
+
+    #[test]
+    fn wasm_metadata_json_preserves_raw_key_value_facts() {
+        let metadata = vec![ContractMetadataEntry {
+            key: "home_domain".to_owned(),
+            value: "example.org".to_owned(),
+        }];
+        let encoded = metadata_json(&metadata);
+        assert_eq!(encoded[0]["key"], "home_domain");
+        assert_eq!(encoded[0]["value"], "example.org");
+    }
+
+    #[test]
+    fn wasm_metadata_terminal_text_strips_controls() {
+        let metadata = ContractMetadataEntry {
+            key: "home\u{1b}_domain".to_owned(),
+            value: "example.org\u{7}".to_owned(),
+        };
+        assert_eq!(sanitize_terminal_text(&metadata.key), "home _domain");
+        assert_eq!(sanitize_terminal_text(&metadata.value), "example.org ");
     }
 
     #[test]

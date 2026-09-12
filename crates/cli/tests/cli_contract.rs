@@ -172,6 +172,21 @@ fn contract_store_commands_are_versioned_and_machine_readable() {
     assert_eq!(stored["schema"], "fresnica-contract-store-v1");
     assert_eq!(stored["contracts"][0]["contract_id"], CONTRACT);
 
+    let mut stored_with_observation = stored.clone();
+    stored_with_observation["contracts"][0]["observed"] = serde_json::json!({
+        "executable": "wasm",
+        "wasm_hash": "11".repeat(32),
+        "wasm_meta": [
+            {"key": "sep", "value": "41"},
+            {"key": "home_domain", "value": "example.org"}
+        ]
+    });
+    fs::write(
+        home.join("contracts-testnet.json"),
+        serde_json::to_string_pretty(&stored_with_observation).unwrap(),
+    )
+    .unwrap();
+
     let list = run(
         &home,
         &["--network", "testnet", "contract", "list", "--json"],
@@ -181,6 +196,14 @@ fn contract_store_commands_are_versioned_and_machine_readable() {
     assert_eq!(listed["schema"], "fresnica-contract-list-v1");
     assert_eq!(listed["network"], "testnet");
     assert_eq!(listed["contracts"][0]["name"], "aqua");
+    assert_eq!(
+        listed["contracts"][0]["observed"]["wasm_meta"][0]["key"],
+        "sep"
+    );
+    assert_eq!(
+        listed["contracts"][0]["observed"]["wasm_meta"][1]["value"],
+        "example.org"
+    );
     assert_ne!(listed["schema"], stored["schema"]);
 
     let remove = run(
