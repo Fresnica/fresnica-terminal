@@ -113,6 +113,20 @@ fn local_commands_do_not_require_a_valid_horizon_endpoint() {
         String::from_utf8_lossy(&contacts.stderr)
     );
 
+    let contracts = command(
+        &home,
+        &["--network", "testnet", "contract", "list", "--json"],
+    )
+    .env("FRESNICA_HORIZON_URL", invalid_horizon)
+    .env("FRESNICA_RPC_URL", "not-a-url")
+    .output()
+    .unwrap();
+    assert!(
+        contracts.status.success(),
+        "local contract store command should ignore provider config: {}",
+        String::from_utf8_lossy(&contracts.stderr)
+    );
+
     let account = run_with_horizon_url(
         &home,
         &["--network", "testnet", "account", "--wallet", "observer"],
@@ -121,6 +135,69 @@ fn local_commands_do_not_require_a_valid_horizon_endpoint() {
     assert!(!account.status.success());
     assert!(String::from_utf8_lossy(&account.stderr)
         .contains("Horizon URL must start with http:// or https://"));
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn contract_store_commands_are_versioned_and_machine_readable() {
+    const CONTRACT: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+    let home = temp_home();
+
+    let add = run(
+        &home,
+        &[
+            "--network",
+            "testnet",
+            "contract",
+            "add",
+            "aqua",
+            CONTRACT,
+            "--json",
+        ],
+    );
+    assert!(
+        add.status.success(),
+        "contract add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let added: serde_json::Value = serde_json::from_slice(&add.stdout).unwrap();
+    assert_eq!(added["kind"], "contract_saved");
+    assert_eq!(added["contract"]["name"], "aqua");
+    assert_eq!(added["contract"]["contract_id"], CONTRACT);
+
+    let stored: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(home.join("contracts-testnet.json")).unwrap())
+            .unwrap();
+    assert_eq!(stored["schema"], "fresnica-contract-store-v1");
+    assert_eq!(stored["contracts"][0]["contract_id"], CONTRACT);
+
+    let list = run(
+        &home,
+        &["--network", "testnet", "contract", "list", "--json"],
+    );
+    assert!(list.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(listed["schema"], "fresnica-contract-list-v1");
+    assert_eq!(listed["network"], "testnet");
+    assert_eq!(listed["contracts"][0]["name"], "aqua");
+    assert_ne!(listed["schema"], stored["schema"]);
+
+    let remove = run(
+        &home,
+        &[
+            "--network",
+            "testnet",
+            "contract",
+            "remove",
+            "aqua",
+            "--json",
+        ],
+    );
+    assert!(remove.status.success());
+    let removed: serde_json::Value = serde_json::from_slice(&remove.stdout).unwrap();
+    assert_eq!(removed["kind"], "contract_removed");
+    assert_eq!(removed["contract"]["contract_id"], CONTRACT);
 
     let _ = fs::remove_dir_all(home);
 }

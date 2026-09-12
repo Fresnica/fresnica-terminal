@@ -1,8 +1,14 @@
 # Fresnica Terminal Plugin Architecture
 
-Status: **accepted for v0.3.0; Fresnica-native namespace only; host wire remains experimental**
+Status: **accepted plugin boundary; subordinate to the v0.5 Operation Foundation; Fresnica-native namespace only; host wire remains experimental**
 
-Last verified: 2026-09-08.
+Last verified: 2026-09-12.
+
+## Architecture authority
+
+[`operation-foundation.md`](operation-foundation.md) is the higher-level product constraint. A plugin is one consumer of headless Fresnica operations alongside humans, agents, bots, scripts and native UIs. Do not optimize the shared wallet architecture around plugin mechanics.
+
+The durable plugin rule is therefore: compose bounded capabilities, never become the owner of wallet semantics, secrets, authorization or generic signing. Packaging and host-wire details may evolve after more real consumers exist.
 
 ## Durable decision
 

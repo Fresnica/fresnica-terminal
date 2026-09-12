@@ -32,7 +32,7 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `dex fills [--wallet NAME] [--limit N] [--json]`
 - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
 - `contract TARGET [--wallet NAME] [-y] [--json] [FUNCTION [--NAME VALUE]...]`
-- `contract list | contract add NAME C... | contract remove NAME`
+- `contract list [--json] | contract add NAME C... [--json] | contract remove NAME [--json]`
 - legacy: `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
 - `anchor discover CODE:GISSUER --home-domain DOMAIN [--json]`
 - `anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]`
@@ -181,14 +181,20 @@ fresnica --network testnet contract C... --json balance --id G...
 fresnica --network testnet contract C... --wallet main transfer --from G... --to C... --amount 10000000
 ```
 
-Contracts can be given local, network-scoped names. The alias is only presentation/configuration; review still exposes the resolved `C...` identity and all execution continues through the same Contract Spec / simulation / authorization path.
+Contracts can be given local, network-scoped names. These entries live in the versioned Contract Store rather than a flat alias table. Exact `C...` identity remains authoritative; review and machine output retain it. The store records only proven chain observations today: executable kind and resolved Wasm hash when available.
+`contract list --json` uses the product schema `fresnica-contract-list-v1`, deliberately separate from the on-disk `fresnica-contract-store-v1` persistence schema so storage migrations do not redefine the automation interface.
 
 ```sh
 fresnica --network testnet contract add aqua C...
-fresnica --network testnet contract list
+fresnica --network testnet contract list --json
+fresnica --network testnet contract aqua --json
 fresnica --network testnet contract aqua
 fresnica --network testnet contract aqua --wallet bot -y swap --amount 100
 ```
+
+The first inspect or invocation of a saved contract records its executable observation. Later invocation fails closed before authorization/signing if that saved contract resolves to a different executable or Wasm hash. Running an explicit contract inspect (`fresnica contract NAME` or `--json`) reloads the deployed interface and refreshes the stored observation, making the code change an explicit review boundary instead of a silent upgrade.
+
+Contract Spec `Address`/`MuxedAddress` inputs may use a referenced local wallet name, contact name, or saved contract name. Exact Stellar addresses are parsed first and always win. Fresnica injects only names actually present in invocation arguments; unrelated duplicate names cannot break other calls, while a referenced name that resolves to different addresses fails closed as ambiguous.
 
 The v0.4 `contract invoke C... -- FUNCTION ...` grammar remains accepted for compatibility.
 

@@ -1,14 +1,14 @@
 # Fresnica Terminal Current State
 
-Status: **v0.3.0 remains the published preview. v0.4.0 is the active release candidate, centered on cross-platform Device Unlock/System Authentication, versioned Argon2id wallet protection, and a simplified CLI authentication/help model. Linux adds only a per-UID Polkit policy managed by `device-unlock enable|disable`; there is still no Fresnica helper, daemon, service, setuid binary, PAM configuration, or privileged key store.**
+Status: **v0.4.0 is integrated on Main. v0.5 development is active and shifts the product target from a plugin-oriented extension base to a headless Operation Foundation equally usable by humans, agents, bots, scripts, plugins and native UIs. Soroban is the first proof surface.**
 
-Last verified: 2026-09-11.
+Last verified: 2026-09-12.
 
 ## Source of truth
 
-- Current Terminal `main`: `d32e0755e39018ee04a5a30f86102e6d9c9539e9`; released preview `v0.3.0`. Main CI #109 and Release Terminal #86 passed.
-- Active v0.4.0 branch: `feat/terminal-device-auth-cross-platform`; portable Device Unlock base `feat/terminal-device-unlock@ad8b2fcb0b76a4a62456317ad523343e6c9d4350`; product checkpoint `9d3e4e0bc6753418385689b86efca3de78ba938e`. Exact upstream pin: `6c3388c84993bf8dfd133638a7c32a37a0769e74`. Repository HEAD remains authoritative for docs-only follow-up state.
-- Released upstream Main baseline remains `Fresnica/fresnica@be12ee185002cc41ac874fa3f969e19d99eaf63c`. Active upstream `feat/system-auth-sdk-boundary` is now `6c3388c84993bf8dfd133638a7c32a37a0769e74`; `719adbd9787f11414e1708c0da9a28fc3f50f0d4` introduced versioned Argon2id protection and `6c3388c...` aligned Rust CLI compatibility expectations.
+- Current Terminal `main`: `420c09c3005ac82dc211b2170e9da546de373800`, squash integration of Fresnica Terminal v0.4.0 through PR #38.
+- Active v0.5 branch: `feat/terminal-v0.5-contract-ux`; first product checkpoint `7a761a6ec221698536bc47a3c26f8dfb190c8f87` makes deployed Soroban contracts directly usable and adds network-scoped saved contract names while retaining the v0.4 invoke grammar.
+- Active v0.5 now pins shared Fresnica source `54ceeec7de63931ed89219d1a3587cb289262687` from `feat/rust-client-contract-address-names`. The upstream line is intentionally incremental: `3ab24e0` adds typed local-name resolution for Contract Spec Address inputs; `6ad7d56` exposes contract executable kind and resolved Wasm hash during interface inspection; `8f15175` carries the same observation through read-only and transaction invoke results; `54ceeec` rechecks executable identity after real write preparation and fails closed if code changed during preparation.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
 - Architecture-convergence product top: PR #19 `refactor/terminal-history-read-model@85fba1612ba7709a8040a0d1a1afc1011cd00d08`; cumulative Draft integration PR #21 is based on that validated tree plus this status record.
 - Terminal #19 tree: `6f552cb7e9f1a4f12fea85309d9d4c9696a5364b`.
@@ -20,7 +20,18 @@ Last verified: 2026-09-11.
 - Upstream read-only child Draft PR #172: `a4b0bd4eaa1a47e5f8cb8107ca264bffac6d444b`; Required CI #103 / run `34077833532` passed.
 - Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
-Repository source, exact branch heads and CI remain authoritative if this file later drifts. Durable plugin namespace/trust decisions are authoritative in [`docs/plugin-architecture.md`](plugin-architecture.md); this CURRENT file records implementation state only.
+Repository source, exact branch heads and CI remain authoritative if this file later drifts. [`docs/operation-foundation.md`](operation-foundation.md) is the v0.5+ architecture constraint for reusable wallet operations; [`docs/plugin-architecture.md`](plugin-architecture.md) remains authoritative for the lower-trust external-plugin boundary. This CURRENT file records implementation state only.
+
+## v0.5 Operation Foundation
+
+The v0.5 main objective is no longer “build a plugin framework.” Fresnica is building a wallet operation base whose business capabilities are headless first and can be consumed by humans, agents, bots, scripts, plugins, TUI and future native clients without duplicating transaction semantics or weakening authorization.
+
+Soroban is the first proof because Contract Spec, simulation and typed Address semantics provide a strong machine-readable substrate. The implementation sequence is: direct contract use -> versioned Contract Store with chain observations -> wallet/contact/contract name resolution -> machine inspection -> stable bounded host capabilities -> only then thin SEP-41 or ecosystem consumers.
+
+Plugins remain ordinary lower-trust orchestration processes. They should become cheaper as the Operation Foundation improves; they must not become alternate wallet implementations.
+
+Current Terminal implementation upgrades the former flat network-scoped contract alias file in place to `fresnica-contract-store-v1`. Legacy arrays remain readable and migrate on first write. Saved contracts retain exact `C...` identity plus user name and only proven observations (`executable`, optional resolved `wasm_hash`). First inspect/invoke initializes the observation; later invocation fails closed before authorization/signing if the executable changes, while explicit inspect refreshes the reviewed observation. `contract add/list/remove --json` are machine-readable. Contract Address arguments may resolve referenced wallet, contact, or saved-contract names; raw Stellar addresses win and referenced cross-namespace conflicts fail closed.
+The Contract Store commands are local operations and remain usable even when Horizon/RPC configuration is invalid. Machine `contract list --json` uses `fresnica-contract-list-v1`, separate from the on-disk Store schema. Final local validation for this slice: rustfmt and `git diff --check` PASS; workspace Clippy `-D warnings` PASS; workspace tests PASS (Anchor 7, CLI 65, CLI integration 3, presentation 3, TUI 21); workspace release build PASS; repository boundary PASS at upstream `54ceeec...`. Upstream rust-client validation is 204/204 tests PASS.
 
 Active Device Unlock architecture checkpoint:
 
@@ -31,7 +42,7 @@ Active Device Unlock architecture checkpoint:
 - Write commands do not inspect or present Device Unlock as a product choice. The signing layer automatically uses System Authentication for an enrolled protected signer; otherwise it asks for the Fresnica Passphrase. User cancellation fails closed. Platform unavailability may explicitly require the Fresnica Passphrase.
 - Authentication state is lazy and process-local: the first protected signer use may authenticate; successful authentication is reused for the rest of that CLI process. This lets Soroban detached authorization and final envelope signing share one authentication. Process exit destroys the state.
 - macOS uses LocalAuthentication plus the user's Login Keychain. Existing physical acceptance remains PASS.
-- macOS update-enrollment migration is now wired into the Device Unlock signing path on `feat/terminal-device-auth-cross-platform`: stale enrollment metadata reaches backend migration, migration reuses the existing CLI authentication context, and disable cleanup removes both secret and metadata Keychain entries. VPS validation: workspace tests, Clippy `-D warnings`, and release build PASS. Physical Mac upgrade acceptance remains the final platform gate.
+- macOS update-enrollment migration is integrated in v0.4.0. Final physical Mac acceptance passed the agreed prompt budget: stale migration requires two native system prompts and the following normal Send requires one. The path is frozen for v0.4 unless new evidence proves a defect.
 - Windows uses Windows Hello `IUserConsentVerifierInterop` plus Credential Manager. Existing physical acceptance remains PASS. `device-unlock enable` performs a real Hello verification before the Fresnica Passphrase.
 - Linux uses Polkit `auth_self` as `DeviceAuthenticator` and the user's existing default Secret Service collection as `DeviceSecretStore`. Fresnica never creates, locks or unlocks a keyring.
 - Linux embeds the Polkit policy template in the `fresnica` binary. Each Linux UID gets its own action and file: `com.fresnica.device-unlock.authenticate.<uid>` and `/usr/share/polkit-1/actions/com.fresnica.device-unlock.<uid>.policy`. `enable` installs or atomically refreshes it through the current Fresnica binary using the platform privilege prompt.
@@ -41,12 +52,12 @@ Active Device Unlock architecture checkpoint:
 - Final local deterministic gate for product `9d3e4e0...`: repository boundary PASS; rustfmt/`git diff --check` PASS; workspace Clippy `-D warnings` PASS; workspace tests PASS (Anchor 7, CLI 53, CLI contract 2, presentation 3, TUI 21); Linux release builds PASS for all three binaries and all report `0.4.0`; Python-to-Rust CLI compatibility 5/5 PASS against exact upstream `6c3388c...`; root/wallet/Anchor help ownership smoke PASS; Windows CLI release cross-build PASS through the release workflow's `cargo xwin` path. Native macOS cross-build cannot be meaningfully executed on this VPS because no Apple SDK/toolchain is installed; previous physical macOS acceptance remains the platform evidence until the v0.4.0 tree receives a Mac smoke.
 - Historical Linux fprintd and strong setuid/helper System Auth branches remain architecture/security evidence only; neither design is part of the v0.4.0 product.
 
-## v0.4.0 release candidate
+## v0.4.0 integrated baseline
 
 - Product version is `0.4.0` for `fresnica`, `fresnica-anchor`, `fresnica-tui`, and `fresnica-terminal-presentation`. Release marker: `releases/terminal-v0.4.0.json`.
 - Exact upstream source is `6c3388c84993bf8dfd133638a7c32a37a0769e74`. Native SDK baseline remains v0.3.0 / Native Binding API 3 / Universal SDK API 5 / Core Client API 5; this Terminal release does not redefine that binary ABI.
 - Root help is intentionally shallow. Anchor remains a bundled native plugin and owns `fresnica anchor --help`; the root CLI no longer duplicates Anchor subcommand syntax. Wallet details similarly live under `fresnica wallet --help`.
-- v0.4.0 is not published or merged to Main yet. Product checkpoint is `9d3e4e0bc6753418385689b86efca3de78ba938e`; the following docs-only checkpoint records that state. No GitHub CI or Release workflow was triggered for this local convergence work.
+- v0.4.0 was integrated to Main through PR #38 as `420c09c3005ac82dc211b2170e9da546de373800`. Its final pre-merge product head was `fcf3332952c8127feccfb324b2d9c0ff74faaced`; CI, Release Terminal validation and physical macOS acceptance passed before integration. This document does not use GitHub publication/tag state as the v0.5 development baseline.
 
 Active Anchor native-plugin checkpoint:
 

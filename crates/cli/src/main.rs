@@ -2,7 +2,7 @@ mod anchor_auth;
 mod asset_discovery;
 mod contacts;
 mod contract;
-mod contract_alias;
+mod contract_store;
 mod device_unlock;
 #[cfg(target_os = "linux")]
 mod device_unlock_linux;
@@ -125,6 +125,9 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     };
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
+        "contract" if contract::is_saved_contract_command(&global.command[1..]) => {
+            run_local_command(&global)
+        }
         "plugin" => plugin::command_plugin(&global.command[1..]),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
         | "contract" | "__plugin-host" => run_network_command(&global),
@@ -142,6 +145,9 @@ fn run_local_command(global: &GlobalOptions) -> Result<(), String> {
         "info" => wallet::command_info(&storage, &global.command[1..]),
         "contact" => contacts::command_contact(&storage, &global.command[1..]),
         "wallet" => wallet::command_wallet(&storage, &global.network, &global.command[1..]),
+        "contract" => {
+            contract::command_saved_contracts(&storage, &global.network, &global.command[1..])
+        }
         _ => unreachable!("local command was classified before dispatch"),
     }
 }
