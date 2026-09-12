@@ -14,8 +14,8 @@ use crate::transaction_flow::{
     confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
 };
 
-const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--json] [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...";
-const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
+const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
+const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
 const SAVED_CONTRACT_USAGE: &str =
     "usage: fresnica contract list [--json] | contract add NAME C... [--json] | contract remove NAME [--json]";
 const CONTRACT_LIST_SCHEMA: &str = "fresnica-contract-list-v1";
@@ -77,6 +77,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         InvokeAction::Invoke { .. } => {}
     }
 
+    let scval_xdr_arguments = options.scval_xdr_arguments.clone();
     let InvokeAction::Invoke {
         function_name,
         arguments,
@@ -88,6 +89,9 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
     crate::diagnostics::stage("contract: simulate invoke");
     let mut invoke = ContractInvokeRequest::new(options.contract_id, function_name, arguments);
     invoke.wallet = options.wallet;
+    for argument in scval_xdr_arguments {
+        invoke.add_scval_xdr_argument(argument.name, argument.value);
+    }
     add_local_address_names(client, &mut invoke)?;
     let outcome = runtime.block_on(client.prepare_contract_invoke_outcome(invoke))?;
 
@@ -172,6 +176,7 @@ struct InvokeOptions {
     wallet: Option<String>,
     yes: bool,
     json: bool,
+    scval_xdr_arguments: Vec<ContractArgumentInput>,
     action: InvokeAction,
 }
 
@@ -200,6 +205,7 @@ impl InvokeOptions {
         let mut wallet = None;
         let mut yes = false;
         let mut json = false;
+        let mut scval_xdr_arguments = Vec::new();
         let mut index = 1;
         while index < arguments.len() {
             match arguments[index].as_str() {
@@ -221,15 +227,32 @@ impl InvokeOptions {
                     json = true;
                     index += 1;
                 }
+                "--scval-xdr" => {
+                    index += 1;
+                    let name = arguments.get(index).ok_or_else(|| USAGE.to_owned())?;
+                    if name.is_empty() || name.starts_with('-') {
+                        return Err(USAGE.to_owned());
+                    }
+                    index += 1;
+                    let value = arguments.get(index).ok_or_else(|| USAGE.to_owned())?;
+                    scval_xdr_arguments.push(ContractArgumentInput::new(name, value));
+                    index += 1;
+                }
                 "-h" | "--help" => {
                     if index + 1 != arguments.len() {
                         return Err(USAGE.to_owned());
+                    }
+                    if !scval_xdr_arguments.is_empty() {
+                        return Err(
+                            "--scval-xdr requires a contract function invocation".to_owned()
+                        );
                     }
                     return Ok(Self {
                         contract_id,
                         wallet,
                         yes,
                         json,
+                        scval_xdr_arguments,
                         action: InvokeAction::InterfaceHelp,
                     });
                 }
@@ -242,11 +265,15 @@ impl InvokeOptions {
         } else {
             parse_dynamic(&arguments[index..])?
         };
+        if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
+            return Err("--scval-xdr requires a contract function invocation".to_owned());
+        }
         Ok(Self {
             contract_id,
             wallet,
             yes,
             json,
+            scval_xdr_arguments,
             action,
         })
     }
@@ -259,6 +286,7 @@ impl InvokeOptions {
         let mut wallet = None;
         let mut yes = false;
         let mut json = false;
+        let mut scval_xdr_arguments = Vec::new();
         let mut index = 2;
         while index < arguments.len() && arguments[index] != "--" {
             match arguments[index].as_str() {
@@ -280,6 +308,21 @@ impl InvokeOptions {
                     json = true;
                     index += 1;
                 }
+                "--scval-xdr" => {
+                    index += 1;
+                    let name = arguments
+                        .get(index)
+                        .ok_or_else(|| LEGACY_USAGE.to_owned())?;
+                    if name.is_empty() || name.starts_with('-') {
+                        return Err(LEGACY_USAGE.to_owned());
+                    }
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| LEGACY_USAGE.to_owned())?;
+                    scval_xdr_arguments.push(ContractArgumentInput::new(name, value));
+                    index += 1;
+                }
                 value if !value.starts_with('-') => break,
                 _ => return Err(LEGACY_USAGE.to_owned()),
             }
@@ -290,11 +333,15 @@ impl InvokeOptions {
             ));
         }
         let action = parse_dynamic(&arguments[index + 1..])?;
+        if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
+            return Err("--scval-xdr requires a contract function invocation".to_owned());
+        }
         Ok(Self {
             contract_id,
             wallet,
             yes,
             json,
+            scval_xdr_arguments,
             action,
         })
     }
@@ -972,6 +1019,62 @@ mod tests {
         assert_eq!(function_name, "transfer");
         assert_eq!(arguments[1].name, "wallet");
         assert_eq!(arguments[1].value, "contract-owned-value");
+    }
+
+    #[test]
+    fn scval_xdr_host_option_stays_before_function_boundary() {
+        let args = [
+            "aqua",
+            "--scval-xdr",
+            "swaps_chain",
+            "AAAA",
+            "swap_chained",
+            "--scval-xdr",
+            "contract-owned-value",
+            "--amount",
+            "10",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(options.scval_xdr_arguments.len(), 1);
+        assert_eq!(options.scval_xdr_arguments[0].name, "swaps_chain");
+        assert_eq!(options.scval_xdr_arguments[0].value, "AAAA");
+        let InvokeAction::Invoke { arguments, .. } = options.action else {
+            panic!("expected invoke action");
+        };
+        assert_eq!(arguments[0].name, "scval-xdr");
+        assert_eq!(arguments[0].value, "contract-owned-value");
+    }
+
+    #[test]
+    fn legacy_scval_xdr_host_option_stays_before_separator() {
+        let args = [
+            "invoke",
+            CONTRACT,
+            "--scval-xdr",
+            "swaps_chain",
+            "AAAA",
+            "--",
+            "swap_chained",
+            "--amount",
+            "10",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(options.scval_xdr_arguments.len(), 1);
+        assert_eq!(options.scval_xdr_arguments[0].name, "swaps_chain");
+        assert!(matches!(
+            options.action,
+            InvokeAction::Invoke { ref function_name, .. } if function_name == "swap_chained"
+        ));
+    }
+
+    #[test]
+    fn scval_xdr_requires_function_invocation() {
+        let args = ["aqua", "--scval-xdr", "route", "AAAA"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&args)
+            .unwrap_err()
+            .contains("requires a contract function invocation"));
     }
 
     #[test]
