@@ -227,6 +227,8 @@ Fresnica global options parsed before the plugin name remain host policy. Select
 `-vv` additionally prints the CLI version, selected network, and exact pinned Fresnica source revision.
 Diagnostics intentionally never dump the raw argument vector or hidden input, so command arguments cannot accidentally expose a mnemonic, Stellar secret, Fresnica passphrase, SEP-10 token, or unlock material through verbose logging.
 
+Headless callers that must satisfy a Fresnica hidden-input prompt may set `FRESNICA_SECRET_STDIN=1` and provide one secret value per stdin line. The environment contains only the transport opt-in, never the secret itself; secrets still must not be placed in argv, environment values, JSON output, or diagnostics. Human/default invocations continue to use the platform TTY password reader.
+
 Put verbosity flags before the command:
 
 ```sh

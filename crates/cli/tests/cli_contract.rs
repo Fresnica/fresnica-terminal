@@ -60,6 +60,9 @@ fn capabilities_are_machine_readable_without_home_or_network_configuration() {
     let operations = value["operations"].as_array().unwrap();
     assert!(operations
         .iter()
+        .any(|item| item["id"] == "wallet.sign_message"));
+    assert!(operations
+        .iter()
         .any(|item| item["id"] == "contract.simulate"));
     assert!(operations
         .iter()

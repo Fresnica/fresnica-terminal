@@ -1,10 +1,18 @@
 use std::io::{self, Write};
 
-use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
+use fresnica_client::{
+    sign_sep53_message_with_system_auth, wallet as wallet_ops, FresnicaClient,
+    RevealedSigningMaterial, WalletRecord, WalletStorage,
+};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
-use crate::{device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden};
+use crate::{
+    device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden,
+    transaction_flow::with_software_signer_authorization,
+};
 
 const WALLET_HELP: &str = r#"Wallet commands:
   fresnica wallet list [--json]
@@ -21,6 +29,7 @@ const WALLET_HELP: &str = r#"Wallet commands:
   fresnica wallet detach-signer NAME
   fresnica wallet device-unlock enable|disable NAME
   fresnica wallet device-unlock status NAME [--json]
+  fresnica wallet sign-message --message-base64 BASE64 [--wallet NAME] -y [--json]
   fresnica wallet testnet-fund [--wallet NAME]
   fresnica wallet reveal [NAME]
   fresnica wallet backup NAME PATH [--force]
@@ -153,6 +162,7 @@ pub(crate) fn command_wallet(
         "attach-mnemonic" => wallet_attach_mnemonic(storage, &arguments[1..]),
         "detach-signer" if arguments.len() == 2 => wallet_detach_signer(storage, &arguments[1]),
         "device-unlock" => device_unlock::command(storage, &arguments[1..]),
+        "sign-message" => wallet_sign_message(storage, network, &arguments[1..]),
         "testnet-fund" | "fund" => friendbot::command_fund(storage, network, &arguments[1..]),
         "reveal" if arguments.len() <= 2 => {
             wallet_reveal(storage, arguments.get(1).map(String::as_str))
@@ -164,6 +174,89 @@ pub(crate) fn command_wallet(
             "unknown or invalid wallet command: {command}\n\n{WALLET_HELP}"
         )),
     }
+}
+
+fn wallet_sign_message(
+    storage: &WalletStorage,
+    network: &str,
+    arguments: &[String],
+) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: fresnica wallet sign-message --message-base64 BASE64 [--wallet NAME] -y [--json]";
+    let mut wallet_name = None;
+    let mut message_base64 = None;
+    let mut yes = false;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--wallet" if wallet_name.is_none() => {
+                index += 1;
+                wallet_name = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 1;
+            }
+            "--message-base64" if message_base64.is_none() => {
+                index += 1;
+                message_base64 = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 1;
+            }
+            "-y" | "--yes" if !yes => {
+                yes = true;
+                index += 1;
+            }
+            "--json" if !json_output => {
+                json_output = true;
+                index += 1;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    if !yes {
+        return Err(
+            "wallet sign-message requires -y after reviewing the SEP-53 message".to_owned(),
+        );
+    }
+    let message = STANDARD
+        .decode(message_base64.ok_or_else(|| USAGE.to_owned())?)
+        .map_err(|_| "--message-base64 must be valid standard base64".to_owned())?;
+    let client = FresnicaClient::new(storage.home(), network)?;
+    let record = client.resolve_wallet(wallet_name)?;
+    let signed = with_software_signer_authorization(&client, |passphrase, system_auth| {
+        sign_sep53_message_with_system_auth(&record, &message, passphrase, system_auth)
+    })?;
+    let signature = STANDARD.encode(&signed.signature);
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "sep53_message_signature",
+                "standard": "SEP-53",
+                "wallet": signed.wallet_name,
+                "signer": signed.signer_public_key,
+                "network": record.network,
+                "signature": signature,
+                "signature_encoding": "base64",
+            }))
+            .map_err(|error| format!("unable to encode SEP-53 signature JSON: {error}"))?
+        );
+    } else {
+        println!("SEP-53 message signed");
+        println!("Wallet:    {}", signed.wallet_name);
+        println!("Signer:    {}", signed.signer_public_key);
+        println!("Network:   {}", record.network);
+        println!("Signature: {signature}");
+    }
+    Ok(())
 }
 
 fn wallet_use(storage: &WalletStorage, name: &str, json_output: bool) -> Result<(), String> {
@@ -684,6 +777,34 @@ fn prompt_new_passcode() -> Result<Zeroizing<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_message_requires_explicit_confirmation_and_base64() {
+        let root = std::env::temp_dir().join(format!(
+            "fresnica-sign-message-policy-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let storage = WalletStorage::new(&root).unwrap();
+        let no_confirmation = [
+            "--message-base64".to_owned(),
+            "Y2hhbGxlbmdl".to_owned(),
+            "--json".to_owned(),
+        ];
+        assert!(wallet_sign_message(&storage, "testnet", &no_confirmation)
+            .unwrap_err()
+            .contains("requires -y"));
+        let invalid_base64 = [
+            "--message-base64".to_owned(),
+            "not-base64***".to_owned(),
+            "-y".to_owned(),
+            "--json".to_owned(),
+        ];
+        assert!(wallet_sign_message(&storage, "testnet", &invalid_base64)
+            .unwrap_err()
+            .contains("valid standard base64"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn parses_create_options_without_cli_framework() {

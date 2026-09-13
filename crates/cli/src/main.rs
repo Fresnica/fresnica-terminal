@@ -69,6 +69,7 @@ Environment:
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
   FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
   FRESNICA_TX_TIMEOUT_SECONDS  Default Classic transaction validity window; CLI flag wins
+  FRESNICA_SECRET_STDIN=1      Read hidden secret prompts from stdin, one line each
 
 More help:
   fresnica wallet --help       Wallet and signer commands
@@ -335,6 +336,16 @@ fn command_stage(command: &[String]) -> &'static str {
 }
 
 fn prompt_hidden(prompt: &str) -> Result<Zeroizing<String>, String> {
+    if env::var_os("FRESNICA_SECRET_STDIN").is_some() {
+        let mut value = String::new();
+        std::io::stdin()
+            .read_line(&mut value)
+            .map_err(|error| format!("unable to read secret input from stdin: {error}"))?;
+        while matches!(value.as_bytes().last(), Some(b'\n' | b'\r')) {
+            value.pop();
+        }
+        return Ok(Zeroizing::new(value));
+    }
     rpassword::prompt_password(prompt)
         .map(Zeroizing::new)
         .map_err(|error| format!("unable to read secret input: {error}"))
