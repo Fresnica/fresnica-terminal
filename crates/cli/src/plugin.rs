@@ -8,6 +8,8 @@ use std::process::Command;
 use serde_json::{json, Value};
 
 const PREFIX: &str = "fresnica-";
+const PLUGIN_DEPTH_ENV: &str = "FRESNICA_PLUGIN_DEPTH";
+const MAX_PLUGIN_DEPTH: u32 = 8;
 const RESERVED_NATIVE_EXECUTABLES: [&str; 1] = ["fresnica-tui"];
 
 pub struct NativeHostContext<'a> {
@@ -62,12 +64,14 @@ fn run_invocation(
     invocation: PluginInvocation,
     context: &NativeHostContext<'_>,
 ) -> Result<i32, String> {
+    let depth = next_plugin_depth(env::var_os(PLUGIN_DEPTH_ENV).as_deref())?;
     let mut command = Command::new(&invocation.executable);
     command.args(&invocation.args);
     let host = env::current_exe()
         .map_err(|error| format!("unable to locate Fresnica plugin host executable: {error}"))?;
     command
         .env("FRESNICA_PLUGIN_API", "1")
+        .env(PLUGIN_DEPTH_ENV, depth.to_string())
         .env("FRESNICA_PLUGIN_HOST", host)
         .env("FRESNICA_PLUGIN_NETWORK", context.network)
         .env("FRESNICA_HOME", context.home);
@@ -116,6 +120,23 @@ fn find_plugin(args: &[String], path: Option<&OsStr>) -> Option<PluginInvocation
     }
 
     None
+}
+
+fn next_plugin_depth(current: Option<&OsStr>) -> Result<u32, String> {
+    let current = match current {
+        None => 0,
+        Some(value) => value
+            .to_str()
+            .ok_or_else(|| format!("{PLUGIN_DEPTH_ENV} must be valid UTF-8"))?
+            .parse::<u32>()
+            .map_err(|_| format!("{PLUGIN_DEPTH_ENV} must be an unsigned integer"))?,
+    };
+    if current >= MAX_PLUGIN_DEPTH {
+        return Err(format!(
+            "external plugin composition exceeded maximum depth {MAX_PLUGIN_DEPTH}; possible recursive plugin cycle"
+        ));
+    }
+    Ok(current + 1)
 }
 
 fn plugin_list_json(plugins: &[String]) -> Value {
@@ -317,6 +338,18 @@ mod tests {
         assert_eq!(value["plugins"][0]["command"], "fresnica anchor");
         assert_eq!(value["plugins"][1]["name"], "saint");
         assert!(value["plugins"][0].get("path").is_none());
+    }
+
+    #[test]
+    fn plugin_composition_depth_is_bounded() {
+        assert_eq!(next_plugin_depth(None).unwrap(), 1);
+        assert_eq!(next_plugin_depth(Some(OsStr::new("7"))).unwrap(), 8);
+        assert!(next_plugin_depth(Some(OsStr::new("8")))
+            .unwrap_err()
+            .contains("possible recursive plugin cycle"));
+        assert!(next_plugin_depth(Some(OsStr::new("invalid")))
+            .unwrap_err()
+            .contains("unsigned integer"));
     }
 
     #[test]
