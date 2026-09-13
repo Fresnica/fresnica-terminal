@@ -1,8 +1,9 @@
 use fresnica_client::{
     ContactStore, ContractArgumentInput, ContractCapabilities, ContractExecutableObservation,
     ContractFunction, ContractInterface, ContractInvokePreparation, ContractInvokeRequest,
-    ContractInvokeReview, ContractMetadataEntry, ContractReadResult, FresnicaClient,
-    PreparedContractInvoke, TransactionSubmission, WalletStorage, SEP41_INTERFACE_VERSION,
+    ContractInvokeReview, ContractMetadataEntry, ContractReadResult, ContractSimulationResult,
+    FresnicaClient, PreparedContractInvoke, TransactionSubmission, WalletStorage,
+    SEP41_INTERFACE_VERSION,
 };
 use serde_json::{json, Value};
 use tokio::runtime::Builder;
@@ -14,7 +15,7 @@ use crate::transaction_flow::{
     confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
 };
 
-const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
+const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--simulate] [--json] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
 const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
 const SAVED_CONTRACT_USAGE: &str =
     "usage: fresnica contract list [--json] | contract add NAME C... [--json] | contract remove NAME [--json]";
@@ -93,6 +94,23 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         invoke.add_scval_xdr_argument(argument.name, argument.value);
     }
     add_local_address_names(client, &mut invoke)?;
+    if options.simulate {
+        let result = runtime.block_on(client.simulate_contract_invoke(invoke))?;
+        verify_contract_observation(
+            client,
+            &result.contract_id,
+            &result.executable,
+            &result.metadata,
+            &result.capabilities,
+        )?;
+        crate::diagnostics::stage("contract: return simulate-only result");
+        if options.json {
+            print_json(&simulation_json(&result))?;
+        } else {
+            render_simulation(&result, &requested_target);
+        }
+        return Ok(());
+    }
     let outcome = runtime.block_on(client.prepare_contract_invoke_outcome(invoke))?;
 
     let ContractInvokePreparation::Transaction(mut prepared) = outcome else {
@@ -175,6 +193,7 @@ struct InvokeOptions {
     contract_id: String,
     wallet: Option<String>,
     yes: bool,
+    simulate: bool,
     json: bool,
     scval_xdr_arguments: Vec<ContractArgumentInput>,
     action: InvokeAction,
@@ -204,6 +223,7 @@ impl InvokeOptions {
         let contract_id = arguments.first().ok_or_else(|| USAGE.to_owned())?.clone();
         let mut wallet = None;
         let mut yes = false;
+        let mut simulate = false;
         let mut json = false;
         let mut scval_xdr_arguments = Vec::new();
         let mut index = 1;
@@ -221,6 +241,10 @@ impl InvokeOptions {
                 }
                 "-y" | "--yes" => {
                     yes = true;
+                    index += 1;
+                }
+                "--simulate" => {
+                    simulate = true;
                     index += 1;
                 }
                 "--json" => {
@@ -247,10 +271,14 @@ impl InvokeOptions {
                             "--scval-xdr requires a contract function invocation".to_owned()
                         );
                     }
+                    if simulate {
+                        return Err("--simulate requires a contract function invocation".to_owned());
+                    }
                     return Ok(Self {
                         contract_id,
                         wallet,
                         yes,
+                        simulate,
                         json,
                         scval_xdr_arguments,
                         action: InvokeAction::InterfaceHelp,
@@ -268,10 +296,24 @@ impl InvokeOptions {
         if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
             return Err("--scval-xdr requires a contract function invocation".to_owned());
         }
+        if simulate {
+            if !matches!(action, InvokeAction::Invoke { .. }) {
+                return Err("--simulate requires a contract function invocation".to_owned());
+            }
+            if wallet.is_some() {
+                return Err("--simulate does not accept --wallet because it never signs".to_owned());
+            }
+            if yes {
+                return Err(
+                    "--simulate does not accept -y/--yes because it never submits".to_owned(),
+                );
+            }
+        }
         Ok(Self {
             contract_id,
             wallet,
             yes,
+            simulate,
             json,
             scval_xdr_arguments,
             action,
@@ -340,6 +382,7 @@ impl InvokeOptions {
             contract_id,
             wallet,
             yes,
+            simulate: false,
             json,
             scval_xdr_arguments,
             action,
@@ -694,6 +737,54 @@ fn render_read_only(result: &ContractReadResult, requested_target: &str) {
     println!("Submitted:  no");
 }
 
+fn render_simulation(result: &ContractSimulationResult, requested_target: &str) {
+    println!("Contract simulation");
+    if requested_target == result.contract_id {
+        println!("Contract:   {}", result.contract_id);
+    } else {
+        println!("Contract:   {requested_target} ({})", result.contract_id);
+    }
+    println!("Function:   {}", result.function_name);
+    println!("Network:    {}", result.network);
+    render_executable(&result.executable);
+    for argument in &result.arguments {
+        println!(
+            "  --{:<14} {:<16} {}",
+            argument.name,
+            argument.value_type,
+            compact_json(&argument.value)
+        );
+    }
+    if result.arguments.is_empty() {
+        println!("Arguments:  none");
+    }
+    match &result.output {
+        Some(output) => println!("Result:     {}", compact_json(output)),
+        None => println!("Result:     null"),
+    }
+    println!("Simulation: ledger {}", result.simulation_ledger);
+    println!("Effects:");
+    println!(
+        "  read-write entries {}",
+        result.effects.read_write_entry_count
+    );
+    println!(
+        "  archived entries   {}",
+        result.effects.archived_entry_count
+    );
+    println!(
+        "  contract events    {}",
+        result.effects.published_event_count
+    );
+    println!(
+        "  authorization      {}",
+        result.effects.authorization_entry_count
+    );
+    println!("  restore required   {}", result.effects.restore_required);
+    println!("Requires send: {}", result.effects.requires_send());
+    println!("Submitted:  no");
+}
+
 pub(crate) fn render_review(review: &ContractInvokeReview, requested_target: &str) {
     println!("Review contract invocation");
     println!("Wallet:     {}", review.wallet_name);
@@ -877,6 +968,30 @@ fn read_only_json(result: &ContractReadResult) -> Value {
         "result": result.output.clone(),
         "simulation_ledger": result.simulation_ledger,
         "network": result.network.as_str(),
+        "submission": Value::Null,
+    })
+}
+
+fn simulation_json(result: &ContractSimulationResult) -> Value {
+    json!({
+        "kind": "simulation",
+        "contract_id": result.contract_id.as_str(),
+        "executable": executable_json(&result.executable),
+        "wasm_meta": metadata_json(&result.metadata),
+        "capabilities": capabilities_json(&result.capabilities),
+        "function": result.function_name.as_str(),
+        "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
+        "result": result.output.clone(),
+        "simulation_ledger": result.simulation_ledger,
+        "network": result.network.as_str(),
+        "effects": {
+            "read_write_entry_count": result.effects.read_write_entry_count,
+            "archived_entry_count": result.effects.archived_entry_count,
+            "published_event_count": result.effects.published_event_count,
+            "authorization_entry_count": result.effects.authorization_entry_count,
+            "restore_required": result.effects.restore_required,
+            "requires_send": result.effects.requires_send(),
+        },
         "submission": Value::Null,
     })
 }
@@ -1094,6 +1209,35 @@ mod tests {
             options.action,
             InvokeAction::FunctionHelp { ref function_name } if function_name == "transfer"
         ));
+    }
+
+    #[test]
+    fn simulate_only_is_explicit_and_has_no_signing_or_submission_flags() {
+        let args = [
+            "aqua",
+            "--simulate",
+            "--json",
+            "balance",
+            "--id",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert!(options.simulate);
+        assert!(options.json);
+        assert!(options.wallet.is_none());
+        assert!(!options.yes);
+        assert!(matches!(options.action, InvokeAction::Invoke { .. }));
+
+        let with_wallet = ["aqua", "--simulate", "--wallet", "bot", "balance"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&with_wallet)
+            .unwrap_err()
+            .contains("never signs"));
+
+        let with_yes = ["aqua", "--simulate", "-y", "balance"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&with_yes)
+            .unwrap_err()
+            .contains("never submits"));
     }
 
     #[test]

@@ -55,6 +55,7 @@ fn operations() -> Vec<Value> {
         operation("contract.store.add", "fresnica --network NETWORK contract add NAME C... --json", "local_write", &["network"]),
         operation("contract.store.remove", "fresnica --network NETWORK contract remove NAME --json", "local_write", &["network"]),
         operation("contract.inspect", "fresnica --network NETWORK contract TARGET --json", "read", &["network", "rpc"]),
+        operation("contract.simulate", "fresnica --network NETWORK contract TARGET --simulate --json FUNCTION [--NAME VALUE]...", "simulate", &["network", "rpc"]),
         operation_with_confirmation("contract.invoke", "fresnica --network NETWORK contract TARGET [--wallet NAME] [-y] --json FUNCTION [--NAME VALUE]...", "read_write", &["network", "rpc"], "-y when simulation classifies the operation as a write"),
         operation("token.inspect", "fresnica --network NETWORK token TOKEN --json", "read", &["network", "rpc"]),
         operation("token.balance", "fresnica --network NETWORK token TOKEN balance OWNER --json", "read", &["network", "rpc"]),
@@ -116,6 +117,7 @@ mod tests {
         assert!(ids.contains("dex.offer.sell"));
         assert!(ids.contains("dex.offer.update"));
         assert!(ids.contains("dex.offer.cancel"));
+        assert!(ids.contains("contract.simulate"));
         assert!(ids.contains("contract.invoke"));
         assert!(ids.contains("token.transfer"));
     }
