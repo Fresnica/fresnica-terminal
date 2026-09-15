@@ -1,0 +1,15 @@
+{
+  "kind": "fresnica-terminal-release",
+  "version": "0.5.0",
+  "channel": "preview",
+  "fresnica_rev": "4b79f75c88d427f11be867e5b4b4e978643102b2",
+  "native_sdk_baseline": "0.3.0",
+  "native_binding_api_version": 3,
+  "sdk_api_version": 5,
+  "core_client_api_version": 5,
+  "products": [
+    "fresnica",
+    "fresnica-anchor",
+    "fresnica-tui"
+  ]
+}
