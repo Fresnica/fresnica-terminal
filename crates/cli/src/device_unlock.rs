@@ -7,6 +7,7 @@ use fresnica_client::{
     prepare_system_auth_enrollment, system_auth_slot, verify_passcode, FresnicaClient,
     SystemAuthRelease, SystemAuthSlot, SystemAuthUnlockProvider, WalletStorage,
 };
+use serde_json::{json, Value};
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +114,10 @@ fn default_backend() -> Arc<dyn DeviceUnlockBackend> {
 
 pub(crate) fn command(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
     match arguments {
-        [command, name] if command == "status" => status(storage, name, default_backend()),
+        [command, name] if command == "status" => status(storage, name, default_backend(), false),
+        [command, name, flag] if command == "status" && flag == "--json" => {
+            status(storage, name, default_backend(), true)
+        }
         [command, name] if matches!(command.as_str(), "enable" | "disable") => {
             if !io::stdin().is_terminal() {
                 return Err(format!(
@@ -126,7 +130,7 @@ pub(crate) fn command(storage: &WalletStorage, arguments: &[String]) -> Result<(
                 disable(storage, name, default_backend())
             }
         }
-        _ => Err("usage: fresnica wallet device-unlock enable|disable|status NAME".to_owned()),
+        _ => Err("usage: fresnica wallet device-unlock enable|disable NAME | fresnica wallet device-unlock status NAME [--json]".to_owned()),
     }
 }
 
@@ -234,21 +238,31 @@ fn status(
     storage: &WalletStorage,
     name: &str,
     backend: Arc<dyn DeviceUnlockBackend>,
+    json_output: bool,
 ) -> Result<(), String> {
     let record = storage.load(name)?;
     if record.watch_only() || record.secret.is_none() {
-        println!("Device unlock: not applicable (no software signer)");
+        if json_output {
+            print_status_json(device_unlock_status_json(&record, None, None))?;
+        } else {
+            println!("Device unlock: not applicable (no software signer)");
+        }
         return Ok(());
     }
     let slot = system_auth_slot(&record)?;
     let state = backend.state(&slot)?;
-    println!("Device unlock: {}", state_label(state));
-    if state != DeviceUnlockState::Unavailable {
-        println!("Provider: {}", backend.provider_name());
+    let provider = (state != DeviceUnlockState::Unavailable).then(|| backend.provider_name());
+    if json_output {
+        print_status_json(device_unlock_status_json(&record, Some(state), provider))?;
+    } else {
+        println!("Device unlock: {}", state_label(state));
+        if let Some(provider) = provider {
+            println!("Provider: {provider}");
+        }
     }
 
     #[cfg(target_os = "macos")]
-    if state == DeviceUnlockState::NeedsReauthorization && io::stdin().is_terminal() {
+    if should_offer_reauthorization(state, json_output, io::stdin().is_terminal()) {
         if !confirm_reauthorization()? {
             return Ok(());
         }
@@ -278,6 +292,42 @@ fn status(
         }
     }
     Ok(())
+}
+
+fn device_unlock_status_json(
+    record: &fresnica_client::WalletRecord,
+    state: Option<DeviceUnlockState>,
+    provider: Option<&str>,
+) -> Value {
+    json!({
+        "kind": "device_unlock_status",
+        "wallet": {
+            "name": record.name.as_str(),
+            "address": record.address.as_str(),
+        },
+        "applicable": state.is_some(),
+        "state": state.map(state_label).unwrap_or("not_applicable"),
+        "provider": provider,
+        "requires_reauthorization": state == Some(DeviceUnlockState::NeedsReauthorization),
+    })
+}
+
+fn print_status_json(value: Value) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value)
+            .map_err(|error| format!("unable to encode Device Unlock status JSON: {error}"))?
+    );
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn should_offer_reauthorization(
+    state: DeviceUnlockState,
+    json_output: bool,
+    interactive: bool,
+) -> bool {
+    state == DeviceUnlockState::NeedsReauthorization && !json_output && interactive
 }
 
 fn state_label(state: DeviceUnlockState) -> &'static str {
@@ -581,6 +631,43 @@ mod tests {
             || panic!("cancelled migration must not cache authentication"),
         );
         assert_eq!(cancelled, SystemAuthRelease::Cancelled);
+    }
+
+    #[test]
+    fn machine_status_never_offers_reauthorization() {
+        assert!(!should_offer_reauthorization(
+            DeviceUnlockState::NeedsReauthorization,
+            true,
+            true,
+        ));
+        assert!(should_offer_reauthorization(
+            DeviceUnlockState::NeedsReauthorization,
+            false,
+            true,
+        ));
+        assert!(!should_offer_reauthorization(
+            DeviceUnlockState::NeedsReauthorization,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn device_unlock_status_json_preserves_public_state_only() {
+        let record =
+            wallet_ops::import_secret_record("wallet", "testnet", SECRET, PASSCODE).unwrap();
+        let value = device_unlock_status_json(
+            &record,
+            Some(DeviceUnlockState::NeedsReauthorization),
+            Some("Fake Device Store"),
+        );
+        assert_eq!(value["kind"], "device_unlock_status");
+        assert_eq!(value["wallet"]["name"], "wallet");
+        assert_eq!(value["state"], "needs-reauthorization");
+        assert_eq!(value["provider"], "Fake Device Store");
+        assert_eq!(value["requires_reauthorization"], true);
+        assert!(value.get("secret").is_none());
+        assert!(value["wallet"].get("secret").is_none());
     }
 
     #[test]

@@ -1,13 +1,22 @@
 use std::io::{self, Write};
 
-use fresnica_client::{wallet as wallet_ops, RevealedSigningMaterial, WalletRecord, WalletStorage};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
+use fresnica_client::{
+    sign_sep53_message_with_system_auth, wallet as wallet_ops, FresnicaClient,
+    RevealedSigningMaterial, WalletRecord, WalletStorage,
+};
+use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
-use crate::{device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden};
+use crate::{
+    device_unlock, diagnostics, expand_path, friendbot, ledger, prompt_hidden,
+    transaction_flow::with_software_signer_authorization,
+};
 
 const WALLET_HELP: &str = r#"Wallet commands:
-  fresnica wallet list
-  fresnica wallet use NAME
+  fresnica wallet list [--json]
+  fresnica wallet use NAME [--json]
   fresnica wallet create NAME [--index N] [--language LANGUAGE] [--strength BITS]
   fresnica wallet import-secret NAME
   fresnica wallet import-mnemonic NAME [--index N] [--language LANGUAGE]
@@ -18,7 +27,9 @@ const WALLET_HELP: &str = r#"Wallet commands:
   fresnica wallet attach-secret NAME
   fresnica wallet attach-mnemonic NAME [--index N] [--language LANGUAGE]
   fresnica wallet detach-signer NAME
-  fresnica wallet device-unlock enable|disable|status NAME
+  fresnica wallet device-unlock enable|disable NAME
+  fresnica wallet device-unlock status NAME [--json]
+  fresnica wallet sign-message --message-base64 BASE64 [--wallet NAME] -y [--json]
   fresnica wallet testnet-fund [--wallet NAME]
   fresnica wallet reveal [NAME]
   fresnica wallet backup NAME PATH [--force]
@@ -27,13 +38,42 @@ const WALLET_HELP: &str = r#"Wallet commands:
 "#;
 
 pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Result<(), String> {
-    let wallet_name = match arguments {
-        [] => None,
-        [flag, name] if flag == "--wallet" => Some(name.as_str()),
-        _ => return Err("usage: fresnica info [--wallet NAME]".to_owned()),
-    };
+    let mut wallet_name = None;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--wallet" if wallet_name.is_none() => {
+                index += 1;
+                wallet_name = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "usage: fresnica info [--wallet NAME] [--json]".to_owned())?
+                        .as_str(),
+                );
+                index += 1;
+            }
+            "--json" if !json_output => {
+                json_output = true;
+                index += 1;
+            }
+            _ => return Err("usage: fresnica info [--wallet NAME] [--json]".to_owned()),
+        }
+    }
     let record = storage.resolve(wallet_name)?;
     let default = storage.default_name()?;
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "wallet_info",
+                "wallet": wallet_public_json(&record, default.as_deref())?,
+                "fresnica_revision": diagnostics::fresnica_revision(),
+            }))
+            .map_err(|error| format!("unable to encode wallet info JSON: {error}"))?
+        );
+        return Ok(());
+    }
     println!("Name:       {}", record.name);
     println!("Address:    {}", record.address);
     println!("Network:    {}", record.network);
@@ -65,6 +105,28 @@ pub(crate) fn command_info(storage: &WalletStorage, arguments: &[String]) -> Res
     Ok(())
 }
 
+fn wallet_public_json(record: &WalletRecord, default_name: Option<&str>) -> Result<Value, String> {
+    let signer = match ledger::configuration(record)? {
+        Some(configuration) => json!({
+            "kind": "ledger",
+            "hd_path": configuration.hd_path,
+        }),
+        None => json!({
+            "kind": record.wallet_type.as_str(),
+        }),
+    };
+    Ok(json!({
+        "name": record.name.as_str(),
+        "address": record.address.as_str(),
+        "network": record.network.as_str(),
+        "wallet_type": record.wallet_type.as_str(),
+        "watch_only": record.watch_only(),
+        "protection": if record.watch_only() { "none" } else { "fresnica_passphrase" },
+        "default": default_name == Some(record.name.as_str()),
+        "signer": signer,
+    }))
+}
+
 pub(crate) fn command_wallet(
     storage: &WalletStorage,
     network: &str,
@@ -79,11 +141,11 @@ pub(crate) fn command_wallet(
         return Ok(());
     }
     match command {
-        "list" if arguments.len() == 1 => wallet_list(storage),
-        "use" if arguments.len() == 2 => {
-            storage.set_default(&arguments[1])?;
-            println!("Default wallet is now \"{}\"", arguments[1]);
-            Ok(())
+        "list" if arguments.len() == 1 => wallet_list(storage, false),
+        "list" if arguments.len() == 2 && arguments[1] == "--json" => wallet_list(storage, true),
+        "use" if arguments.len() == 2 => wallet_use(storage, &arguments[1], false),
+        "use" if arguments.len() == 3 && arguments[2] == "--json" => {
+            wallet_use(storage, &arguments[1], true)
         }
         "create" => wallet_create(storage, network, &arguments[1..]),
         "import-secret" if arguments.len() == 2 => {
@@ -100,6 +162,7 @@ pub(crate) fn command_wallet(
         "attach-mnemonic" => wallet_attach_mnemonic(storage, &arguments[1..]),
         "detach-signer" if arguments.len() == 2 => wallet_detach_signer(storage, &arguments[1]),
         "device-unlock" => device_unlock::command(storage, &arguments[1..]),
+        "sign-message" => wallet_sign_message(storage, network, &arguments[1..]),
         "testnet-fund" | "fund" => friendbot::command_fund(storage, network, &arguments[1..]),
         "reveal" if arguments.len() <= 2 => {
             wallet_reveal(storage, arguments.get(1).map(String::as_str))
@@ -113,9 +176,125 @@ pub(crate) fn command_wallet(
     }
 }
 
-fn wallet_list(storage: &WalletStorage) -> Result<(), String> {
+fn wallet_sign_message(
+    storage: &WalletStorage,
+    network: &str,
+    arguments: &[String],
+) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: fresnica wallet sign-message --message-base64 BASE64 [--wallet NAME] -y [--json]";
+    let mut wallet_name = None;
+    let mut message_base64 = None;
+    let mut yes = false;
+    let mut json_output = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--wallet" if wallet_name.is_none() => {
+                index += 1;
+                wallet_name = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 1;
+            }
+            "--message-base64" if message_base64.is_none() => {
+                index += 1;
+                message_base64 = Some(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| USAGE.to_owned())?
+                        .as_str(),
+                );
+                index += 1;
+            }
+            "-y" | "--yes" if !yes => {
+                yes = true;
+                index += 1;
+            }
+            "--json" if !json_output => {
+                json_output = true;
+                index += 1;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    if !yes {
+        return Err(
+            "wallet sign-message requires -y after reviewing the SEP-53 message".to_owned(),
+        );
+    }
+    let message = STANDARD
+        .decode(message_base64.ok_or_else(|| USAGE.to_owned())?)
+        .map_err(|_| "--message-base64 must be valid standard base64".to_owned())?;
+    let client = FresnicaClient::new(storage.home(), network)?;
+    let record = client.resolve_wallet(wallet_name)?;
+    let signed = with_software_signer_authorization(&client, |passphrase, system_auth| {
+        sign_sep53_message_with_system_auth(&record, &message, passphrase, system_auth)
+    })?;
+    let signature = STANDARD.encode(&signed.signature);
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "sep53_message_signature",
+                "standard": "SEP-53",
+                "wallet": signed.wallet_name,
+                "signer": signed.signer_public_key,
+                "network": record.network,
+                "signature": signature,
+                "signature_encoding": "base64",
+            }))
+            .map_err(|error| format!("unable to encode SEP-53 signature JSON: {error}"))?
+        );
+    } else {
+        println!("SEP-53 message signed");
+        println!("Wallet:    {}", signed.wallet_name);
+        println!("Signer:    {}", signed.signer_public_key);
+        println!("Network:   {}", record.network);
+        println!("Signature: {signature}");
+    }
+    Ok(())
+}
+
+fn wallet_use(storage: &WalletStorage, name: &str, json_output: bool) -> Result<(), String> {
+    storage.set_default(name)?;
+    if json_output {
+        let record = storage.resolve(Some(name))?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "wallet_default_changed",
+                "wallet": wallet_public_json(&record, Some(name))?,
+            }))
+            .map_err(|error| format!("unable to encode default wallet JSON: {error}"))?
+        );
+    } else {
+        println!("Default wallet is now \"{name}\"");
+    }
+    Ok(())
+}
+
+fn wallet_list(storage: &WalletStorage, json_output: bool) -> Result<(), String> {
     let records = storage.list()?;
     let default = storage.default_name()?;
+    if json_output {
+        let wallets = records
+            .iter()
+            .map(|record| wallet_public_json(record, default.as_deref()))
+            .collect::<Result<Vec<_>, _>>()?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "wallet_list",
+                "wallets": wallets,
+            }))
+            .map_err(|error| format!("unable to encode wallet list JSON: {error}"))?
+        );
+        return Ok(());
+    }
     if records.is_empty() {
         println!("No local wallets.");
         return Ok(());
@@ -598,6 +777,34 @@ fn prompt_new_passcode() -> Result<Zeroizing<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_message_requires_explicit_confirmation_and_base64() {
+        let root = std::env::temp_dir().join(format!(
+            "fresnica-sign-message-policy-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let storage = WalletStorage::new(&root).unwrap();
+        let no_confirmation = [
+            "--message-base64".to_owned(),
+            "Y2hhbGxlbmdl".to_owned(),
+            "--json".to_owned(),
+        ];
+        assert!(wallet_sign_message(&storage, "testnet", &no_confirmation)
+            .unwrap_err()
+            .contains("requires -y"));
+        let invalid_base64 = [
+            "--message-base64".to_owned(),
+            "not-base64***".to_owned(),
+            "-y".to_owned(),
+            "--json".to_owned(),
+        ];
+        assert!(wallet_sign_message(&storage, "testnet", &invalid_base64)
+            .unwrap_err()
+            .contains("valid standard base64"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn parses_create_options_without_cli_framework() {

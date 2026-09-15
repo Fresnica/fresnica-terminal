@@ -31,7 +31,9 @@ trustline lifecycle, Classic SDEX read/write/history operations, contract-spec-d
 - `dex trades BASE COUNTER [--limit N] [--json]`
 - `dex fills [--wallet NAME] [--limit N] [--json]`
 - `dex candles BASE COUNTER [--resolution 1m|5m|15m|1h|1d|1w] [--start MS] [--end MS] [--offset MS] [--limit N] [--json]`
-- `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
+- `contract TARGET [--wallet NAME] [-y] [--json] [FUNCTION [--NAME VALUE]...]`
+- `contract list [--json] | contract add NAME C... [--json] | contract remove NAME [--json]`
+- legacy: `contract invoke C... [--wallet NAME] [-y] [--json] -- FUNCTION [--NAME VALUE]...`
 - `anchor discover CODE:GISSUER --home-domain DOMAIN [--json]`
 - `anchor auth CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--json]`
 - `anchor deposit CODE:GISSUER --home-domain DOMAIN [--wallet NAME] [--field NAME=VALUE]... [--json]`
@@ -168,20 +170,37 @@ activity, remain separate segments. The native client deliberately does not add 
 second chain-data cache implementation in this slice; the asset catalog is a
 small public-metadata cache owned by the shared Asset Discovery capability.
 
-## Contract invocation
+## Contract use
 
-`contract invoke` follows Stellar CLI's fully-typed contract model: the deployed on-chain contract specification is the source of truth for functions, parameter names, types, and documentation. Fresnica options stay before `--`; the function and contract-specific named arguments follow it.
+Fresnica treats a deployed Soroban contract as something a wallet user or agent can use directly, not as a developer-only `invoke` primitive. The deployed on-chain Contract Spec remains the source of truth for functions, parameter names, types, and documentation, but the normal command surface removes the extra `invoke` and `--` layers. Fresnica-owned options must appear before the function name; everything after the function name is contract-owned, so a contract parameter may safely be named `--wallet` or `--json`.
 
 ```sh
-fresnica --network testnet contract invoke C... -- --help
-fresnica --network testnet contract invoke C... -- transfer --help
-fresnica --network testnet contract invoke C... --json -- balance --id G...
-fresnica --network testnet contract invoke C... --wallet main -- transfer --from G... --to C... --amount 10000000
+fresnica --network testnet contract C...
+fresnica --network testnet contract C... transfer --help
+fresnica --network testnet contract C... --json balance --id G...
+fresnica --network testnet contract C... --wallet main transfer --from G... --to C... --amount 10000000
 ```
 
-The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. Dynamic help exposes official type examples where available.
+Contracts can be given local, network-scoped names. These entries live in the versioned Contract Store rather than a flat alias table. Exact `C...` identity remains authoritative; review and machine output retain it. The store records only proven chain observations today: executable kind and resolved Wasm hash when available.
+`contract list --json` uses the product schema `fresnica-contract-list-v1`, deliberately separate from the on-disk `fresnica-contract-store-v1` persistence schema so storage migrations do not redefine the automation interface.
 
-Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. Actual invocation first follows Stellar CLI's current default-send rule: if simulation contains no ledger write, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
+```sh
+fresnica --network testnet contract add aqua C...
+fresnica --network testnet contract list --json
+fresnica --network testnet contract aqua --json
+fresnica --network testnet contract aqua
+fresnica --network testnet contract aqua --wallet bot -y swap --amount 100
+```
+
+The first inspect or invocation of a saved contract records its executable observation. Later invocation fails closed before authorization/signing if that saved contract resolves to a different executable or Wasm hash. Running an explicit contract inspect (`fresnica contract NAME` or `--json`) reloads the deployed interface and refreshes the stored observation, making the code change an explicit review boundary instead of a silent upgrade.
+
+Contract Spec `Address`/`MuxedAddress` inputs may use a referenced local wallet name, contact name, or saved contract name. Exact Stellar addresses are parsed first and always win. Fresnica injects only names actually present in invocation arguments; unrelated duplicate names cannot break other calls, while a referenced name that resolves to different addresses fails closed as ambiguous.
+
+The v0.4 `contract invoke C... -- FUNCTION ...` grammar remains accepted for compatibility.
+
+The shared `fresnica-client` resolves Stellar Asset Contract, Wasm, and external-reference specs through Stellar RPC. ABI value parsing and normalized JSON conversion are delegated to the official `soroban-spec-tools` implementation, so Terminal does not maintain a parallel Soroban type parser. Terminal owns only command grammar, human review/confirmation, and its machine JSON schema; it does not parse `ScSpecEntry` or construct `ScVal`. Scalar and complex Contract Spec values, including vectors, maps, tuples, options/results, UDTs, bytesN, and wide integers, use the official Stellar textual/JSON conversion rules. External protocols that already return a typed ScVal may supply it as base64 XDR with the host-side `--scval-xdr NAME BASE64` option before the function name; Fresnica decodes only that argument, then validates and normalizes it against the current Contract Spec before review/simulation. Dynamic help exposes official type examples where available.
+
+Human help sanitizes control characters from untrusted on-chain documentation before terminal rendering. `--json` help remains machine-readable without requiring `-y`. `contract TARGET --simulate --json FUNCTION ...` is the explicit simulate-only Operation Foundation surface: it returns the Contract-Spec-decoded result plus read-write footprint count, archived-entry count, published contract-event count, authorization-entry count, restore-preamble requirement and the derived `requires_send` classification. It rejects `--wallet` and `-y`, never signs, and never submits. Actual invocation still follows Stellar CLI's current default-send rule: if simulation contains no ledger write or archived entry, published contract event, or authorization entry, Fresnica returns the Contract-Spec-decoded result without requiring a wallet, passphrase, fee, or submission. A normal `--json` invocation therefore needs no `-y` when it resolves read-only; if simulation classifies it as a write, `-y` is still required before signing so stdout remains one machine-readable document.
 
 
 ## External CLI plugins
@@ -207,6 +226,8 @@ Fresnica global options parsed before the plugin name remain host policy. Select
 `-v` / `--verbose` prints safe execution stages and reports the last stage reached on failure.
 `-vv` additionally prints the CLI version, selected network, and exact pinned Fresnica source revision.
 Diagnostics intentionally never dump the raw argument vector or hidden input, so command arguments cannot accidentally expose a mnemonic, Stellar secret, Fresnica passphrase, SEP-10 token, or unlock material through verbose logging.
+
+Headless callers that must satisfy a Fresnica hidden-input prompt may set `FRESNICA_SECRET_STDIN=1` and provide one secret value per stdin line. The environment contains only the transport opt-in, never the secret itself; secrets still must not be placed in argv, environment values, JSON output, or diagnostics. Human/default invocations continue to use the platform TTY password reader.
 
 Put verbosity flags before the command:
 

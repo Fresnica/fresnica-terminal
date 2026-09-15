@@ -1,7 +1,9 @@
 mod anchor_auth;
 mod asset_discovery;
+mod capabilities;
 mod contacts;
 mod contract;
+mod contract_store;
 mod device_unlock;
 #[cfg(target_os = "linux")]
 mod device_unlock_linux;
@@ -17,6 +19,7 @@ mod plugin;
 mod plugin_host;
 mod read_commands;
 mod send;
+mod token;
 mod transaction_flow;
 mod trust;
 mod wallet;
@@ -37,12 +40,14 @@ Commands:
   info       Show local wallet information
   account    Show current ledger account state
   balance    Show account balances and liabilities
+  capabilities  Show machine-readable operation inventory
   history    Show recent account operations
   asset      Discover issued assets
   send       Send a payment
   trust      Manage issued-asset trustlines
   dex        Read and trade on the Stellar DEX
-  contract   Invoke Soroban contracts
+  contract   Use Soroban contracts
+  token      Inspect SEP-41 tokens and Stellar Asset Contracts
   wallet     Manage wallets and signing material
   contact    Manage contacts
   plugin     Manage CLI plugins
@@ -64,6 +69,7 @@ Environment:
   FRESNICA_HORIZON_URL         Default Horizon endpoint override; CLI flag wins
   FRESNICA_RPC_URL             Default Stellar RPC endpoint override; CLI flag wins
   FRESNICA_TX_TIMEOUT_SECONDS  Default Classic transaction validity window; CLI flag wins
+  FRESNICA_SECRET_STDIN=1      Read hidden secret prompts from stdin, one line each
 
 More help:
   fresnica wallet --help       Wallet and signer commands
@@ -115,6 +121,9 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     }
 
     diagnostics::stage(command_stage(&global.command));
+    if global.command[0] == "capabilities" {
+        return capabilities::command(&global.command[1..]);
+    }
     let plugin_context = plugin::NativeHostContext {
         home: &global.home,
         network: &global.network,
@@ -124,9 +133,12 @@ fn run(global: GlobalOptions) -> Result<(), String> {
     };
     match global.command[0].as_str() {
         "info" | "contact" | "wallet" => run_local_command(&global),
+        "contract" if contract::is_saved_contract_command(&global.command[1..]) => {
+            run_local_command(&global)
+        }
         "plugin" => plugin::command_plugin(&global.command[1..]),
         "account" | "balance" | "assets" | "history" | "asset" | "send" | "trust" | "dex"
-        | "contract" | "__plugin-host" => run_network_command(&global),
+        | "contract" | "token" | "__plugin-host" => run_network_command(&global),
         other => match plugin::dispatch(&global.command, &plugin_context)? {
             Some(exit_code) => process::exit(exit_code),
             None => Err(format!("unknown command: {other}\n\n{HELP}")),
@@ -141,6 +153,9 @@ fn run_local_command(global: &GlobalOptions) -> Result<(), String> {
         "info" => wallet::command_info(&storage, &global.command[1..]),
         "contact" => contacts::command_contact(&storage, &global.command[1..]),
         "wallet" => wallet::command_wallet(&storage, &global.network, &global.command[1..]),
+        "contract" => {
+            contract::command_saved_contracts(&storage, &global.network, &global.command[1..])
+        }
         _ => unreachable!("local command was classified before dispatch"),
     }
 }
@@ -167,6 +182,7 @@ fn run_network_command(global: &GlobalOptions) -> Result<(), String> {
         "trust" => trust::command_trust(&client, &global.command[1..]),
         "dex" => dex::command_dex(&client, &global.command[1..]),
         "contract" => contract::command_contract(&client, &global.command[1..]),
+        "token" => token::command_token(&client, &global.command[1..]),
         "__plugin-host" => plugin_host::command(&client, &global.network, &global.command[1..]),
         _ => unreachable!("network command was classified before dispatch"),
     }
@@ -249,8 +265,10 @@ impl GlobalOptions {
                 _ => break,
             }
         }
+        let command = arguments[index..].to_vec();
         let home = match home {
             Some(home) => home,
+            None if command.first().is_some_and(|value| value == "capabilities") => PathBuf::new(),
             None => default_home()?,
         };
         Ok(Self {
@@ -260,7 +278,7 @@ impl GlobalOptions {
             rpc_url,
             tx_timeout_seconds,
             verbosity,
-            command: arguments[index..].to_vec(),
+            command,
         })
     }
 }
@@ -309,6 +327,7 @@ fn command_stage(command: &[String]) -> &'static str {
         Some("trust") => "CLI command: trust",
         Some("dex") => "CLI command: dex",
         Some("contract") => "CLI command: contract",
+        Some("token") => "CLI command: token",
         Some("anchor") => "CLI command: anchor",
         Some("wallet") => "CLI command: wallet",
         Some("plugin") => "CLI command: plugin",
@@ -317,6 +336,16 @@ fn command_stage(command: &[String]) -> &'static str {
 }
 
 fn prompt_hidden(prompt: &str) -> Result<Zeroizing<String>, String> {
+    if env::var_os("FRESNICA_SECRET_STDIN").is_some() {
+        let mut value = String::new();
+        std::io::stdin()
+            .read_line(&mut value)
+            .map_err(|error| format!("unable to read secret input from stdin: {error}"))?;
+        while matches!(value.as_bytes().last(), Some(b'\n' | b'\r')) {
+            value.pop();
+        }
+        return Ok(Zeroizing::new(value));
+    }
     rpassword::prompt_password(prompt)
         .map(Zeroizing::new)
         .map_err(|error| format!("unable to read secret input: {error}"))

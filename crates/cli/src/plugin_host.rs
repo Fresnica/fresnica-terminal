@@ -1,4 +1,10 @@
-use fresnica_client::{discover_anchor_at, FresnicaClient, PaymentMemo};
+use std::io::{self, Write};
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use fresnica_client::{
+    discover_anchor_at, DetachedTokenTransferAuthorizationRequest, FresnicaClient, PaymentMemo,
+    PreparedDetachedTokenTransferAuthorization,
+};
 use serde::Serialize;
 use serde_json::json;
 
@@ -18,6 +24,7 @@ pub(crate) fn command(
         Some("anchor-auth") => command_anchor_auth(client, network, &arguments[1..]),
         Some("anchor-receive") => command_anchor_receive(client, &arguments[1..]),
         Some("anchor-payment") => command_anchor_payment(client, &arguments[1..]),
+        Some("x402-token-auth") => command_x402_token_auth(client, network, &arguments[1..]),
         _ => Err("invalid plugin host capability".to_owned()),
     }
 }
@@ -204,6 +211,132 @@ fn command_anchor_payment(client: &FresnicaClient, arguments: &[String]) -> Resu
     )
 }
 
+const X402_TOKEN_AUTH_PROPOSAL_ENV: &str = "FRESNICA_PLUGIN_X402_TOKEN_AUTH";
+const MAX_X402_TOKEN_AUTH_PROPOSAL_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, serde::Deserialize)]
+struct X402TokenAuthProposal {
+    schema: String,
+    wallet: String,
+    token_contract_id: String,
+    destination: String,
+    amount: String,
+    authorization_preimage_xdr: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct X402TokenAuthResponse<'a> {
+    schema: &'static str,
+    signed_auth_entry: String,
+    signer_address: &'a str,
+}
+
+fn command_x402_token_auth(
+    client: &FresnicaClient,
+    network: &str,
+    arguments: &[String],
+) -> Result<(), String> {
+    if !arguments.is_empty() {
+        return Err("x402-token-auth accepts no command-line arguments".to_owned());
+    }
+    let raw = std::env::var(X402_TOKEN_AUTH_PROPOSAL_ENV)
+        .map_err(|_| "x402 token authorization proposal payload is missing".to_owned())?;
+    let prepared = prepare_x402_token_auth(client, &raw)?;
+    if prepared.review.network != network {
+        return Err("x402 token authorization network changed during preparation".to_owned());
+    }
+
+    eprintln!("x402 token authorization");
+    eprintln!("Network:     {}", prepared.review.network);
+    eprintln!("Wallet:      {}", prepared.review.wallet_name);
+    eprintln!("Authorizer:  {}", prepared.review.authorizer);
+    eprintln!("Token:       {}", prepared.review.token_contract_id);
+    eprintln!("Destination: {}", prepared.review.destination);
+    eprintln!("Amount raw:  {}", prepared.review.amount);
+    eprintln!("Nonce:       {}", prepared.review.nonce);
+    eprintln!(
+        "Valid until ledger: {}",
+        prepared.review.signature_expiration_ledger
+    );
+    eprintln!("Authorization: exact token transfer signature only; no transaction submission");
+    if !confirm_x402_token_authorization()? {
+        return Err("x402 token authorization cancelled".to_owned());
+    }
+
+    let signature = crate::transaction_flow::with_software_signer_authorization(
+        client,
+        |passphrase, system_auth| {
+            client.sign_detached_token_transfer_authorization_with_system_auth(
+                &prepared,
+                passphrase,
+                system_auth,
+            )
+        },
+    )?;
+    if signature.len() != 64 {
+        return Err("x402 token authorization signer returned invalid signature length".to_owned());
+    }
+    let response = X402TokenAuthResponse {
+        schema: "fresnica-plugin-x402-token-auth-v1",
+        signed_auth_entry: STANDARD.encode(signature),
+        signer_address: &prepared.review.authorizer,
+    };
+    serde_json::to_writer(io::stdout().lock(), &response)
+        .map_err(|error| format!("unable to encode x402 token authorization response: {error}"))?;
+    println!();
+    Ok(())
+}
+
+fn prepare_x402_token_auth(
+    client: &FresnicaClient,
+    raw: &str,
+) -> Result<PreparedDetachedTokenTransferAuthorization, String> {
+    let proposal = parse_x402_token_auth_proposal(raw)?;
+    let amount = proposal
+        .amount
+        .parse::<i128>()
+        .map_err(|_| "x402 token authorization amount must be an integer".to_owned())?;
+    let preimage = STANDARD
+        .decode(&proposal.authorization_preimage_xdr)
+        .map_err(|_| "x402 token authorization preimage must be valid base64".to_owned())?;
+    let mut request = DetachedTokenTransferAuthorizationRequest::new(
+        proposal.token_contract_id,
+        proposal.destination,
+        amount,
+        preimage,
+    );
+    request.wallet = Some(proposal.wallet);
+    client.prepare_detached_token_transfer_authorization(request)
+}
+
+fn parse_x402_token_auth_proposal(raw: &str) -> Result<X402TokenAuthProposal, String> {
+    if raw.len() > MAX_X402_TOKEN_AUTH_PROPOSAL_BYTES {
+        return Err("x402 token authorization proposal payload is too large".to_owned());
+    }
+    let proposal: X402TokenAuthProposal = serde_json::from_str(raw)
+        .map_err(|error| format!("invalid x402 token authorization proposal: {error}"))?;
+    if proposal.schema != "fresnica-plugin-x402-token-auth-v1" {
+        return Err("unsupported x402 token authorization proposal schema".to_owned());
+    }
+    Ok(proposal)
+}
+
+fn confirm_x402_token_authorization() -> Result<bool, String> {
+    eprint!("Sign this token authorization? [y/N] ");
+    io::stderr()
+        .flush()
+        .map_err(|error| format!("unable to write x402 authorization prompt: {error}"))?;
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("unable to read x402 authorization confirmation: {error}"))?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
 #[derive(Serialize)]
 struct AnchorAuthResponse<'a> {
     schema: &'static str,
@@ -224,6 +357,8 @@ fn parse_wallet_only(arguments: &[String]) -> Result<Option<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    use fresnica_client::{wallet, WalletStorage};
+
     use super::*;
 
     #[test]
@@ -257,5 +392,67 @@ mod tests {
                 .unwrap(),
             PaymentMemo::Hash(_)
         ));
+    }
+
+    #[test]
+    fn x402_token_auth_proposal_requires_exact_schema_and_bounded_payload() {
+        let raw = serde_json::json!({
+            "schema": "fresnica-plugin-x402-token-auth-v1",
+            "wallet": "main",
+            "token_contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "destination": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            "amount": "100000",
+            "authorization_preimage_xdr": "AAAA"
+        })
+        .to_string();
+        let proposal = parse_x402_token_auth_proposal(&raw).unwrap();
+        assert_eq!(proposal.wallet, "main");
+        assert_eq!(proposal.amount, "100000");
+
+        let wrong = raw.replace("fresnica-plugin-x402-token-auth-v1", "wrong");
+        assert!(parse_x402_token_auth_proposal(&wrong)
+            .unwrap_err()
+            .contains("unsupported"));
+        assert!(parse_x402_token_auth_proposal(
+            &"x".repeat(MAX_X402_TOKEN_AUTH_PROPOSAL_BYTES + 1)
+        )
+        .unwrap_err()
+        .contains("too large"));
+    }
+
+    #[test]
+    fn x402_token_auth_prepares_official_sdk_vector_without_signing() {
+        const AUTHOR: &str = "GCHEI4PQEFJOA27MNZRPQNLGURS6KASW76X5UZCUZIXCOJLKXYCXOR2W";
+        const TOKEN: &str = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+        const PREIMAGE: &str = "AAAACc7gMC1ZhE0yvcqRXIID3USzP7t+3BkFHqN6vt8o7NRyKXne+SNXzwoARul7AAAAAAAAAAFQRc1ewHKado/VrQJQWFLfTwKNzoMOWsUiCbpISDsvAQAAAAh0cmFuc2ZlcgAAAAMAAAASAAAAAAAAAACORHHwIVLga+xuYvg1ZqRl5QJW/6/aZFTKLiclar4FdwAAABIAAAAAAAAAAI5EcfAhUuBr7G5i+DVmpGXlAlb/r9pkVMouJyVqvgV3AAAACgAAAAAAAAAAAAAAAAABhqAAAAAA";
+
+        let root = std::env::temp_dir().join(format!(
+            "fresnica-cli-x402-official-vector-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let storage = WalletStorage::new(&root).unwrap();
+        let wallet = wallet::import_watch_record("x402", "testnet", AUTHOR).unwrap();
+        storage.save(&wallet, false).unwrap();
+        let client = FresnicaClient::new(&root, "testnet").unwrap();
+        let raw = serde_json::json!({
+            "schema": "fresnica-plugin-x402-token-auth-v1",
+            "wallet": "x402",
+            "token_contract_id": TOKEN,
+            "destination": AUTHOR,
+            "amount": "100000",
+            "authorization_preimage_xdr": PREIMAGE
+        })
+        .to_string();
+
+        let prepared = prepare_x402_token_auth(&client, &raw).unwrap();
+        assert_eq!(prepared.review.network, "testnet");
+        assert_eq!(prepared.review.authorizer, AUTHOR);
+        assert_eq!(prepared.review.credential_type, "address");
+        assert_eq!(prepared.review.token_contract_id, TOKEN);
+        assert_eq!(prepared.review.destination, AUTHOR);
+        assert_eq!(prepared.review.amount, 100_000);
+        prepared.assert_review_binding().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

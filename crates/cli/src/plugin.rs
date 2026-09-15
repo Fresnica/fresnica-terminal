@@ -5,7 +5,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde_json::{json, Value};
+
 const PREFIX: &str = "fresnica-";
+const PLUGIN_DEPTH_ENV: &str = "FRESNICA_PLUGIN_DEPTH";
+const MAX_PLUGIN_DEPTH: u32 = 8;
 const RESERVED_NATIVE_EXECUTABLES: [&str; 1] = ["fresnica-tui"];
 
 pub struct NativeHostContext<'a> {
@@ -18,24 +22,35 @@ pub struct NativeHostContext<'a> {
 
 pub fn command_plugin(args: &[String]) -> Result<(), String> {
     match args {
-        [command] if command == "ls" => {
-            let plugins = list_plugins(env::var_os("PATH").as_deref());
-            if plugins.is_empty() {
-                println!("No Fresnica plugins found on PATH.");
-                println!("Plugins are executable commands named fresnica-<name>.");
-            } else {
-                println!("Installed external CLI plugins:");
-                for plugin in plugins {
-                    println!("  {plugin}");
-                }
-            }
-            Ok(())
-        }
-        [command] => Err(format!(
-            "unknown plugin command: {command}; expected: plugin ls"
+        [command] if command == "ls" => render_plugin_list(false),
+        [command, flag] if command == "ls" && flag == "--json" => render_plugin_list(true),
+        [command, ..] => Err(format!(
+            "unknown plugin command or options: {command}; expected: plugin ls [--json]"
         )),
-        _ => Err("usage: fresnica plugin ls".to_owned()),
+        _ => Err("usage: fresnica plugin ls [--json]".to_owned()),
     }
+}
+
+fn render_plugin_list(json_output: bool) -> Result<(), String> {
+    let plugins = list_plugins(env::var_os("PATH").as_deref());
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&plugin_list_json(&plugins))
+                .map_err(|error| format!("unable to encode plugin list JSON: {error}"))?
+        );
+        return Ok(());
+    }
+    if plugins.is_empty() {
+        println!("No Fresnica plugins found on PATH.");
+        println!("Plugins are executable commands named fresnica-<name>.");
+    } else {
+        println!("Installed external CLI plugins:");
+        for plugin in plugins {
+            println!("  {plugin}");
+        }
+    }
+    Ok(())
 }
 
 pub fn dispatch(args: &[String], context: &NativeHostContext<'_>) -> Result<Option<i32>, String> {
@@ -49,12 +64,14 @@ fn run_invocation(
     invocation: PluginInvocation,
     context: &NativeHostContext<'_>,
 ) -> Result<i32, String> {
+    let depth = next_plugin_depth(env::var_os(PLUGIN_DEPTH_ENV).as_deref())?;
     let mut command = Command::new(&invocation.executable);
     command.args(&invocation.args);
     let host = env::current_exe()
         .map_err(|error| format!("unable to locate Fresnica plugin host executable: {error}"))?;
     command
         .env("FRESNICA_PLUGIN_API", "1")
+        .env(PLUGIN_DEPTH_ENV, depth.to_string())
         .env("FRESNICA_PLUGIN_HOST", host)
         .env("FRESNICA_PLUGIN_NETWORK", context.network)
         .env("FRESNICA_HOME", context.home);
@@ -103,6 +120,33 @@ fn find_plugin(args: &[String], path: Option<&OsStr>) -> Option<PluginInvocation
     }
 
     None
+}
+
+fn next_plugin_depth(current: Option<&OsStr>) -> Result<u32, String> {
+    let current = match current {
+        None => 0,
+        Some(value) => value
+            .to_str()
+            .ok_or_else(|| format!("{PLUGIN_DEPTH_ENV} must be valid UTF-8"))?
+            .parse::<u32>()
+            .map_err(|_| format!("{PLUGIN_DEPTH_ENV} must be an unsigned integer"))?,
+    };
+    if current >= MAX_PLUGIN_DEPTH {
+        return Err(format!(
+            "external plugin composition exceeded maximum depth {MAX_PLUGIN_DEPTH}; possible recursive plugin cycle"
+        ));
+    }
+    Ok(current + 1)
+}
+
+fn plugin_list_json(plugins: &[String]) -> Value {
+    json!({
+        "kind": "plugin_list",
+        "plugins": plugins.iter().map(|name| json!({
+            "name": name,
+            "command": format!("fresnica {name}"),
+        })).collect::<Vec<_>>(),
+    })
 }
 
 fn list_plugins(path: Option<&OsStr>) -> Vec<String> {
@@ -284,6 +328,28 @@ mod tests {
         );
         assert_eq!(strip_windows_executable_suffix("fresnica-alpha"), None);
         assert_eq!(strip_windows_executable_suffix("fresnica-alpha.cmd"), None);
+    }
+
+    #[test]
+    fn plugin_list_json_exposes_only_names_and_commands() {
+        let value = plugin_list_json(&["anchor".to_owned(), "saint".to_owned()]);
+        assert_eq!(value["kind"], "plugin_list");
+        assert_eq!(value["plugins"][0]["name"], "anchor");
+        assert_eq!(value["plugins"][0]["command"], "fresnica anchor");
+        assert_eq!(value["plugins"][1]["name"], "saint");
+        assert!(value["plugins"][0].get("path").is_none());
+    }
+
+    #[test]
+    fn plugin_composition_depth_is_bounded() {
+        assert_eq!(next_plugin_depth(None).unwrap(), 1);
+        assert_eq!(next_plugin_depth(Some(OsStr::new("7"))).unwrap(), 8);
+        assert!(next_plugin_depth(Some(OsStr::new("8")))
+            .unwrap_err()
+            .contains("possible recursive plugin cycle"));
+        assert!(next_plugin_depth(Some(OsStr::new("invalid")))
+            .unwrap_err()
+            .contains("unsigned integer"));
     }
 
     #[test]

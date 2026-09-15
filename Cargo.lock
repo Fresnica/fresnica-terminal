@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "fresnica-anchor-plugin"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fresnica-client",
  "serde",
@@ -1635,8 +1635,9 @@ dependencies = [
 
 [[package]]
 name = "fresnica-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
+ "base64 0.23.1",
  "core-foundation",
  "fresnica-client",
  "fresnica-terminal-presentation",
@@ -1647,6 +1648,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "stellar-ledger",
+ "stellar-strkey 0.0.18",
  "stellar-xdr",
  "time",
  "tokio",
@@ -1660,7 +1662,7 @@ dependencies = [
 [[package]]
 name = "fresnica-client"
 version = "0.1.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=6c3388c84993bf8dfd133638a7c32a37a0769e74#6c3388c84993bf8dfd133638a7c32a37a0769e74"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=4b79f75c88d427f11be867e5b4b4e978643102b2#4b79f75c88d427f11be867e5b4b4e978643102b2"
 dependencies = [
  "base64 0.23.1",
  "fresnica-core",
@@ -1686,7 +1688,7 @@ dependencies = [
 [[package]]
 name = "fresnica-core"
 version = "0.2.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=6c3388c84993bf8dfd133638a7c32a37a0769e74#6c3388c84993bf8dfd133638a7c32a37a0769e74"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=4b79f75c88d427f11be867e5b4b4e978643102b2#4b79f75c88d427f11be867e5b4b4e978643102b2"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1708,7 +1710,7 @@ dependencies = [
 [[package]]
 name = "fresnica-sdk"
 version = "0.2.0"
-source = "git+https://github.com/Fresnica/fresnica.git?rev=6c3388c84993bf8dfd133638a7c32a37a0769e74#6c3388c84993bf8dfd133638a7c32a37a0769e74"
+source = "git+https://github.com/Fresnica/fresnica.git?rev=4b79f75c88d427f11be867e5b4b4e978643102b2#4b79f75c88d427f11be867e5b4b4e978643102b2"
 dependencies = [
  "base64 0.23.1",
  "fresnica-core",
@@ -1719,14 +1721,14 @@ dependencies = [
 
 [[package]]
 name = "fresnica-terminal-presentation"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fresnica-client",
 ]
 
 [[package]]
 name = "fresnica-tui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fresnica-client",
  "fresnica-terminal-presentation",
