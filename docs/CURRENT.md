@@ -1,6 +1,6 @@
 # Fresnica Terminal Current State
 
-Status: **v0.5.0 is released on Main. v0.6 is active on feature branches and is focused on a reusable Soroban ABI Composer: lossless Contract-Spec semantics, typed JSON composition, and fail-closed UDT boundaries before any MST exposure.**
+Status: **v0.5.0 is released on Main. v0.6 Soroban ABI Composer is implementation-complete on feature branches and is now a freeze candidate; Main remains unchanged pending explicit integration/release.**
 
 Last verified: 2026-09-17.
 
@@ -37,7 +37,9 @@ Local validation on shared `ad759b0` is 254/254 tests PASS. Terminal validation 
 
 The missing composition-support signal is now explicit. Every versioned ABI input carries `composition.mode` plus `composition.guided`: `typed_json` is full-domain ABI-guided JSON; `dynamic_scval_json` marks types containing open-ended Soroban `Val`; `scval_xdr_success_only` marks the conservative Result boundary; `unsupported` marks types without a safe complete-domain input path. Only `typed_json` is `guided=true`. This is additive inside `fresnica-soroban-abi-v1`; the legacy flat function JSON remains unchanged. The mode is derived recursively through containers and UDT definitions, and malformed/noncanonical struct specs are classified unsupported before the upstream parser can panic.
 
-A fresh live audit of the same 9 deployed Testnet contracts / 160 functions found 219 function inputs: 214 are `typed_json` + `guided=true`, while the remaining 5 are `dynamic_scval_json` inputs on the smart-account contract and all contain `Val`. No sampled live input is currently Result/Error/unsupported. Crucially, the Fed v2-style `transfer(name, from, to, target: Option<Address>)` now reports `target` as `typed_json` / `guided=true`; nested Vec/Map/UDT inputs in the corpus are likewise guided rather than flattened into an unsupported string type. MST remains out of scope for this slice: the next decision should be whether this now-stable ABI contract is sufficient to freeze v0.6 and then consume from MST, rather than adding more Fresnica-only syntax.
+A fresh live audit of the same 9 deployed Testnet contracts / 160 functions found 219 function inputs: 214 are `typed_json` + `guided=true`, while the remaining 5 are `dynamic_scval_json` inputs on the smart-account contract and all contain `Val`. No sampled live input is currently Result/Error/unsupported. Crucially, the Fed v2-style `transfer(name, from, to, target: Option<Address>)` now reports `target` as `typed_json` / `guided=true`; nested Vec/Map/UDT inputs in the corpus are likewise guided rather than flattened into an unsupported string type.
+
+Freeze audit conclusion: there is no remaining ABI-Composer implementation blocker in the current v0.6 scope. The versioned semantic model is recursive, composition support is explicit, exact ScVal identity is preserved where normalized JSON is insufficient, malformed/unsupported input fails closed, the legacy flat interface remains compatible, no new runtime dependency was added, and the existing simulation/review/authorization pipeline was not widened. From this checkpoint the `fresnica-soroban-abi-v1` field meanings and composition mode strings are treated as stable external contract. Future fields may be additive; changing or removing existing meanings requires a new schema version. Consumers must treat unknown composition modes as unguided/unsupported rather than guessing. MST remains deliberately out of scope until the v0.6 branches are integrated or otherwise selected as its dependency baseline.
 
 ## v0.5 Operation Foundation
 
