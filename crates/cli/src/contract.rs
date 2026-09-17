@@ -971,6 +971,7 @@ fn argument_json(argument: &fresnica_client::ContractArgumentReview) -> Value {
         "name": argument.name.as_str(),
         "type": argument.value_type.as_str(),
         "value": argument.value.clone(),
+        "scval_xdr": argument.scval_xdr.as_str(),
     })
 }
 
@@ -1151,6 +1152,7 @@ fn read_only_json(result: &ContractReadResult) -> Value {
         "function": result.function_name.as_str(),
         "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "result": result.output.clone(),
+        "result_xdr": result.output_xdr.as_deref(),
         "simulation_ledger": result.simulation_ledger,
         "network": result.network.as_str(),
         "submission": Value::Null,
@@ -1167,6 +1169,7 @@ fn simulation_json(result: &ContractSimulationResult) -> Value {
         "function": result.function_name.as_str(),
         "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "result": result.output.clone(),
+        "result_xdr": result.output_xdr.as_deref(),
         "simulation_ledger": result.simulation_ledger,
         "network": result.network.as_str(),
         "effects": {
@@ -1591,6 +1594,19 @@ mod tests {
             encoded["abi"]["types"][0]["fields"][0]["type"]["name"],
             "address"
         );
+    }
+
+    #[test]
+    fn machine_argument_json_preserves_exact_scval_identity() {
+        let argument = fresnica_client::ContractArgumentReview {
+            name: "value".to_owned(),
+            value_type: "val".to_owned(),
+            value: json!(7),
+            scval_xdr: "AAAA".to_owned(),
+        };
+        let encoded = argument_json(&argument);
+        assert_eq!(encoded["value"], 7);
+        assert_eq!(encoded["scval_xdr"], "AAAA");
     }
 
     #[test]
