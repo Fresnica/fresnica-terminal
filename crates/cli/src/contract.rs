@@ -1003,6 +1003,10 @@ fn abi_function_json(function: &ContractFunction) -> Value {
             "doc": input.doc.as_str(),
             "type": abi_type_json(&input.value_type.abi),
             "example": input.value_type.example.as_deref(),
+            "composition": {
+                "mode": input.composition.mode(),
+                "guided": input.composition.guided(),
+            },
         })).collect::<Vec<_>>(),
         "outputs": function.outputs.iter().map(|output| json!({
             "type": abi_type_json(&output.abi),
@@ -1555,6 +1559,7 @@ mod tests {
                             )))),
                         })),
                     },
+                    composition: fresnica_client::ContractInputComposition::TypedJson,
                 }],
                 outputs: vec![],
             }],
@@ -1575,10 +1580,21 @@ mod tests {
             encoded["functions"][0]["inputs"][0]["type"],
             "option<map<address,vec<Route>>>"
         );
+        assert!(encoded["functions"][0]["inputs"][0]
+            .get("composition")
+            .is_none());
         assert_eq!(encoded["abi"]["schema"], CONTRACT_ABI_SCHEMA);
         assert_eq!(
             encoded["abi"]["functions"][0]["inputs"][0]["type"]["kind"],
             "option"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["composition"]["mode"],
+            "typed_json"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["composition"]["guided"],
+            true
         );
         assert_eq!(
             encoded["abi"]["functions"][0]["inputs"][0]["type"]["value"]["kind"],
@@ -1607,6 +1623,36 @@ mod tests {
         let encoded = argument_json(&argument);
         assert_eq!(encoded["value"], 7);
         assert_eq!(encoded["scval_xdr"], "AAAA");
+    }
+
+    #[test]
+    fn abi_composition_modes_are_stable_machine_contract_values() {
+        let modes = [
+            (
+                fresnica_client::ContractInputComposition::TypedJson,
+                "typed_json",
+                true,
+            ),
+            (
+                fresnica_client::ContractInputComposition::DynamicScValJson,
+                "dynamic_scval_json",
+                false,
+            ),
+            (
+                fresnica_client::ContractInputComposition::ScValXdrSuccessOnly,
+                "scval_xdr_success_only",
+                false,
+            ),
+            (
+                fresnica_client::ContractInputComposition::Unsupported,
+                "unsupported",
+                false,
+            ),
+        ];
+        for (composition, mode, guided) in modes {
+            assert_eq!(composition.mode(), mode);
+            assert_eq!(composition.guided(), guided);
+        }
     }
 
     #[test]
