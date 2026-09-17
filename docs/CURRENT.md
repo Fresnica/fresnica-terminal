@@ -1,12 +1,13 @@
 # Fresnica Terminal Current State
 
-Status: **v0.4.0 is integrated on Main. v0.5 implementation is in closeout: the headless Operation Foundation is established, Soroban/DeFi/plugin proofs are complete, and the latest MultiSigTools Intent-first interoperability test found no new Fresnica implementation blocker or need for an MST-specific adapter.**
+Status: **v0.5.0 is released on Main. v0.6 is active on feature branches and is focused on a reusable Soroban ABI Composer: lossless Contract-Spec semantics, typed JSON composition, and fail-closed UDT boundaries before any MST exposure.**
 
-Last verified: 2026-09-15.
+Last verified: 2026-09-17.
 
 ## Source of truth
 
-- Current Terminal `main`: `420c09c3005ac82dc211b2170e9da546de373800`, squash integration of Fresnica Terminal v0.4.0 through PR #38.
+- Current Terminal `main`: `e455941ea27e2b5f4c3d827a348b4a82f43f485b`, tagged `v0.5.0`.
+- Active v0.6 boundary branch: `feat/terminal-v0.6-abi-boundaries`, stacked on `feat/terminal-v0.6-abi-composer`; it pins Fresnica shared source `e68c55c1a2889726883c220f6eff336e05d0638a` from `feat/rust-client-abi-composer-boundaries`. Earlier v0.6 checkpoints are shared `ca2893b` / Terminal `0126e85` for the semantic ABI schema and shared `da21d835` / Terminal `c6b4baf` for typed JSON composition.
 - Active v0.5 branch: `feat/terminal-v0.5-contract-ux`; current product head before this docs-only closeout record is `ab7e97580527870ce4ac39b7dce49a2f0aba3562` (`feat(cli): expose headless SEP-53 signing`). First direct-contract checkpoint: `7a761a6ec221698536bc47a3c26f8dfb190c8f87`; Operation Foundation product checkpoint: `07714ab979def22e2c1239d14d6425df7f95372a`.
 - Active v0.5 now pins merged Fresnica Main source `4b79f75c88d427f11be867e5b4b4e978643102b2` (PR #182, squash integration of the validated `feat/rust-client-contract-address-names` line). The post-`7b70514` closeout additions are bounded: `eca2771` exposes simulate-only contract effects, `9c1b62b` exposes archived simulation entries, and `afcb634` exposes SEP-53 message signing. Earlier Operation Foundation history follows. The upstream line is intentionally incremental: `3ab24e0` adds typed local-name resolution for Contract Spec Address inputs; `6ad7d56` exposes contract executable kind and resolved Wasm hash during interface inspection; `8f15175` carries the same observation through read-only and transaction invoke results; `54ceeec` rechecks executable identity after real write preparation and fails closed if code changed during preparation; `373e194` reuses `soroban_spec_tools` to expose raw `contractmetav0` Wasm metadata; `4dc8556` derives versioned SEP-41 v0.5.1 evidence while keeping native-SAC identity, SEP-47 self-declaration and current interface compatibility separate; `3f17593` adds network-scoped token reference resolution for Stellar assets and direct contract ids; `2c62281` adds Contract-Spec-driven positional invocation so standard protocol façades depend on parameter order/type rather than implementation-specific argument names; `a190244` moves SEP-41 balance/transfer preparation, exact decimal conversion and multi-observation executable consistency into `fresnica-client` so CLI/native/agent consumers share the same token semantics; `7b70514` accepts base64-encoded typed ScVal arguments while still validating and normalizing them through the current Contract Spec before review/simulation.
 - Terminal v0.2.0 release commit: `a2485cad5d2d6048f8ffb6987597c2a3fca2670d`.
@@ -21,6 +22,18 @@ Last verified: 2026-09-15.
 - Terminal read-only child Draft PR #26 code-gate head: `826eef6995943d06e20b011f98af426debeda5c1`; focused CLI tests and live empty-HOME Testnet read-only probe `34078192917` passed. This status record is synchronized in the final PR #26 tree; repository HEAD and CI remain authoritative for the docs-only follow-up head.
 
 Repository source, exact branch heads and CI remain authoritative if this file later drifts. [`docs/operation-foundation.md`](operation-foundation.md) is the v0.5+ architecture constraint for reusable wallet operations; [`docs/plugin-architecture.md`](plugin-architecture.md) remains authoritative for the lower-trust external-plugin boundary. This CURRENT file records implementation state only.
+
+## v0.6 Soroban ABI Composer
+
+v0.6 keeps the v0.5 simulation/review/authorization pipeline unchanged and improves only the contract-description/composition boundary. `fresnica-client` now projects deployed Contract Spec into versioned `fresnica-soroban-abi-v1` semantics with recursive Option/Result/Vec/Map/Tuple/BytesN/UDT types plus struct/union/enum/error-enum definitions. Terminal exposes that model in machine JSON without removing the legacy flat `functions` representation.
+
+Typed composition uses `ContractInvokeRequest::add_json_argument(name, serde_json::Value)` and Terminal's host-side `--args-json OBJECT`. Terminal only splits the top-level object; actual value encoding remains delegated to `soroban-spec-tools::Spec::from_json`, then normalized back through the same Contract Spec before simulation/review. No second ScVal codec exists in Fresnica.
+
+Boundary testing found a concrete upstream limitation in pinned `soroban-spec-tools 28.0.0`: malformed UDT JSON can reach `todo!()` panic paths, while named structs can silently ignore extra fields. Fresnica therefore adds a narrow pre-encoding shape guard, not a parallel encoder: named struct fields must match exactly; tuple structs have exact arity; unions accept canonical void-string or single-case-object forms with exact payload arity; enums accept declared numeric `u32` values; direct error-enum values fail closed as contract-error metadata. Nested UDT values are checked recursively, including UDT map keys, before official encoding.
+
+Local validation on the shared boundary head is 241/241 tests PASS. Terminal validation with that exact pin is rustfmt PASS, workspace tests PASS (Anchor 7, CLI 96, CLI integration 5, presentation 3, TUI 21), and workspace Clippy `-D warnings` PASS. Real Testnet evidence includes Blend `submit(... requests: Vec<Request>)` reaching the contract through `--args-json` and returning the expected business error #1216, plus smart-account contract `CAN6...POTR` where `Signer::Delegated(G...)` reached `get_signer_id` and returned contract error #3006 after a visible `fn_call`; malformed multi-case `Signer` JSON instead failed locally with a typed union-shape error. A nested `AuthPayload { signers: Map<Signer, Bytes>, ... }` also composed successfully far enough for the host to reject direct invocation of reserved `__check_auth`, proving the Map<UDT,...> path without bypassing host rules.
+
+MST remains deliberately out of scope until this ABI surface is stable against a broader real-contract corpus.
 
 ## v0.5 Operation Foundation
 
