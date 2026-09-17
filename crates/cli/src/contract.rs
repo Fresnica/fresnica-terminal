@@ -1,8 +1,9 @@
 use fresnica_client::{
-    ContactStore, ContractArgumentInput, ContractCapabilities, ContractExecutableObservation,
-    ContractFunction, ContractInterface, ContractInvokePreparation, ContractInvokeRequest,
-    ContractInvokeReview, ContractMetadataEntry, ContractReadResult, ContractSimulationResult,
-    FresnicaClient, PreparedContractInvoke, TransactionSubmission, WalletStorage,
+    ContactStore, ContractAbiType, ContractAbiUnionCasePayload, ContractArgumentInput,
+    ContractCapabilities, ContractExecutableObservation, ContractFunction, ContractInterface,
+    ContractInvokePreparation, ContractInvokeRequest, ContractInvokeReview, ContractMetadataEntry,
+    ContractReadResult, ContractSimulationResult, ContractUserType, FresnicaClient,
+    PreparedContractInvoke, TransactionSubmission, WalletStorage, CONTRACT_ABI_SCHEMA,
     SEP41_INTERFACE_VERSION,
 };
 use serde_json::{json, Value};
@@ -936,6 +937,146 @@ pub(crate) fn interface_json(interface: &ContractInterface) -> Value {
         "wasm_meta": metadata_json(&interface.metadata),
         "capabilities": capabilities_json(&interface.capabilities),
         "functions": interface.functions.iter().map(function_json).collect::<Vec<_>>(),
+        "abi": abi_json(interface),
+    })
+}
+
+fn abi_json(interface: &ContractInterface) -> Value {
+    json!({
+        "schema": CONTRACT_ABI_SCHEMA,
+        "functions": interface.functions.iter().map(abi_function_json).collect::<Vec<_>>(),
+        "types": interface.user_types.iter().map(user_type_json).collect::<Vec<_>>(),
+    })
+}
+
+fn abi_function_json(function: &ContractFunction) -> Value {
+    json!({
+        "name": function.name.as_str(),
+        "doc": function.doc.as_str(),
+        "inputs": function.inputs.iter().map(|input| json!({
+            "name": input.name.as_str(),
+            "doc": input.doc.as_str(),
+            "type": abi_type_json(&input.value_type.abi),
+            "example": input.value_type.example.as_deref(),
+        })).collect::<Vec<_>>(),
+        "outputs": function.outputs.iter().map(|output| json!({
+            "type": abi_type_json(&output.abi),
+            "example": output.example.as_deref(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn abi_type_json(value_type: &ContractAbiType) -> Value {
+    match value_type {
+        ContractAbiType::Primitive(name) => json!({"kind": "primitive", "name": name}),
+        ContractAbiType::Option(value) => json!({
+            "kind": "option",
+            "value": abi_type_json(value),
+        }),
+        ContractAbiType::Result { ok, error } => json!({
+            "kind": "result",
+            "ok": abi_type_json(ok),
+            "error": abi_type_json(error),
+        }),
+        ContractAbiType::Vec(element) => json!({
+            "kind": "vec",
+            "element": abi_type_json(element),
+        }),
+        ContractAbiType::Map { key, value } => json!({
+            "kind": "map",
+            "key": abi_type_json(key),
+            "value": abi_type_json(value),
+        }),
+        ContractAbiType::Tuple(values) => json!({
+            "kind": "tuple",
+            "values": values.iter().map(abi_type_json).collect::<Vec<_>>(),
+        }),
+        ContractAbiType::BytesN(length) => json!({
+            "kind": "bytes_n",
+            "length": length,
+        }),
+        ContractAbiType::Udt(name) => json!({
+            "kind": "udt",
+            "name": name,
+        }),
+    }
+}
+
+fn user_type_json(user_type: &ContractUserType) -> Value {
+    match user_type {
+        ContractUserType::Struct {
+            name,
+            doc,
+            lib,
+            fields,
+        } => json!({
+            "kind": "struct",
+            "name": name,
+            "doc": doc,
+            "lib": lib,
+            "fields": fields.iter().map(|field| json!({
+                "name": field.name.as_str(),
+                "doc": field.doc.as_str(),
+                "type": abi_type_json(&field.value_type),
+            })).collect::<Vec<_>>(),
+        }),
+        ContractUserType::Union {
+            name,
+            doc,
+            lib,
+            cases,
+        } => json!({
+            "kind": "union",
+            "name": name,
+            "doc": doc,
+            "lib": lib,
+            "cases": cases.iter().map(|case| {
+                let payload = match &case.payload {
+                    ContractAbiUnionCasePayload::Void => json!({"kind": "void"}),
+                    ContractAbiUnionCasePayload::Tuple(values) => json!({
+                        "kind": "tuple",
+                        "values": values.iter().map(abi_type_json).collect::<Vec<_>>(),
+                    }),
+                };
+                json!({
+                    "name": case.name.as_str(),
+                    "doc": case.doc.as_str(),
+                    "payload": payload,
+                })
+            }).collect::<Vec<_>>(),
+        }),
+        ContractUserType::Enum {
+            name,
+            doc,
+            lib,
+            cases,
+        } => enum_type_json("enum", name, doc, lib, cases),
+        ContractUserType::ErrorEnum {
+            name,
+            doc,
+            lib,
+            cases,
+        } => enum_type_json("error_enum", name, doc, lib, cases),
+    }
+}
+
+fn enum_type_json(
+    kind: &str,
+    name: &str,
+    doc: &str,
+    lib: &str,
+    cases: &[fresnica_client::ContractAbiEnumCase],
+) -> Value {
+    json!({
+        "kind": kind,
+        "name": name,
+        "doc": doc,
+        "lib": lib,
+        "cases": cases.iter().map(|case| json!({
+            "name": case.name.as_str(),
+            "doc": case.doc.as_str(),
+            "value": case.value,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -1275,6 +1416,79 @@ mod tests {
         assert!(InvokeOptions::parse(&args)
             .unwrap_err()
             .contains("must follow `--`"));
+    }
+
+    #[test]
+    fn interface_json_exposes_versioned_recursive_abi_without_replacing_legacy_functions() {
+        let interface = ContractInterface {
+            contract_id: CONTRACT.to_owned(),
+            executable: ContractExecutableObservation {
+                kind: fresnica_client::ContractExecutableKind::Wasm,
+                wasm_hash: Some("ab".repeat(32)),
+            },
+            metadata: vec![],
+            capabilities: ContractCapabilities {
+                sep41: fresnica_client::ContractSep41Evidence {
+                    native_sac: false,
+                    sep47_declared: false,
+                    current_interface_compatible: false,
+                },
+            },
+            functions: vec![ContractFunction {
+                name: "compose".to_owned(),
+                doc: "compose routes".to_owned(),
+                inputs: vec![fresnica_client::ContractParameter {
+                    name: "routes".to_owned(),
+                    doc: "routes by owner".to_owned(),
+                    value_type: fresnica_client::ContractParameterType {
+                        name: "option<map<address,vec<Route>>>".to_owned(),
+                        example: None,
+                        abi: ContractAbiType::Option(Box::new(ContractAbiType::Map {
+                            key: Box::new(ContractAbiType::Primitive("address".to_owned())),
+                            value: Box::new(ContractAbiType::Vec(Box::new(ContractAbiType::Udt(
+                                "Route".to_owned(),
+                            )))),
+                        })),
+                    },
+                }],
+                outputs: vec![],
+            }],
+            user_types: vec![ContractUserType::Struct {
+                name: "Route".to_owned(),
+                doc: "route definition".to_owned(),
+                lib: "routing".to_owned(),
+                fields: vec![fresnica_client::ContractAbiField {
+                    name: "destination".to_owned(),
+                    doc: "destination".to_owned(),
+                    value_type: ContractAbiType::Primitive("address".to_owned()),
+                }],
+            }],
+        };
+
+        let encoded = interface_json(&interface);
+        assert_eq!(
+            encoded["functions"][0]["inputs"][0]["type"],
+            "option<map<address,vec<Route>>>"
+        );
+        assert_eq!(encoded["abi"]["schema"], CONTRACT_ABI_SCHEMA);
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["type"]["kind"],
+            "option"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["type"]["value"]["kind"],
+            "map"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["type"]["value"]["value"]["element"]
+                ["name"],
+            "Route"
+        );
+        assert_eq!(encoded["abi"]["types"][0]["kind"], "struct");
+        assert_eq!(
+            encoded["abi"]["types"][0]["fields"][0]["type"]["name"],
+            "address"
+        );
     }
 
     #[test]
