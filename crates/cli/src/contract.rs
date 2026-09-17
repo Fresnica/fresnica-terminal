@@ -16,8 +16,8 @@ use crate::transaction_flow::{
     confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
 };
 
-const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--simulate] [--json] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
-const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
+const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--simulate] [--json] [--args-json OBJECT] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--args-json OBJECT] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
+const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--args-json OBJECT] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
 const SAVED_CONTRACT_USAGE: &str =
     "usage: fresnica contract list [--json] | contract add NAME C... [--json] | contract remove NAME [--json]";
 const CONTRACT_LIST_SCHEMA: &str = "fresnica-contract-list-v1";
@@ -79,6 +79,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         InvokeAction::Invoke { .. } => {}
     }
 
+    let json_arguments = options.json_arguments.clone();
     let scval_xdr_arguments = options.scval_xdr_arguments.clone();
     let InvokeAction::Invoke {
         function_name,
@@ -91,6 +92,9 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
     crate::diagnostics::stage("contract: simulate invoke");
     let mut invoke = ContractInvokeRequest::new(options.contract_id, function_name, arguments);
     invoke.wallet = options.wallet;
+    for (name, value) in json_arguments {
+        invoke.add_json_argument(name, value);
+    }
     for argument in scval_xdr_arguments {
         invoke.add_scval_xdr_argument(argument.name, argument.value);
     }
@@ -196,6 +200,7 @@ struct InvokeOptions {
     yes: bool,
     simulate: bool,
     json: bool,
+    json_arguments: Vec<(String, Value)>,
     scval_xdr_arguments: Vec<ContractArgumentInput>,
     action: InvokeAction,
 }
@@ -226,6 +231,7 @@ impl InvokeOptions {
         let mut yes = false;
         let mut simulate = false;
         let mut json = false;
+        let mut json_arguments = Vec::new();
         let mut scval_xdr_arguments = Vec::new();
         let mut index = 1;
         while index < arguments.len() {
@@ -252,6 +258,12 @@ impl InvokeOptions {
                     json = true;
                     index += 1;
                 }
+                "--args-json" => {
+                    index += 1;
+                    let value = arguments.get(index).ok_or_else(|| USAGE.to_owned())?;
+                    json_arguments.extend(parse_json_argument_object(value)?);
+                    index += 1;
+                }
                 "--scval-xdr" => {
                     index += 1;
                     let name = arguments.get(index).ok_or_else(|| USAGE.to_owned())?;
@@ -267,6 +279,11 @@ impl InvokeOptions {
                     if index + 1 != arguments.len() {
                         return Err(USAGE.to_owned());
                     }
+                    if !json_arguments.is_empty() {
+                        return Err(
+                            "--args-json requires a contract function invocation".to_owned()
+                        );
+                    }
                     if !scval_xdr_arguments.is_empty() {
                         return Err(
                             "--scval-xdr requires a contract function invocation".to_owned()
@@ -281,6 +298,7 @@ impl InvokeOptions {
                         yes,
                         simulate,
                         json,
+                        json_arguments,
                         scval_xdr_arguments,
                         action: InvokeAction::InterfaceHelp,
                     });
@@ -294,6 +312,9 @@ impl InvokeOptions {
         } else {
             parse_dynamic(&arguments[index..])?
         };
+        if !json_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
+            return Err("--args-json requires a contract function invocation".to_owned());
+        }
         if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
             return Err("--scval-xdr requires a contract function invocation".to_owned());
         }
@@ -316,6 +337,7 @@ impl InvokeOptions {
             yes,
             simulate,
             json,
+            json_arguments,
             scval_xdr_arguments,
             action,
         })
@@ -329,6 +351,7 @@ impl InvokeOptions {
         let mut wallet = None;
         let mut yes = false;
         let mut json = false;
+        let mut json_arguments = Vec::new();
         let mut scval_xdr_arguments = Vec::new();
         let mut index = 2;
         while index < arguments.len() && arguments[index] != "--" {
@@ -349,6 +372,14 @@ impl InvokeOptions {
                 }
                 "--json" => {
                     json = true;
+                    index += 1;
+                }
+                "--args-json" => {
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| LEGACY_USAGE.to_owned())?;
+                    json_arguments.extend(parse_json_argument_object(value)?);
                     index += 1;
                 }
                 "--scval-xdr" => {
@@ -376,6 +407,9 @@ impl InvokeOptions {
             ));
         }
         let action = parse_dynamic(&arguments[index + 1..])?;
+        if !json_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
+            return Err("--args-json requires a contract function invocation".to_owned());
+        }
         if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
             return Err("--scval-xdr requires a contract function invocation".to_owned());
         }
@@ -385,10 +419,20 @@ impl InvokeOptions {
             yes,
             simulate: false,
             json,
+            json_arguments,
             scval_xdr_arguments,
             action,
         })
     }
+}
+
+fn parse_json_argument_object(value: &str) -> Result<Vec<(String, Value)>, String> {
+    let parsed: Value = serde_json::from_str(value)
+        .map_err(|error| format!("invalid --args-json object: {error}"))?;
+    let Value::Object(arguments) = parsed else {
+        return Err("--args-json must be a JSON object keyed by contract argument name".to_owned());
+    };
+    Ok(arguments.into_iter().collect())
 }
 
 pub fn command_saved_contracts(
@@ -1275,6 +1319,64 @@ mod tests {
         assert_eq!(function_name, "transfer");
         assert_eq!(arguments[1].name, "wallet");
         assert_eq!(arguments[1].value, "contract-owned-value");
+    }
+
+    #[test]
+    fn args_json_host_option_preserves_typed_values_before_function_boundary() {
+        let args = [
+            "aqua",
+            "--args-json",
+            r#"{"routes":[{"amount":7}],"enabled":true}"#,
+            "compose",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(options.json_arguments.len(), 2);
+        assert_eq!(options.json_arguments[0].0, "enabled");
+        assert_eq!(options.json_arguments[0].1, json!(true));
+        assert_eq!(options.json_arguments[1].0, "routes");
+        assert_eq!(options.json_arguments[1].1, json!([{"amount": 7}]));
+        assert!(matches!(
+            options.action,
+            InvokeAction::Invoke { ref function_name, ref arguments }
+                if function_name == "compose" && arguments.is_empty()
+        ));
+    }
+
+    #[test]
+    fn legacy_args_json_stays_before_separator_and_preserves_typed_values() {
+        let args = [
+            "invoke",
+            CONTRACT,
+            "--args-json",
+            r#"{"value":{"nested":[1,2]}}"#,
+            "--",
+            "set",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(
+            options.json_arguments,
+            vec![("value".to_owned(), json!({"nested": [1, 2]}))]
+        );
+        assert!(matches!(
+            options.action,
+            InvokeAction::Invoke { ref function_name, ref arguments }
+                if function_name == "set" && arguments.is_empty()
+        ));
+    }
+
+    #[test]
+    fn args_json_rejects_invalid_json_and_non_object_values() {
+        let invalid = ["aqua", "--args-json", "{", "compose"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&invalid)
+            .unwrap_err()
+            .contains("invalid --args-json object"));
+
+        let array = ["aqua", "--args-json", "[]", "compose"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&array)
+            .unwrap_err()
+            .contains("must be a JSON object"));
     }
 
     #[test]
