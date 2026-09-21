@@ -100,6 +100,10 @@ Relevant architecture documents:
 - [`docs/plugin-architecture.md`](docs/plugin-architecture.md)
 - [`docs/CURRENT.md`](docs/CURRENT.md)
 
+## Writing documentation
+
+Write for a developer using the project, not for a model reading a prompt. Prefer commands, schemas, constraints, and concrete examples. Do not repeat the same rule in several files: guides explain how, architecture documents explain why, and `docs/CURRENT.md` records implementation state. Avoid motivational prose, artificial dialogue, and generic checklists unless the checklist is an actual release or test gate.
+
 ## Validation
 
 For repository changes:
