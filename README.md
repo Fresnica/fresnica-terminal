@@ -1,16 +1,16 @@
 # Fresnica Terminal
 
-Fresnica Terminal is the native terminal product repository for Fresnica. It contains both terminal surfaces:
+Fresnica Terminal contains the terminal-facing Fresnica products:
 
-- `fresnica` — command-line interface for scripting and direct wallet operations;
+- `fresnica` — CLI for scripts and direct wallet operations;
 - `fresnica-tui` — interactive terminal UI;
-- `fresnica-anchor` — Fresnica-native Anchor plugin discovered by `fresnica` through PATH.
+- `fresnica-anchor` — bundled Anchor plugin discovered through `PATH`.
 
-These terminal products intentionally live together because they share the same Rust Application Capability layer, wallet storage semantics, release toolchain and compatibility contract.
+They share the same wallet semantics, Rust capability layer, and release toolchain.
 
 ## Architecture boundary
 
-This repository owns terminal product behavior: command parsing, terminal interaction, rendering, confirmation, local product orchestration and packaging.
+This repository owns command parsing, terminal interaction, rendering, confirmation, local orchestration, and packaging.
 
 Shared security and wallet semantics remain in [`Fresnica/fresnica`](https://github.com/Fresnica/fresnica):
 
@@ -22,7 +22,9 @@ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependenc
 
 This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
 
-The integrated Main baseline is v0.5.0. Active v0.6 development pins the exact Fresnica shared-source revision recorded in [`FRESNICA_REV`](FRESNICA_REV) and defines the release scope as **Soroban ABI Composer + documentation**: recursive `fresnica-soroban-abi-v1` contract semantics, typed/dynamic composition guidance, exact ScVal identity where JSON is insufficient, and human/AI-agent documentation for using and extending Fresnica without duplicating wallet authority. Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5); Terminal consumes `fresnica-client` / `fresnica-sdk` directly without changing that published Native/UniFFI ABI.
+Main is currently v0.5.0. v0.6 adds the Soroban ABI Composer and the documentation needed to use it from scripts, plugins, and agents. The exact shared Fresnica revision is recorded in [`FRESNICA_REV`](FRESNICA_REV).
+
+Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5).
 
 ## Layout
 
@@ -39,13 +41,13 @@ FRESNICA_REV            pinned shared Fresnica source revision
 
 ## Releases
 
-Fresnica Terminal v0.5.0 is the integrated Main baseline. v0.6 is the active release candidate on feature branches and combines the frozen Soroban ABI Composer contract with a documentation closeout for human and AI-agent consumers. A release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`.
+A release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`. v0.6 is currently being prepared from feature branches.
 
 Release publication remains marker-gated. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
 
 The CLI supports safe `-v` / `-vv` diagnostics. Verbose output exposes execution stages and version/network metadata, never the raw argument vector or hidden secret input.
 
-Automation can discover the currently machine-ready operation surface without opening wallet storage or network providers:
+Machine-ready operations can be discovered without opening wallet storage or contacting providers:
 
 ```bash
 fresnica capabilities --json
@@ -55,18 +57,16 @@ The versioned `fresnica-capabilities-v1` inventory reports exact CLI/source vers
 
 ## Documentation
 
-Start here according to the task:
+- [`AGENTS.md`](AGENTS.md) — instructions for automated work in this repository.
+- [`docs/soroban-composer.md`](docs/soroban-composer.md) — Soroban ABI inspection and argument composition.
+- [`docs/creating-plugins.md`](docs/creating-plugins.md) — plugin development.
+- [`docs/creating-plugins-for-agents.md`](docs/creating-plugins-for-agents.md) — short plugin workflow for agents.
+- [`examples/plugins/fresnica-xlm-balance`](examples/plugins/fresnica-xlm-balance/README.md) — minimal plugin example.
+- [`docs/plugin-architecture.md`](docs/plugin-architecture.md) — plugin design and trust boundary.
+- [`docs/operation-foundation.md`](docs/operation-foundation.md) — capability ownership.
+- [`docs/CURRENT.md`](docs/CURRENT.md) — current implementation state.
 
-- [`AGENTS.md`](AGENTS.md) — project map, decision tree, safety invariants, and workflows for AI agents.
-- [`docs/soroban-composer.md`](docs/soroban-composer.md) — v0.6 Soroban ABI Composer machine contract and usage.
-- [`docs/creating-plugins.md`](docs/creating-plugins.md) — human-oriented plugin quick start and security boundary.
-- [`docs/creating-plugins-for-agents.md`](docs/creating-plugins-for-agents.md) — compressed plugin workflow for AI agents.
-- [`examples/plugins/fresnica-xlm-balance`](examples/plugins/fresnica-xlm-balance/README.md) — minimal canonical plugin example.
-- [`docs/plugin-architecture.md`](docs/plugin-architecture.md) — rationale and lower-trust plugin boundary.
-- [`docs/operation-foundation.md`](docs/operation-foundation.md) — reusable capability ownership.
-- [`docs/CURRENT.md`](docs/CURRENT.md) — exact current implementation/checkpoint state.
-
-The intended discovery order for automation is `fresnica capabilities --json` first, then contract inspection (`fresnica ... contract C... --json`) for Soroban work. Prefer runtime machine contracts over guessing from implementation details.
+For automation, start with `fresnica capabilities --json`. For Soroban, inspect the deployed contract with `fresnica ... contract C... --json`.
 
 ## Build and test
 

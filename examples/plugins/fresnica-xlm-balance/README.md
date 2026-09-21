@@ -1,8 +1,6 @@
 # Minimal Fresnica plugin: XLM balance
 
-This POSIX-shell example demonstrates the default plugin architecture without an SDK or private host RPC.
-
-It is intentionally small:
+This POSIX shell plugin reads an XLM balance by calling Fresnica's public machine interface:
 
 ```text
 fresnica xlm-balance G...
@@ -27,6 +25,6 @@ PATH="/tmp/fresnica-plugin-example:$PWD/target/debug:$PATH" \
   GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
 ```
 
-The example does not read Fresnica storage or handle signing material. It only composes an existing machine operation.
+It does not read Fresnica storage or handle signing material.
 
-On Windows, build or wrap the same behavior as a discoverable `fresnica-xlm-balance.exe`; the process contract is language-neutral.
+On Windows, expose the same behavior as `fresnica-xlm-balance.exe`.

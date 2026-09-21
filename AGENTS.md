@@ -1,78 +1,39 @@
-# Fresnica Agent Guide
+# AGENTS.md
 
-This file is the entry point for AI agents working with or on Fresnica Terminal.
-Use runtime discovery before reading implementation code. Prefer existing machine capabilities over new code.
+Use this file as the starting point for automated work in Fresnica Terminal. Prefer the product's machine interfaces to source-code archaeology.
 
-## What Fresnica is
+## Start here
 
-Fresnica is a self-custody Stellar wallet whose reusable application capabilities are headless first. The terminal repository contains:
-
-- `fresnica`: machine- and human-usable CLI;
-- `fresnica-tui`: interactive terminal UI;
-- `fresnica-*`: external executable plugins, including the bundled `fresnica-anchor`;
-- documentation and product adapters over the shared Fresnica Rust capability layer.
-
-The security/application ownership boundary is:
-
-```text
-fresnica-core    cryptographic and protocol security meaning
-      |
-fresnica-sdk     stable SDK/security boundary
-      |
-fresnica-client  reusable wallet/application capabilities
-      |
-fresnica-terminal
-  CLI / TUI / plugins / presentation / packaging
-```
-
-Do not duplicate wallet, transaction, signing, authorization, or Soroban semantics in Terminal when they belong in `fresnica-client`.
-
-## First action: discover, do not guess
-
-Before writing code, ask the running product what it already supports:
+Check what the installed CLI can already do:
 
 ```sh
 fresnica capabilities --json
 ```
 
-The `fresnica-capabilities-v1` response describes machine-ready operations, effects, runtime dependencies, JSON output, and any explicit noninteractive confirmation requirement.
-
-For a Soroban contract, inspect the deployed Contract Spec instead of hard-coding an interface:
+For Soroban work, inspect the deployed contract before writing an adapter:
 
 ```sh
 fresnica --network testnet contract C... --json
 ```
 
-The versioned `fresnica-soroban-abi-v1` model describes functions, recursive ABI types, UDTs, and per-input composition support.
+If those two commands already expose the required operation and ABI, use them. Do not add a second implementation.
 
-## Task decision tree
-
-Use this order:
+## Repository boundaries
 
 ```text
-Need to accomplish a Stellar/Fresnica task?
-|
-+-- Existing operation in `fresnica capabilities --json`?
-|     `-- yes: call the public machine CLI; do not write a second implementation.
-|
-+-- Soroban contract operation?
-|     `-- inspect `contract ... --json`, follow `composition`, then compose/simulate.
-|
-+-- New business/protocol orchestration over existing capabilities?
-|     `-- create a `fresnica-<name>` plugin.
-|
-+-- Missing reusable wallet capability?
-|     `-- implement at the shared `fresnica-client` boundary first.
-|
-`-- Needs secrets/signing/authorization?
-      `-- authority stays inside Fresnica; never move it into a plugin or agent helper.
+fresnica-core      cryptography and protocol security
+fresnica-sdk       stable SDK/security boundary
+fresnica-client    reusable wallet/application capabilities
+fresnica-terminal  CLI, TUI, plugins, presentation, packaging
 ```
 
-## Using Fresnica as an agent
+Wallet semantics belong in `fresnica-client`, not in CLI/TUI/plugin code. This includes transaction construction, authorization, signer selection, Soroban argument semantics, and submission rules.
 
-Prefer JSON-producing commands and preserve their schemas. Do not scrape human text when a machine form exists.
+Terminal consumes the exact shared-source revision in `FRESNICA_REV`. Changing that pin is a compatibility change.
 
-Typical discovery:
+## Using Fresnica from an agent
+
+Use JSON output whenever it exists:
 
 ```sh
 fresnica capabilities --json
@@ -82,90 +43,66 @@ fresnica balance --json
 fresnica plugin ls --json
 ```
 
-A write operation is not permission to bypass Fresnica policy. If a machine-ready operation advertises an explicit confirmation flag such as `-y`, use it only when the calling workflow has authority to perform the action. Never feed secrets through argv, environment values, logs, or JSON output.
+Do not scrape human output when a JSON contract exists. A command advertising `-y` still requires the caller to have authority to perform the write; machine access does not bypass wallet policy.
 
-## Soroban ABI Composer
+Never place passphrases, mnemonics, private keys, or unlock material in argv, environment values, logs, fixtures, or JSON output.
 
-Read [`docs/soroban-composer.md`](docs/soroban-composer.md) before constructing contract calls.
+## Soroban
 
-The fast path is:
+See [`docs/soroban-composer.md`](docs/soroban-composer.md).
 
-```text
-inspect deployed contract
-  -> find function in `abi.functions`
-  -> inspect each input's `composition`
-  -> build typed arguments
-  -> `--simulate --json`
-  -> inspect semantic result/effects
-  -> invoke through normal Fresnica review/authorization when a write is intended
-```
-
-Composition modes in `fresnica-soroban-abi-v1`:
-
-- `typed_json`, `guided=true`: safe complete-domain ABI-guided JSON; use `--args-json`.
-- `dynamic_scval_json`, `guided=false`: contains open-ended Soroban `Val`; use explicit tagged ScVal JSON and preserve `scval_xdr` identity.
-- `scval_xdr_success_only`, `guided=false`: conservative `Result` boundary; exact success-value XDR is the supported expert path.
-- `unsupported`, `guided=false`: do not invent an encoding. Stop or request a capability change.
-- unknown future mode: treat as unguided/unsupported.
-
-Do not implement a second Soroban ABI codec. Fresnica intentionally delegates ScVal encoding/normalization to the official Soroban spec tools with narrow fail-closed guards.
-
-## Creating a plugin
-
-Use a plugin only for business/protocol orchestration that is not already a single public Fresnica operation.
-
-Human-oriented guide: [`docs/creating-plugins.md`](docs/creating-plugins.md).
-Agent fast path: [`docs/creating-plugins-for-agents.md`](docs/creating-plugins-for-agents.md).
-Canonical minimal example: [`examples/plugins/fresnica-xlm-balance`](examples/plugins/fresnica-xlm-balance/README.md).
-
-Default plugin architecture:
+The normal flow is:
 
 ```text
-fresnica <name> ...
-  -> PATH executable `fresnica-<name>`
-  -> plugin calls `$FRESNICA_PLUGIN_HOST ... --json`
-  -> Fresnica retains wallet semantics and authority
+inspect contract -> read ABI -> compose arguments -> simulate -> review effects -> invoke
 ```
 
-Before adding a private `__plugin-host` capability, prove that the public machine CLI cannot express the operation safely. `__plugin-host` is for bounded authority/state handoff, not a duplicate API surface.
+Each ABI input has a `composition` field:
 
-## Plugin security invariants
+- `typed_json`, `guided=true`: use `--args-json`.
+- `dynamic_scval_json`: use explicit tagged ScVal JSON and preserve `scval_xdr`.
+- `scval_xdr_success_only`: use an exact successful ScVal through `--scval-xdr`.
+- `unsupported` or an unknown future mode: stop rather than inventing an encoding.
 
-A plugin or agent helper MUST NOT:
+Do not add another Soroban ABI codec. Fresnica uses the official spec tooling and adds only narrow validation around its unsafe or ambiguous edges.
 
-- read Fresnica wallet storage directly;
-- request, persist, log, or forward Fresnica passphrases;
-- access private keys, mnemonics, raw unlock material, or opened signer handles;
-- become a generic `sign-xdr` service;
-- choose Fresnica signers or bypass review/confirmation policy;
-- duplicate an existing Fresnica machine operation as a private host RPC.
+## Plugins
 
-Plugins are ordinary local executables and are not OS-sandboxed. Treat plugin code as lower trust than the wallet host.
+Use a plugin for protocol or business orchestration over existing Fresnica capabilities. Do not create a plugin merely to rename one existing command.
 
-## Modifying Fresnica itself
+Start with:
 
-Before changing source:
+- [`docs/creating-plugins.md`](docs/creating-plugins.md) for the normal developer guide.
+- [`docs/creating-plugins-for-agents.md`](docs/creating-plugins-for-agents.md) for the short agent workflow.
+- [`examples/plugins/fresnica-xlm-balance`](examples/plugins/fresnica-xlm-balance/README.md) for the minimal working example.
 
-1. inspect the relevant existing capability and tests;
-2. identify the owning layer from the architecture above;
-3. make the smallest change at that owner;
-4. keep CLI/TUI/plugin layers as presentation/orchestration adapters;
-5. add a regression test for the behavior changed;
-6. run local validation before considering CI.
+A plugin is an executable named `fresnica-<name>`. For wallet operations it should call the host supplied in `FRESNICA_PLUGIN_HOST` and consume public `--json` interfaces.
 
-Do not work directly on `main`. Keep shared-source revisions exact in `FRESNICA_REV`; changing the pin is an explicit compatibility change.
+Private `__plugin-host` operations are reserved for cases where a public operation cannot safely express a required authority/state handoff. They are not a second general API.
 
-For broader architectural constraints read:
+Plugins never own private keys, mnemonics, passphrases, unlock material, signer handles, signer selection, or generic `sign-xdr` authority.
+
+## Changing Fresnica
+
+Before editing:
+
+1. locate the existing capability and tests;
+2. identify the owning layer;
+3. change that layer only;
+4. add a regression test when behavior changes;
+5. run the local gate.
+
+Do not work directly on `main`. Do not move shared semantics into a presentation layer for convenience.
+
+Relevant architecture documents:
 
 - [`docs/operation-foundation.md`](docs/operation-foundation.md)
 - [`docs/plugin-architecture.md`](docs/plugin-architecture.md)
 - [`docs/CURRENT.md`](docs/CURRENT.md)
 
-## Testing
+## Validation
 
-Prefer Testnet for network behavior and local repository tests for deterministic semantics.
-
-For ordinary source changes:
+For repository changes:
 
 ```sh
 bash scripts/validate-boundary.sh
@@ -174,28 +111,16 @@ cargo test --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-For a plugin, at minimum verify:
+Use Testnet for network behavior. Do not report a live E2E result unless that path was actually executed.
 
-```text
-[ ] executable is discoverable by `fresnica plugin ls --json`
-[ ] `fresnica <name> ...` dispatches to it
-[ ] host-provided network/context is used rather than re-created
-[ ] existing wallet operations are called through machine JSON surfaces
-[ ] invalid input returns non-zero
-[ ] no secret or generic signing authority crosses the plugin boundary
-[ ] Testnet smoke test passes when the plugin depends on network behavior
-```
+For a plugin, also verify discovery, dispatch, invalid-input exit status, and the relevant Testnet path.
 
-Do not claim a live end-to-end result unless the live path was actually executed.
+## Documentation
 
-## Documentation map
-
-- [`README.md`](README.md): product/repository entry point.
-- [`crates/cli/README.md`](crates/cli/README.md): complete CLI surface and machine contracts.
-- [`docs/soroban-composer.md`](docs/soroban-composer.md): v0.6 Composer usage contract.
-- [`docs/creating-plugins.md`](docs/creating-plugins.md): plugin author guide.
-- [`docs/creating-plugins-for-agents.md`](docs/creating-plugins-for-agents.md): fast plugin workflow for agents.
-- [`docs/plugin-architecture.md`](docs/plugin-architecture.md): plugin rationale and trust boundary.
-- [`docs/anchor-plugin-spike.md`](docs/anchor-plugin-spike.md): complex real plugin example and bounded host re-entry evidence.
-- [`docs/operation-foundation.md`](docs/operation-foundation.md): reusable-operation architecture.
-- [`docs/CURRENT.md`](docs/CURRENT.md): current implementation/checkpoint state.
+- [`README.md`](README.md) — repository entry point.
+- [`crates/cli/README.md`](crates/cli/README.md) — CLI surface and machine contracts.
+- [`docs/soroban-composer.md`](docs/soroban-composer.md) — v0.6 Composer.
+- [`docs/creating-plugins.md`](docs/creating-plugins.md) — plugin development.
+- [`docs/plugin-architecture.md`](docs/plugin-architecture.md) — plugin boundary and rationale.
+- [`docs/anchor-plugin-spike.md`](docs/anchor-plugin-spike.md) — advanced real plugin example.
+- [`docs/CURRENT.md`](docs/CURRENT.md) — current implementation state.
