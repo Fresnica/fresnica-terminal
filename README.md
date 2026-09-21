@@ -22,7 +22,7 @@ Terminal code must not depend on `fresnica-core` directly. Shared Rust dependenc
 
 This repository was extracted from `Fresnica/fresnica` at source commit `8c06bce3fb51ac04e4e94c41d3a99c5c6db77b03`. The active shared-source baseline is independent of that historical extraction point and is always the exact commit recorded in `FRESNICA_REV`.
 
-Main is currently v0.5.0. v0.6 adds the Soroban ABI Composer and the documentation needed to use it from scripts, plugins, and agents. The exact shared Fresnica revision is recorded in [`FRESNICA_REV`](FRESNICA_REV).
+v0.6.0 adds the Soroban ABI Composer and the documentation needed to use it from scripts, plugins, and agents. The exact shared Fresnica revision is recorded in [`FRESNICA_REV`](FRESNICA_REV).
 
 Native SDK v0.3.0 remains the binary SDK baseline (Native Binding API 3 / Universal SDK API 5 / Core Client API 5).
 
@@ -41,7 +41,7 @@ FRESNICA_REV            pinned shared Fresnica source revision
 
 ## Releases
 
-A release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`. v0.6 is currently being prepared from feature branches.
+A v0.6.0 release contains `fresnica`, `fresnica-anchor`, and `fresnica-tui`.
 
 Release publication remains marker-gated. The release workflow revalidates the repository boundary, locked workspace tests/builds, and Python CLI compatibility before publishing platform archives plus a manifest and SHA-256 checksums. Release binaries are built from the exact merge commit and retain the exact `FRESNICA_REV` source pin.
 
