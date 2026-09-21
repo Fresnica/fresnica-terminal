@@ -207,6 +207,8 @@ Human help sanitizes control characters from untrusted on-chain documentation be
 
 ## External CLI plugins
 
+For a from-zero plugin tutorial, see [`docs/creating-plugins.md`](../../docs/creating-plugins.md). AI agents should start at [`AGENTS.md`](../../AGENTS.md); the compressed plugin workflow is [`docs/creating-plugins-for-agents.md`](../../docs/creating-plugins-for-agents.md).
+
 Fresnica uses the executable-dispatch idea proven by Stellar CLI, but the product namespace is intentionally Fresnica-only. Unknown commands resolve by longest command chain to `fresnica-<command-chain>` executables on PATH. `stellar-*` and legacy `soroban-*` executables are not auto-dispatched: they use a different developer-tool identity/config model and would create a misleading wallet-context expectation under the `fresnica` command.
 
 For example, `fresnica aqua contract ...` first looks for `fresnica-aqua-contract`, then falls back to the shorter `fresnica-aqua` command if present. Remaining arguments are forwarded unchanged, stdio is inherited, and Fresnica exits with the plugin process status. Built-in commands win and cannot be shadowed. `fresnica-tui` is a reserved companion binary, not a plugin.
