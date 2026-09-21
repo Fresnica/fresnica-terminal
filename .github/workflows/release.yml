@@ -371,12 +371,11 @@ jobs:
           cat > release-notes.md <<EOF
           Fresnica Terminal v${VERSION} preview release.
 
-          - \`fresnica\`: self-custody wallet CLI with reviewed payments, trustlines, SDEX, Soroban invocation and Ledger Classic signing.
-          - \`fresnica-anchor\`: bundled Fresnica-native Anchor plugin with SEP-10/24/6/12 flows.
-          - \`fresnica-tui\`: interactive terminal UI from the same source line.
-          - Fresnica-native executable plugins use the \`fresnica-*\` namespace; Stellar CLI plugins are not auto-dispatched.
+          - Soroban ABI Composer: deployed Contract Specs are exposed as \`fresnica-soroban-abi-v1\` with recursive types and machine-readable composition support.
+          - Contract calls accept typed JSON, preserve exact ScVal XDR where normalized JSON is insufficient, and fail closed on unsupported shapes.
+          - Developer documentation now covers Composer use and Fresnica-native plugin development for both humans and agents; a minimal plugin example is included in the repository.
+          - The release ships \`fresnica\`, \`fresnica-anchor\`, and \`fresnica-tui\`.
           - Shared Fresnica source: \`${FRESNICA_REV}\`.
-          - Terminal consumes the Rust client/SDK boundary directly; Native/UniFFI binaries are not a runtime dependency.
           EOF
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
