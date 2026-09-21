@@ -278,12 +278,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p package dist
+          mkdir -p package dist package/examples/plugins
           cp "${{ matrix.binary_dir }}/fresnica${{ matrix.extension }}" package/
           cp "${{ matrix.binary_dir }}/fresnica-anchor${{ matrix.extension }}" package/
           cp "${{ matrix.binary_dir }}/fresnica-tui${{ matrix.extension }}" package/
           cp README.md package/README.md
-          cp crates/cli/README.md package/CLI-README.md
+          cp AGENTS.md package/AGENTS.md
+          cp -R docs package/docs
+          cp -R examples/plugins/fresnica-xlm-balance package/examples/plugins/
+          sed -e 's#](../../docs/#](docs/#g' -e 's#](../../AGENTS.md#](AGENTS.md#g' \
+            crates/cli/README.md > package/CLI-README.md
           cp crates/tui/README.md package/TUI-README.md
           (cd package && zip -9 -r "../dist/fresnica-terminal-${VERSION}-${{ matrix.asset_os }}-${{ matrix.asset_arch }}.zip" .)
       - uses: actions/upload-artifact@v4
@@ -306,6 +310,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           $zip = (Get-ChildItem "dist/*.zip" | Select-Object -First 1).FullName
           Expand-Archive -Path $zip -DestinationPath package
+          if (-not (Test-Path "package/AGENTS.md")) { throw "AGENTS.md missing from release package" }
+          if (-not (Test-Path "package/docs/soroban-composer.md")) { throw "Composer documentation missing from release package" }
+          if (-not (Test-Path "package/examples/plugins/fresnica-xlm-balance/README.md")) { throw "Plugin example missing from release package" }
           & "package/fresnica.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "package/fresnica.exe" --help | Select-Object -First 8
