@@ -1,12 +1,14 @@
 # Fresnica Terminal Plugin Architecture
 
-Status: **accepted plugin boundary; subordinate to the v0.5 Operation Foundation; Fresnica-native namespace only; host wire remains experimental**
+Status: **accepted plugin boundary; subordinate to the Operation Foundation; Fresnica-native namespace only; ordinary plugins use the public machine CLI, while bounded host re-entry remains exceptional**
 
-Last verified: 2026-09-12.
+Last verified: 2026-09-22.
 
 ## Architecture authority
 
 [`operation-foundation.md`](operation-foundation.md) is the higher-level product constraint. A plugin is one consumer of headless Fresnica operations alongside humans, agents, bots, scripts and native UIs. Do not optimize the shared wallet architecture around plugin mechanics.
+
+For implementation guidance, start with [`creating-plugins.md`](creating-plugins.md). AI agents should enter through [`../AGENTS.md`](../AGENTS.md) and use [`creating-plugins-for-agents.md`](creating-plugins-for-agents.md) for the compressed plugin workflow. This document explains architecture rationale rather than serving as the quick-start tutorial.
 
 The durable plugin rule is therefore: compose bounded capabilities, never become the owner of wallet semantics, secrets, authorization or generic signing. Packaging and host-wire details may evolve after more real consumers exist.
 

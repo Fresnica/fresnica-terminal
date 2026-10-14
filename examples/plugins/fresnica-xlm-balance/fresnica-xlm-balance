@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+: "${FRESNICA_PLUGIN_HOST:?FRESNICA_PLUGIN_HOST is required; launch this plugin through fresnica}"
+: "${FRESNICA_PLUGIN_NETWORK:?FRESNICA_PLUGIN_NETWORK is required}"
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: fresnica xlm-balance G..." >&2
+    exit 2
+fi
+
+exec "$FRESNICA_PLUGIN_HOST" \
+    --network "$FRESNICA_PLUGIN_NETWORK" \
+    token XLM balance "$1" \
+    --json

@@ -1,8 +1,9 @@
 use fresnica_client::{
-    ContactStore, ContractArgumentInput, ContractCapabilities, ContractExecutableObservation,
-    ContractFunction, ContractInterface, ContractInvokePreparation, ContractInvokeRequest,
-    ContractInvokeReview, ContractMetadataEntry, ContractReadResult, ContractSimulationResult,
-    FresnicaClient, PreparedContractInvoke, TransactionSubmission, WalletStorage,
+    ContactStore, ContractAbiType, ContractAbiUnionCasePayload, ContractArgumentInput,
+    ContractCapabilities, ContractExecutableObservation, ContractFunction, ContractInterface,
+    ContractInvokePreparation, ContractInvokeRequest, ContractInvokeReview, ContractMetadataEntry,
+    ContractReadResult, ContractSimulationResult, ContractUserType, FresnicaClient,
+    PreparedContractInvoke, TransactionSubmission, WalletStorage, CONTRACT_ABI_SCHEMA,
     SEP41_INTERFACE_VERSION,
 };
 use serde_json::{json, Value};
@@ -15,8 +16,8 @@ use crate::transaction_flow::{
     confirm_submission, submit_with_classic_signers, with_software_signer_authorization,
 };
 
-const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--simulate] [--json] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
-const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
+const USAGE: &str = "usage:\n  fresnica contract TARGET [--wallet NAME] [-y] [--simulate] [--json] [--args-json OBJECT] [--scval-xdr NAME BASE64]... [FUNCTION [--NAME VALUE]...]\n  fresnica contract list [--json]\n  fresnica contract add NAME C... [--json]\n  fresnica contract remove NAME [--json]\n\nlegacy:\n  fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--args-json OBJECT] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...";
+const LEGACY_USAGE: &str = "usage: fresnica contract invoke C... [--wallet NAME] [-y] [--json] [--args-json OBJECT] [--scval-xdr NAME BASE64]... -- FUNCTION [--NAME VALUE]...\n       fresnica contract invoke C... [--json] -- --help\n       fresnica contract invoke C... [--json] -- FUNCTION --help";
 const SAVED_CONTRACT_USAGE: &str =
     "usage: fresnica contract list [--json] | contract add NAME C... [--json] | contract remove NAME [--json]";
 const CONTRACT_LIST_SCHEMA: &str = "fresnica-contract-list-v1";
@@ -78,6 +79,7 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
         InvokeAction::Invoke { .. } => {}
     }
 
+    let json_arguments = options.json_arguments.clone();
     let scval_xdr_arguments = options.scval_xdr_arguments.clone();
     let InvokeAction::Invoke {
         function_name,
@@ -90,6 +92,9 @@ pub fn command_contract(client: &FresnicaClient, arguments: &[String]) -> Result
     crate::diagnostics::stage("contract: simulate invoke");
     let mut invoke = ContractInvokeRequest::new(options.contract_id, function_name, arguments);
     invoke.wallet = options.wallet;
+    for (name, value) in json_arguments {
+        invoke.add_json_argument(name, value);
+    }
     for argument in scval_xdr_arguments {
         invoke.add_scval_xdr_argument(argument.name, argument.value);
     }
@@ -195,6 +200,7 @@ struct InvokeOptions {
     yes: bool,
     simulate: bool,
     json: bool,
+    json_arguments: Vec<(String, Value)>,
     scval_xdr_arguments: Vec<ContractArgumentInput>,
     action: InvokeAction,
 }
@@ -225,6 +231,7 @@ impl InvokeOptions {
         let mut yes = false;
         let mut simulate = false;
         let mut json = false;
+        let mut json_arguments = Vec::new();
         let mut scval_xdr_arguments = Vec::new();
         let mut index = 1;
         while index < arguments.len() {
@@ -251,6 +258,12 @@ impl InvokeOptions {
                     json = true;
                     index += 1;
                 }
+                "--args-json" => {
+                    index += 1;
+                    let value = arguments.get(index).ok_or_else(|| USAGE.to_owned())?;
+                    json_arguments.extend(parse_json_argument_object(value)?);
+                    index += 1;
+                }
                 "--scval-xdr" => {
                     index += 1;
                     let name = arguments.get(index).ok_or_else(|| USAGE.to_owned())?;
@@ -266,6 +279,11 @@ impl InvokeOptions {
                     if index + 1 != arguments.len() {
                         return Err(USAGE.to_owned());
                     }
+                    if !json_arguments.is_empty() {
+                        return Err(
+                            "--args-json requires a contract function invocation".to_owned()
+                        );
+                    }
                     if !scval_xdr_arguments.is_empty() {
                         return Err(
                             "--scval-xdr requires a contract function invocation".to_owned()
@@ -280,6 +298,7 @@ impl InvokeOptions {
                         yes,
                         simulate,
                         json,
+                        json_arguments,
                         scval_xdr_arguments,
                         action: InvokeAction::InterfaceHelp,
                     });
@@ -293,6 +312,9 @@ impl InvokeOptions {
         } else {
             parse_dynamic(&arguments[index..])?
         };
+        if !json_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
+            return Err("--args-json requires a contract function invocation".to_owned());
+        }
         if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
             return Err("--scval-xdr requires a contract function invocation".to_owned());
         }
@@ -315,6 +337,7 @@ impl InvokeOptions {
             yes,
             simulate,
             json,
+            json_arguments,
             scval_xdr_arguments,
             action,
         })
@@ -328,6 +351,7 @@ impl InvokeOptions {
         let mut wallet = None;
         let mut yes = false;
         let mut json = false;
+        let mut json_arguments = Vec::new();
         let mut scval_xdr_arguments = Vec::new();
         let mut index = 2;
         while index < arguments.len() && arguments[index] != "--" {
@@ -348,6 +372,14 @@ impl InvokeOptions {
                 }
                 "--json" => {
                     json = true;
+                    index += 1;
+                }
+                "--args-json" => {
+                    index += 1;
+                    let value = arguments
+                        .get(index)
+                        .ok_or_else(|| LEGACY_USAGE.to_owned())?;
+                    json_arguments.extend(parse_json_argument_object(value)?);
                     index += 1;
                 }
                 "--scval-xdr" => {
@@ -375,6 +407,9 @@ impl InvokeOptions {
             ));
         }
         let action = parse_dynamic(&arguments[index + 1..])?;
+        if !json_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
+            return Err("--args-json requires a contract function invocation".to_owned());
+        }
         if !scval_xdr_arguments.is_empty() && !matches!(action, InvokeAction::Invoke { .. }) {
             return Err("--scval-xdr requires a contract function invocation".to_owned());
         }
@@ -384,10 +419,20 @@ impl InvokeOptions {
             yes,
             simulate: false,
             json,
+            json_arguments,
             scval_xdr_arguments,
             action,
         })
     }
+}
+
+fn parse_json_argument_object(value: &str) -> Result<Vec<(String, Value)>, String> {
+    let parsed: Value = serde_json::from_str(value)
+        .map_err(|error| format!("invalid --args-json object: {error}"))?;
+    let Value::Object(arguments) = parsed else {
+        return Err("--args-json must be a JSON object keyed by contract argument name".to_owned());
+    };
+    Ok(arguments.into_iter().collect())
 }
 
 pub fn command_saved_contracts(
@@ -926,6 +971,7 @@ fn argument_json(argument: &fresnica_client::ContractArgumentReview) -> Value {
         "name": argument.name.as_str(),
         "type": argument.value_type.as_str(),
         "value": argument.value.clone(),
+        "scval_xdr": argument.scval_xdr.as_str(),
     })
 }
 
@@ -936,6 +982,150 @@ pub(crate) fn interface_json(interface: &ContractInterface) -> Value {
         "wasm_meta": metadata_json(&interface.metadata),
         "capabilities": capabilities_json(&interface.capabilities),
         "functions": interface.functions.iter().map(function_json).collect::<Vec<_>>(),
+        "abi": abi_json(interface),
+    })
+}
+
+fn abi_json(interface: &ContractInterface) -> Value {
+    json!({
+        "schema": CONTRACT_ABI_SCHEMA,
+        "functions": interface.functions.iter().map(abi_function_json).collect::<Vec<_>>(),
+        "types": interface.user_types.iter().map(user_type_json).collect::<Vec<_>>(),
+    })
+}
+
+fn abi_function_json(function: &ContractFunction) -> Value {
+    json!({
+        "name": function.name.as_str(),
+        "doc": function.doc.as_str(),
+        "inputs": function.inputs.iter().map(|input| json!({
+            "name": input.name.as_str(),
+            "doc": input.doc.as_str(),
+            "type": abi_type_json(&input.value_type.abi),
+            "example": input.value_type.example.as_deref(),
+            "composition": {
+                "mode": input.composition.mode(),
+                "guided": input.composition.guided(),
+            },
+        })).collect::<Vec<_>>(),
+        "outputs": function.outputs.iter().map(|output| json!({
+            "type": abi_type_json(&output.abi),
+            "example": output.example.as_deref(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn abi_type_json(value_type: &ContractAbiType) -> Value {
+    match value_type {
+        ContractAbiType::Primitive(name) => json!({"kind": "primitive", "name": name}),
+        ContractAbiType::Option(value) => json!({
+            "kind": "option",
+            "value": abi_type_json(value),
+        }),
+        ContractAbiType::Result { ok, error } => json!({
+            "kind": "result",
+            "ok": abi_type_json(ok),
+            "error": abi_type_json(error),
+        }),
+        ContractAbiType::Vec(element) => json!({
+            "kind": "vec",
+            "element": abi_type_json(element),
+        }),
+        ContractAbiType::Map { key, value } => json!({
+            "kind": "map",
+            "key": abi_type_json(key),
+            "value": abi_type_json(value),
+        }),
+        ContractAbiType::Tuple(values) => json!({
+            "kind": "tuple",
+            "values": values.iter().map(abi_type_json).collect::<Vec<_>>(),
+        }),
+        ContractAbiType::BytesN(length) => json!({
+            "kind": "bytes_n",
+            "length": length,
+        }),
+        ContractAbiType::Udt(name) => json!({
+            "kind": "udt",
+            "name": name,
+        }),
+    }
+}
+
+fn user_type_json(user_type: &ContractUserType) -> Value {
+    match user_type {
+        ContractUserType::Struct {
+            name,
+            doc,
+            lib,
+            fields,
+        } => json!({
+            "kind": "struct",
+            "name": name,
+            "doc": doc,
+            "lib": lib,
+            "fields": fields.iter().map(|field| json!({
+                "name": field.name.as_str(),
+                "doc": field.doc.as_str(),
+                "type": abi_type_json(&field.value_type),
+            })).collect::<Vec<_>>(),
+        }),
+        ContractUserType::Union {
+            name,
+            doc,
+            lib,
+            cases,
+        } => json!({
+            "kind": "union",
+            "name": name,
+            "doc": doc,
+            "lib": lib,
+            "cases": cases.iter().map(|case| {
+                let payload = match &case.payload {
+                    ContractAbiUnionCasePayload::Void => json!({"kind": "void"}),
+                    ContractAbiUnionCasePayload::Tuple(values) => json!({
+                        "kind": "tuple",
+                        "values": values.iter().map(abi_type_json).collect::<Vec<_>>(),
+                    }),
+                };
+                json!({
+                    "name": case.name.as_str(),
+                    "doc": case.doc.as_str(),
+                    "payload": payload,
+                })
+            }).collect::<Vec<_>>(),
+        }),
+        ContractUserType::Enum {
+            name,
+            doc,
+            lib,
+            cases,
+        } => enum_type_json("enum", name, doc, lib, cases),
+        ContractUserType::ErrorEnum {
+            name,
+            doc,
+            lib,
+            cases,
+        } => enum_type_json("error_enum", name, doc, lib, cases),
+    }
+}
+
+fn enum_type_json(
+    kind: &str,
+    name: &str,
+    doc: &str,
+    lib: &str,
+    cases: &[fresnica_client::ContractAbiEnumCase],
+) -> Value {
+    json!({
+        "kind": kind,
+        "name": name,
+        "doc": doc,
+        "lib": lib,
+        "cases": cases.iter().map(|case| json!({
+            "name": case.name.as_str(),
+            "doc": case.doc.as_str(),
+            "value": case.value,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -966,6 +1156,7 @@ fn read_only_json(result: &ContractReadResult) -> Value {
         "function": result.function_name.as_str(),
         "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "result": result.output.clone(),
+        "result_xdr": result.output_xdr.as_deref(),
         "simulation_ledger": result.simulation_ledger,
         "network": result.network.as_str(),
         "submission": Value::Null,
@@ -982,6 +1173,7 @@ fn simulation_json(result: &ContractSimulationResult) -> Value {
         "function": result.function_name.as_str(),
         "arguments": result.arguments.iter().map(argument_json).collect::<Vec<_>>(),
         "result": result.output.clone(),
+        "result_xdr": result.output_xdr.as_deref(),
         "simulation_ledger": result.simulation_ledger,
         "network": result.network.as_str(),
         "effects": {
@@ -1137,6 +1329,64 @@ mod tests {
     }
 
     #[test]
+    fn args_json_host_option_preserves_typed_values_before_function_boundary() {
+        let args = [
+            "aqua",
+            "--args-json",
+            r#"{"routes":[{"amount":7}],"enabled":true}"#,
+            "compose",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(options.json_arguments.len(), 2);
+        assert_eq!(options.json_arguments[0].0, "enabled");
+        assert_eq!(options.json_arguments[0].1, json!(true));
+        assert_eq!(options.json_arguments[1].0, "routes");
+        assert_eq!(options.json_arguments[1].1, json!([{"amount": 7}]));
+        assert!(matches!(
+            options.action,
+            InvokeAction::Invoke { ref function_name, ref arguments }
+                if function_name == "compose" && arguments.is_empty()
+        ));
+    }
+
+    #[test]
+    fn legacy_args_json_stays_before_separator_and_preserves_typed_values() {
+        let args = [
+            "invoke",
+            CONTRACT,
+            "--args-json",
+            r#"{"value":{"nested":[1,2]}}"#,
+            "--",
+            "set",
+        ]
+        .map(str::to_owned);
+        let options = InvokeOptions::parse(&args).unwrap();
+        assert_eq!(
+            options.json_arguments,
+            vec![("value".to_owned(), json!({"nested": [1, 2]}))]
+        );
+        assert!(matches!(
+            options.action,
+            InvokeAction::Invoke { ref function_name, ref arguments }
+                if function_name == "set" && arguments.is_empty()
+        ));
+    }
+
+    #[test]
+    fn args_json_rejects_invalid_json_and_non_object_values() {
+        let invalid = ["aqua", "--args-json", "{", "compose"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&invalid)
+            .unwrap_err()
+            .contains("invalid --args-json object"));
+
+        let array = ["aqua", "--args-json", "[]", "compose"].map(str::to_owned);
+        assert!(InvokeOptions::parse(&array)
+            .unwrap_err()
+            .contains("must be a JSON object"));
+    }
+
+    #[test]
     fn scval_xdr_host_option_stays_before_function_boundary() {
         let args = [
             "aqua",
@@ -1275,6 +1525,134 @@ mod tests {
         assert!(InvokeOptions::parse(&args)
             .unwrap_err()
             .contains("must follow `--`"));
+    }
+
+    #[test]
+    fn interface_json_exposes_versioned_recursive_abi_without_replacing_legacy_functions() {
+        let interface = ContractInterface {
+            contract_id: CONTRACT.to_owned(),
+            executable: ContractExecutableObservation {
+                kind: fresnica_client::ContractExecutableKind::Wasm,
+                wasm_hash: Some("ab".repeat(32)),
+            },
+            metadata: vec![],
+            capabilities: ContractCapabilities {
+                sep41: fresnica_client::ContractSep41Evidence {
+                    native_sac: false,
+                    sep47_declared: false,
+                    current_interface_compatible: false,
+                },
+            },
+            functions: vec![ContractFunction {
+                name: "compose".to_owned(),
+                doc: "compose routes".to_owned(),
+                inputs: vec![fresnica_client::ContractParameter {
+                    name: "routes".to_owned(),
+                    doc: "routes by owner".to_owned(),
+                    value_type: fresnica_client::ContractParameterType {
+                        name: "option<map<address,vec<Route>>>".to_owned(),
+                        example: None,
+                        abi: ContractAbiType::Option(Box::new(ContractAbiType::Map {
+                            key: Box::new(ContractAbiType::Primitive("address".to_owned())),
+                            value: Box::new(ContractAbiType::Vec(Box::new(ContractAbiType::Udt(
+                                "Route".to_owned(),
+                            )))),
+                        })),
+                    },
+                    composition: fresnica_client::ContractInputComposition::TypedJson,
+                }],
+                outputs: vec![],
+            }],
+            user_types: vec![ContractUserType::Struct {
+                name: "Route".to_owned(),
+                doc: "route definition".to_owned(),
+                lib: "routing".to_owned(),
+                fields: vec![fresnica_client::ContractAbiField {
+                    name: "destination".to_owned(),
+                    doc: "destination".to_owned(),
+                    value_type: ContractAbiType::Primitive("address".to_owned()),
+                }],
+            }],
+        };
+
+        let encoded = interface_json(&interface);
+        assert_eq!(
+            encoded["functions"][0]["inputs"][0]["type"],
+            "option<map<address,vec<Route>>>"
+        );
+        assert!(encoded["functions"][0]["inputs"][0]
+            .get("composition")
+            .is_none());
+        assert_eq!(encoded["abi"]["schema"], CONTRACT_ABI_SCHEMA);
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["type"]["kind"],
+            "option"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["composition"]["mode"],
+            "typed_json"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["composition"]["guided"],
+            true
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["type"]["value"]["kind"],
+            "map"
+        );
+        assert_eq!(
+            encoded["abi"]["functions"][0]["inputs"][0]["type"]["value"]["value"]["element"]
+                ["name"],
+            "Route"
+        );
+        assert_eq!(encoded["abi"]["types"][0]["kind"], "struct");
+        assert_eq!(
+            encoded["abi"]["types"][0]["fields"][0]["type"]["name"],
+            "address"
+        );
+    }
+
+    #[test]
+    fn machine_argument_json_preserves_exact_scval_identity() {
+        let argument = fresnica_client::ContractArgumentReview {
+            name: "value".to_owned(),
+            value_type: "val".to_owned(),
+            value: json!(7),
+            scval_xdr: "AAAA".to_owned(),
+        };
+        let encoded = argument_json(&argument);
+        assert_eq!(encoded["value"], 7);
+        assert_eq!(encoded["scval_xdr"], "AAAA");
+    }
+
+    #[test]
+    fn abi_composition_modes_are_stable_machine_contract_values() {
+        let modes = [
+            (
+                fresnica_client::ContractInputComposition::TypedJson,
+                "typed_json",
+                true,
+            ),
+            (
+                fresnica_client::ContractInputComposition::DynamicScValJson,
+                "dynamic_scval_json",
+                false,
+            ),
+            (
+                fresnica_client::ContractInputComposition::ScValXdrSuccessOnly,
+                "scval_xdr_success_only",
+                false,
+            ),
+            (
+                fresnica_client::ContractInputComposition::Unsupported,
+                "unsupported",
+                false,
+            ),
+        ];
+        for (composition, mode, guided) in modes {
+            assert_eq!(composition.mode(), mode);
+            assert_eq!(composition.guided(), guided);
+        }
     }
 
     #[test]
