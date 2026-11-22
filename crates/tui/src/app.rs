@@ -8,8 +8,8 @@ use ratatui::crossterm::event::KeyCode;
 use zeroize::Zeroize;
 
 use super::state::{
-    MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, PreparedWrite, SendForm,
-    TrustlineForm, TrustlineFormAction,
+    MarketForm, MarketSnapshot, Mode, OfferForm, OfferFormAction, PortraitForm, PreparedWrite,
+    SendForm, TrustlineForm, TrustlineFormAction,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,6 +295,43 @@ impl App {
                 KeyCode::Char('d') => {
                     self.mode = Mode::Market(MarketForm::new());
                     self.status = "Choose a DEX market pair".to_owned();
+                }
+                KeyCode::Char('a') if self.client.network() == "mainnet" => {
+                    self.mode = Mode::Portrait(PortraitForm::default());
+                    self.status = "Enter the public address to look up".to_owned();
+                }
+                _ => {}
+            },
+            Mode::Portrait(form) => match code {
+                KeyCode::Esc => {
+                    self.mode = Mode::Browse;
+                    self.status = "Address portrait closed".to_owned();
+                }
+                KeyCode::Enter => {
+                    form.clear_result();
+                    match super::portrait::lookup(&form.address) {
+                        Ok(lines) => {
+                            form.lines = lines;
+                            self.status.clear();
+                        }
+                        Err(error) => self.status = error,
+                    }
+                }
+                KeyCode::Up => form.scroll = form.scroll.saturating_sub(1),
+                KeyCode::Down if usize::from(form.scroll) + 1 < form.lines.len() => {
+                    form.scroll += 1
+                }
+                KeyCode::Backspace => {
+                    form.address.pop();
+                    form.clear_result();
+                }
+                KeyCode::Delete => {
+                    form.address.clear();
+                    form.clear_result();
+                }
+                KeyCode::Char(c) if c.is_ascii_alphanumeric() && form.address.len() < 56 => {
+                    form.address.push(c.to_ascii_uppercase());
+                    form.clear_result();
                 }
                 _ => {}
             },

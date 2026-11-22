@@ -5,6 +5,7 @@ use fresnica_client::{
 
 pub(super) enum Mode {
     Browse,
+    Portrait(PortraitForm),
     Send(SendForm),
     Trustline(TrustlineForm),
     Offer(OfferForm),
@@ -17,6 +18,20 @@ pub(super) enum Mode {
         prepared: PreparedWrite,
         passcode: String,
     },
+}
+
+#[derive(Default)]
+pub(super) struct PortraitForm {
+    pub(super) address: String,
+    pub(super) lines: Vec<String>,
+    pub(super) scroll: u16,
+}
+
+impl PortraitForm {
+    pub(super) fn clear_result(&mut self) {
+        self.lines.clear();
+        self.scroll = 0;
+    }
 }
 
 pub(super) struct MarketSnapshot {

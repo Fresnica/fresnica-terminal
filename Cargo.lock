@@ -1734,6 +1734,9 @@ dependencies = [
  "fresnica-terminal-presentation",
  "ratatui",
  "serde_json",
+ "stellar-strkey 0.0.18",
+ "ureq",
+ "url",
  "zeroize",
 ]
 

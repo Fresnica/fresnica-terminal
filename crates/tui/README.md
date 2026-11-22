@@ -30,3 +30,15 @@ cargo run -p fresnica-tui -- --network testnet
 Use `--home PATH` or `FRESNICA_HOME` to point at an isolated wallet directory.
 
 Use global `--horizon-url URL` to override the current Horizon endpoint, or set `FRESNICA_HORIZON_URL` as the session default. The command-line value wins. This changes the provider endpoint only; `--network` remains the Stellar network identity.
+
+## Address portraits
+
+On a machine that can reach the SAINT private network, set `FRESNICA_SAINT_URL`
+to the bare HTTP(S) origin and run `fresnica-tui --network mainnet`. Press `a`,
+enter a public Stellar G or C address, and press Enter. A queued result shows its
+Ledger cutoff and can be checked again with Enter. Esc returns to the wallet.
+
+The portrait shows its observed Ledger window, evidence coordinates and any
+reviewed transaction hashes. Candidate patterns are shown with their review
+status. The lookup has a three-second network timeout and is independent of
+wallet authorization, signing and submission.
