@@ -20,7 +20,7 @@ Usage:
 Environment:
   FRESNICA_HORIZON_URL          Default Horizon endpoint override; command-line flag wins
   FRESNICA_TX_TIMEOUT_SECONDS   Default Classic transaction validity window; flag wins
-  FRESNICA_SAINT_URL            Optional private SAINT origin for Mainnet address portraits
+  FRESNICA_SAINT_URL            Optional SAINT origin override for Mainnet address portraits
 
 Keys:
   q / Esc     quit
@@ -29,7 +29,7 @@ Keys:
   s           prepare a payment from the selected signing wallet
   t           manage issued-asset trustlines
   d           open the DEX market selector
-  a           look up a Mainnet address portrait (when SAINT is configured)
+  a           look up a Mainnet address portrait
   /           choose an exact asset identity while an asset field is focused
 
 Write flow:

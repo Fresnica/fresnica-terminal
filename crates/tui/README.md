@@ -33,8 +33,8 @@ Use global `--horizon-url URL` to override the current Horizon endpoint, or set 
 
 ## Address portraits
 
-On a machine that can reach the SAINT private network, set `FRESNICA_SAINT_URL`
-to the bare HTTP(S) origin and run `fresnica-tui --network mainnet`. Press `a`,
+The explicit portrait lookup sends the entered address to `https://saint.fed.network`.
+Set `FRESNICA_SAINT_URL` to use a different origin. Run `fresnica-tui --network mainnet`. Press `a`,
 enter a public Stellar G or C address, and press Enter. A queued result shows its
 Ledger cutoff and can be checked again with Enter. Esc returns to the wallet.
 

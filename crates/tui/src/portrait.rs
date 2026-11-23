@@ -8,8 +8,8 @@ const MAINNET: &str = "7ac33997544e3175d266bd022439b22cdb16508c01163f26e5cb2a3e1
 const UNAVAILABLE: &str = "SAINT portrait unavailable. You can return to the wallet with Esc.";
 
 pub(super) fn lookup(address: &str) -> Result<Vec<String>, String> {
-    let base = env::var("FRESNICA_SAINT_URL")
-        .map_err(|_| "Set FRESNICA_SAINT_URL to your private SAINT origin.".to_owned())?;
+    let base =
+        env::var("FRESNICA_SAINT_URL").unwrap_or_else(|_| "https://saint.fed.network".to_owned());
     lookup_at(address, &base)
 }
 
@@ -80,6 +80,79 @@ fn items(value: &Value) -> &[Value] {
     value.as_array().map(Vec::as_slice).unwrap_or_default()
 }
 
+fn history_lines(json: &Value, published: u64) -> Vec<String> {
+    let mut lines = Vec::new();
+    for period in items(&json["behavior_history"]["periods"]) {
+        let (Some(first), Some(end)) = (period["first"].as_u64(), period["through"].as_u64())
+        else {
+            continue;
+        };
+        if first == 0 || first > end || end > published {
+            continue;
+        }
+        lines.push(format!("Sampled ledgers {first}–{end}"));
+        for mechanism in items(&period["reviewed_mechanisms"]) {
+            if let Some(name) = ready_label(&mechanism["mechanism"]) {
+                lines.push(format!("Observed: {name}"));
+                for witness in items(&mechanism["witnesses"]) {
+                    if let Some(hash) = witness["tx_hash"]
+                        .as_str()
+                        .filter(|v| v.len() == 64 && v.bytes().all(|c| c.is_ascii_hexdigit()))
+                    {
+                        lines.push(format!("  tx {hash}"));
+                    }
+                }
+            }
+        }
+        for (field, caption) in [
+            ("additional_roles_observed", "Also observed"),
+            ("previous_roles_unobserved", "Unseen in this sample"),
+        ] {
+            let roles: Vec<_> = items(&period[field])
+                .iter()
+                .filter_map(ready_label)
+                .collect();
+            if !roles.is_empty() {
+                lines.push(format!("{caption}: {}", roles.join(", ")));
+            }
+        }
+        for w in items(&period["witnesses"]) {
+            if let (Some(role), Some(hash), Some(ledger)) = (
+                ready_label(&w["role"]),
+                w["tx_hash"].as_str(),
+                w["ledger"].as_u64(),
+            ) {
+                if (first..=end).contains(&ledger)
+                    && hash.len() == 64
+                    && hash.bytes().all(|c| c.is_ascii_hexdigit())
+                {
+                    let time = ready_label(&w["utc"]).unwrap_or_default();
+                    let count = period["roles"][&role].as_u64().unwrap_or(1);
+                    lines.push(format!("{role} ({count}) · {time} · ledger {ledger}"));
+                    if let Some(objects) = w["objects"].as_object() {
+                        for (field, reference) in objects {
+                            if let Some(value) = ["$asset", "$order", "$balance"]
+                                .iter()
+                                .find_map(|key| ready_label(&reference[*key]))
+                            {
+                                lines.push(format!("  {field}: {value}"));
+                            }
+                        }
+                    }
+                    lines.push(format!("  tx {hash}"));
+                }
+            }
+        }
+    }
+    if !lines.is_empty() {
+        lines.insert(
+            0,
+            "Behavior in sampled windows (gaps unobserved)".to_owned(),
+        );
+    }
+    lines
+}
+
 fn format_portrait(address: &str, code: u16, json: &Value) -> Result<Vec<String>, String> {
     if json["schema"] != "saint.address-portrait.v1"
         || json["address"] != address
@@ -95,9 +168,11 @@ fn format_portrait(address: &str, code: u16, json: &Value) -> Result<Vec<String>
         if through > published {
             return Err(UNAVAILABLE.to_owned());
         }
-        return Ok(vec![format!(
+        let mut lines = vec![format!(
             "Queued at ledger {through}. Press Enter to check again."
-        )]);
+        )];
+        lines.extend(history_lines(json, published));
+        return Ok(lines);
     }
     if code != 200 || !matches!(status, "OBSERVED" | "NO_ACTIVITY_IN_PERIOD") {
         return Err(UNAVAILABLE.to_owned());
@@ -112,6 +187,7 @@ fn format_portrait(address: &str, code: u16, json: &Value) -> Result<Vec<String>
     )];
     if status == "NO_ACTIVITY_IN_PERIOD" {
         lines.push("No activity in this ledger window.".to_owned());
+        lines.extend(history_lines(json, published));
         return Ok(lines);
     }
     let transactions = required_number(&json["indexed_transactions"])?;
@@ -119,6 +195,7 @@ fn format_portrait(address: &str, code: u16, json: &Value) -> Result<Vec<String>
     lines.push(format!(
         "Indexed transactions: {transactions} · analyzed: {sampled}"
     ));
+    lines.extend(history_lines(json, published));
     for pattern in items(&json["known_patterns"]) {
         if let Some(label) =
             ready_label(&pattern["pattern"]).or_else(|| ready_label(&pattern["mechanism"]))
@@ -145,7 +222,7 @@ fn format_portrait(address: &str, code: u16, json: &Value) -> Result<Vec<String>
                         (witness["ledger"].as_u64(), witness["tx_hash"].as_str())
                     {
                         if hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()) {
-                            lines.push(format!("Ledger {ledger} tx: {hash}"));
+                            lines.push(format!("Review example · ledger {ledger} tx: {hash}"));
                         }
                     }
                 }
@@ -194,6 +271,17 @@ mod tests {
             }
             header.clear();
         }
+    }
+
+    #[test]
+    fn sampled_history_survives_a_quiet_latest_window() {
+        let mut result = envelope("NO_ACTIVITY_IN_PERIOD");
+        result["coverage"] = json!({"first":170,"through":200});
+        let hash = "d0".repeat(32);
+        result["behavior_history"] = json!({"periods":[{"first":11,"through":20,
+            "witnesses":[{"role":"transfer.to","ledger":15,"tx_hash":hash}]}]});
+        let text = format_portrait(ADDRESS, 200, &result).unwrap().join("\n");
+        assert!(text.contains(&hash) && text.contains("Sampled ledgers 11–20"));
     }
 
     #[test]
