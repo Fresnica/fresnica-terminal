@@ -39,9 +39,23 @@ fn portrait_url(address: &str, base: &str) -> Result<Url, String> {
 
 fn lookup_at(address: &str, base: &str) -> Result<Vec<String>, String> {
     let url = portrait_url(address, base)?;
+    let proxy = if url.scheme() == "https"
+        && url.host_str() == Some("saint.fed.network")
+        && url.port().is_none()
+    {
+        ureq::Proxy::try_from_env()
+    } else {
+        None
+    };
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(3)))
-        .proxy(None)
+        .tls_config(
+            ureq::tls::TlsConfig::builder()
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .proxy(proxy)
+        .user_agent("Fresnica-Terminal/0.6.0")
         .max_redirects(0)
         .http_status_as_error(false)
         .build()
