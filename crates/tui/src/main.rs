@@ -1,4 +1,5 @@
 mod app;
+mod portrait;
 mod render;
 mod state;
 
@@ -19,6 +20,7 @@ Usage:
 Environment:
   FRESNICA_HORIZON_URL          Default Horizon endpoint override; command-line flag wins
   FRESNICA_TX_TIMEOUT_SECONDS   Default Classic transaction validity window; flag wins
+  FRESNICA_SAINT_URL            Optional SAINT origin override for Mainnet address portraits
 
 Keys:
   q / Esc     quit
@@ -27,6 +29,7 @@ Keys:
   s           prepare a payment from the selected signing wallet
   t           manage issued-asset trustlines
   d           open the DEX market selector
+  a           look up a Mainnet address portrait
   /           choose an exact asset identity while an asset field is focused
 
 Write flow:
@@ -398,6 +401,10 @@ mod tests {
     }
 
     fn local_app(watch_only: bool) -> (App, PathBuf) {
+        local_app_on(watch_only, "testnet")
+    }
+
+    fn local_app_on(watch_only: bool, network: &str) -> (App, PathBuf) {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -406,12 +413,12 @@ mod tests {
             "fresnica-tui-local-state-{}-{nonce}",
             std::process::id()
         ));
-        let client = FresnicaClient::new(&home, "testnet").unwrap();
+        let client = FresnicaClient::new(&home, network).unwrap();
         let wallet = WalletRecord {
             name: "primary".to_owned(),
             address: "GDLVVGABQKYQVN6VJP7NHSLEA45A5YLS6PNKMIZFV4BBU2HXA5IRVHUR".to_owned(),
             wallet_type: if watch_only { "watch-only" } else { "secret" }.to_owned(),
-            network: "testnet".to_owned(),
+            network: network.to_owned(),
             secret: None,
             metadata: Default::default(),
         };
@@ -429,6 +436,33 @@ mod tests {
             },
             home,
         )
+    }
+
+    #[test]
+    fn address_portrait_is_an_optional_mainnet_screen_for_watch_only_wallets() {
+        let (mut app, home) = local_app_on(true, "mainnet");
+        app.handle_key(KeyCode::Char('a'));
+        assert!(matches!(app.mode, Mode::Portrait(_)));
+        app.handle_key(KeyCode::Char('g'));
+        let Mode::Portrait(form) = &mut app.mode else {
+            panic!("expected portrait form")
+        };
+        assert_eq!(form.address, "G");
+        form.lines = vec!["Observed window: 11–170".to_owned()];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        let screen = terminal.backend().to_string();
+        assert!(screen.contains("SAINT address portrait"));
+        assert!(screen.contains("Observed window: 11–170"));
+        app.handle_key(KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+
+        let (mut testnet, testnet_home) = local_app(true);
+        testnet.handle_key(KeyCode::Char('a'));
+        assert!(matches!(testnet.mode, Mode::Browse));
+        let _ = std::fs::remove_dir_all(home);
+        let _ = std::fs::remove_dir_all(testnet_home);
     }
 
     fn catalog_entry(identity: &str) -> AssetCatalogEntry {

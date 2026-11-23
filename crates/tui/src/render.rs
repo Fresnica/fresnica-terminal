@@ -7,7 +7,7 @@ use fresnica_terminal_presentation::history_operation_summary;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
 use super::app::{App, AssetPickerState};
@@ -51,6 +51,29 @@ impl App {
 
         match &self.mode {
             Mode::Browse => {}
+            Mode::Portrait(form) => {
+                let area = popup_area(frame.area());
+                let [address, evidence] =
+                    Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+                frame.render_widget(Clear, area);
+                frame.render_widget(
+                    Paragraph::new(form.address.as_str())
+                        .block(Block::bordered().title("Public Stellar address")),
+                    address,
+                );
+                frame.render_widget(
+                    Paragraph::new(
+                        form.lines
+                            .iter()
+                            .skip(usize::from(form.scroll))
+                            .map(|line| Line::from(line.as_str()))
+                            .collect::<Vec<_>>(),
+                    )
+                    .block(Block::bordered().title("SAINT address portrait"))
+                    .wrap(Wrap { trim: false }),
+                    evidence,
+                );
+            }
             Mode::Send(form) => self.render_send_form(frame, form),
             Mode::Trustline(form) => self.render_trustline_form(frame, form),
             Mode::Offer(form) => self.render_offer_form(frame, form),
@@ -173,9 +196,11 @@ impl App {
             "Up/Down or j/k select   r refresh   Enter choose exact identity   Esc keep manual value"
         } else {
             match &self.mode {
-            Mode::Browse => {
-                "q quit   r refresh   [ / ] switch wallet   s send   t manage assets   d DEX"
+            Mode::Browse if self.client.network() == "mainnet" => {
+                "q quit   r refresh   [ / ] wallet   s send   t assets   d DEX   a portrait"
             }
+            Mode::Browse => "q quit   r refresh   [ / ] wallet   s send   t assets   d DEX",
+            Mode::Portrait(_) => "Enter look up or retry   Del clear   ↑/↓ scroll   Esc back",
             Mode::Send(_) => "type value   / choose asset   Tab/Up/Down field   Enter next/prepare   Esc cancel",
             Mode::Trustline(_) => {
                 "action: Left/Right or a/l/x   / choose asset   Tab field   Enter next/prepare   Esc cancel"
