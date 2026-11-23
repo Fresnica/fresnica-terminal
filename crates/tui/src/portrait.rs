@@ -158,6 +158,9 @@ fn history_lines(json: &Value, published: u64) -> Vec<String> {
             }
         }
     }
+    if !lines.is_empty() && json["behavior_history"]["additional_periods_available"] == true {
+        lines.push("Additional sampled periods are stored.".to_owned());
+    }
     if !lines.is_empty() {
         lines.insert(
             0,
